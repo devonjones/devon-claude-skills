@@ -4,11 +4,38 @@ Personal collection of Claude Code skills for PR automation and creative tasks.
 
 ## Installation
 
+### Step 1: Add the Marketplace
+
 Add this marketplace to Claude Code:
 
 ```bash
 /plugin marketplace add devon-claude-skills https://github.com/devonjones/devon-claude-skills
 ```
+
+### Step 2: Install Plugins
+
+Install the plugins you want to use:
+
+```bash
+# Install PR review loop
+/plugin install pr-review-loop@devon-claude-skills
+
+# Install image generation
+/plugin install nano-banana@devon-claude-skills
+
+# Or install both
+/plugin install pr-review-loop@devon-claude-skills nano-banana@devon-claude-skills
+```
+
+### Step 3: Verify Installation
+
+Check that the plugins are installed:
+
+```bash
+/plugin list
+```
+
+The skills will be automatically available for Claude to use.
 
 ## Available Plugins
 
