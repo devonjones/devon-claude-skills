@@ -1,0 +1,32 @@
+{
+  "name": "devon-claude-skills",
+  "version": "1.0.0",
+  "metadata": {
+    "description": "Devon's Claude Code skills - PR automation and image generation"
+  },
+  "owner": {
+    "name": "Devon Jones"
+  },
+  "plugins": [
+    {
+      "name": "pr-review-loop",
+      "description": "Autonomous PR review automation with multi-bot support (Gemini, Cursor, Claude)",
+      "version": "1.0.0",
+      "source": "./plugins/pr-review-loop",
+      "category": "productivity",
+      "author": {
+        "name": "Devon Jones"
+      }
+    },
+    {
+      "name": "nano-banana",
+      "description": "Image generation, editing, and composition using Google's Gemini 3 Pro Image model",
+      "version": "1.0.0",
+      "source": "./plugins/nano-banana",
+      "category": "productivity",
+      "author": {
+        "name": "Devon Jones"
+      }
+    }
+  ]
+}
