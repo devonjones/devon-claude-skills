@@ -64,12 +64,12 @@ Task tool:
        - If GOOD but out of scope: check `bd --version`, if beads available create ticket, reply "Out of scope - tracked in BD-XXX"
 
     3. **Check for other bot PR comments** (Claude, Cursor, Copilot):
-       - These post single large comments (not line comments) with multiple issues
+       - These post single PR comments (not line comments) with multiple issues
        - Parse the structured markdown to extract individual issues
        - Reply with `gh pr comment` addressing each issue (see "Comment Formats" section)
 
     4. **Run agent reviewers** (if AGENT-REVIEWERS.md exists and agents not retired):
-       - Spawn ALL non-retired agents as parallel Tasks
+       - Spawn non-retired agents as parallel Tasks
        - Wait for all agents to return
        - Address agent comments (same fix/wontfix/out-of-scope flow)
        - Track per-agent diminishing returns - retire agents with no actionable feedback
@@ -208,23 +208,23 @@ Track review rounds. After 2-3 iterations, evaluate:
 
 ### The Loop
 
-Each iteration is a **complete round** that includes all reviewers before triggering the next cycle:
+Each round includes all reviewers before triggering the next cycle:
 
 ```
 EACH ROUND:
 1. Get unresolved Gemini LINE comments (use --wait to poll for up to 5 minutes)
-2. Address Gemini line comments (each is a separate thread):
+2. Address Gemini line comments:
    - Fix it → reply "Fixed - ..."
    - Bad suggestion → reply "Won't fix - ..."
    - Good but out of scope → create beads ticket (if available), reply "Out of scope - tracked in BD-XXX"
 3. Check for other bot PR comments (Claude, Cursor, Copilot):
-   - These are single large comments containing multiple issues
+   - These are single PR comments containing multiple issues
    - Parse the structured markdown to extract individual issues
    - Reply to the PR comment addressing each issue (see "Comment Formats" section)
 4. Run agent reviewers (if AGENT-REVIEWERS.md exists and agents not retired):
    - Spawn non-retired agents as parallel Tasks
    - Wait for all agents to return
-   - Address agent comments (same as step 2 for line comments)
+   - Address agent comments (same as step 2)
    - Track per-agent diminishing returns, retire unproductive agents
 5. Use commit-and-push.sh (NEVER raw git commands) - if any fixes were made
 6. Trigger next review: trigger-review.sh <PR> --wait
@@ -260,14 +260,14 @@ scripts/reply-to-comment.sh <PR> <comment-id> "Out of scope - tracked in BD-XXX"
 
 **3. Check for other bot PR comments (Claude, Cursor, Copilot):**
 
-These bots post single large comments (not line comments) containing multiple issues:
+These bots post single PR comments (not line comments) containing multiple issues:
 ```bash
 # Find Claude's review comment
 gh pr view <PR> --json comments --jq '.comments[] | select(.author.login == "claude") | {id: .id, body: .body[:500]}'
 ```
 
 For each issue in the comment:
-- Parse the structured markdown (look for numbered issues, file:line references)
+- Parse the structured markdown (numbered issues, file:line references)
 - Apply fix/wontfix/out-of-scope decision for each issue
 - Reply to the PR comment with a consolidated response:
 ```bash
@@ -416,7 +416,7 @@ Run custom agent reviewers defined in `AGENT-REVIEWERS.md` files as part of each
 
 ### AGENT-REVIEWERS.md Format
 
-The file supports two types of H1 sections:
+Two types of H1 sections:
 
 1. **`# Agents`** - Defines custom agent reviewers (H2 headings become agent names)
 2. **Any other H1 section** - Treated as context/instructions for the main review loop (like CLAUDE.md)
@@ -451,13 +451,13 @@ Authentication uses JWT tokens stored in httpOnly cookies.
 
 ### Hierarchical Scoping
 
-`AGENT-REVIEWERS.md` files can exist at any directory level. Both agents and context sections are scoped to their directory and below.
+`AGENT-REVIEWERS.md` files can exist at any directory level. Agents and context sections are scoped to their directory and below.
 
 **Resolution rules:**
 1. For each changed file, collect `AGENT-REVIEWERS.md` files from its directory up to repo root
-2. Merge by H1 section name - **lower directory definitions override same-named sections from above**
+2. Resolve sections by H1 name - **lower directory definitions override same-named sections from above**
 3. For `# Agents`: each agent only reviews changes **within its directory scope and below**
-4. For other H1 sections: context is merged and passed to the review loop, scoped to relevant files
+4. For other H1 sections: context is combined and passed to the review loop, scoped to relevant files
 5. Root-level definitions see all changes; subdirectory definitions see only their subtree
 
 **Example structure:**
@@ -479,7 +479,7 @@ Authentication uses JWT tokens stored in httpOnly cookies.
 - `security-reviewer` (from `/plugins/auth/`) → sees only changes under `/plugins/auth/`
 
 *Context for main review loop:*
-- For `plugins/auth/login.py`: merges `# Guidelines` from `/plugins/` + `# Context` from `/plugins/auth/`
+- For `plugins/auth/login.py`: combines `# Guidelines` from `/plugins/` + `# Context` from `/plugins/auth/`
 - For `plugins/utils.py`: uses `# Guidelines` from `/plugins/`
 
 **Discovery algorithm:**
