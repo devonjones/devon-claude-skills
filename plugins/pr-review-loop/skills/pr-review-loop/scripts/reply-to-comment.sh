@@ -45,7 +45,8 @@ if [[ "$COMMENT_ID" =~ ^IC_ ]]; then
     ORIGINAL_BODY=$(echo "$ORIGINAL_COMMENT" | jq -r '.body')
 
     # Create a quoted reply - take first 500 chars of original to keep it reasonable
-    QUOTED_BODY=$(echo "$ORIGINAL_BODY" | head -c 500)
+    # Use printf instead of echo to safely handle strings that might start with -
+    QUOTED_BODY=$(printf "%s" "$ORIGINAL_BODY" | head -c 500)
     if [[ ${#ORIGINAL_BODY} -gt 500 ]]; then
         QUOTED_BODY="${QUOTED_BODY}..."
     fi
@@ -53,7 +54,7 @@ if [[ "$COMMENT_ID" =~ ^IC_ ]]; then
     # Format the reply with quote
     REPLY_BODY=$(cat <<EOF
 > **@${ORIGINAL_AUTHOR}** wrote:
-$(echo "$QUOTED_BODY" | sed 's/^/> /')
+$(printf "%s" "$QUOTED_BODY" | sed 's/^/> /')
 
 $REPLY
 EOF

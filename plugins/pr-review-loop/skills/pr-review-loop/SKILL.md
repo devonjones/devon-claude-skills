@@ -72,7 +72,7 @@ Task tool:
        - Parse the structured markdown to extract individual issues
 
     4. **Address ALL other bot comments**:
-       - Reply with `gh pr comment` addressing each issue
+       - Reply using `reply-to-comment.sh <PR> <comment-id> "response"` (handles PR comments)
 
     5. **Run agent reviewers** (if AGENT-REVIEWERS.md exists and agents not retired):
        - Spawn non-retired agents as parallel Tasks (multiple Task calls in ONE message)
@@ -250,7 +250,7 @@ EACH ROUND (all steps before next review trigger):
    - These are single PR comments containing multiple issues
    - Parse the structured markdown to extract individual issues
 4. Address other bot comments:
-   - Reply to the PR comment addressing each issue (see "Comment Formats" section)
+   - Reply using `reply-to-comment.sh <PR> <comment-id> "response"` (handles PR comments)
 5. Run agent reviewers (if AGENT-REVIEWERS.md exists and agents not retired):
    - Spawn non-retired agents as parallel Tasks
    - Wait for all agents to return
