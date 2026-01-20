@@ -9,7 +9,7 @@ Personal collection of Claude Code skills for PR automation and creative tasks.
 Add this marketplace to Claude Code:
 
 ```bash
-/plugin marketplace add devon-claude-skills https://github.com/devonjones/devon-claude-skills
+/plugin marketplace add devonjones/devon-claude-skills
 ```
 
 ### Step 2: Install Plugins
