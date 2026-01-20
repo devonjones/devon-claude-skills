@@ -39,7 +39,7 @@ echo ""
 while true; do
     # Check CI status
     echo "--- CI Status ($(date +%H:%M:%S)) ---"
-    gh pr checks $PR_NUMBER $REPO_FLAG 2>/dev/null || echo "Failed to fetch checks"
+    gh pr checks $PR_NUMBER $REPO_FLAG || echo "(Failed to fetch checks)"
 
     # Check for new reviews
     CURRENT_REVIEW_COUNT=$(gh api $REPO_FLAG repos/:owner/:repo/pulls/$PR_NUMBER/reviews --jq 'length' 2>/dev/null || echo 0)

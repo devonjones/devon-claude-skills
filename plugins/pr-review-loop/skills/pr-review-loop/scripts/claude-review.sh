@@ -15,15 +15,14 @@ set -euo pipefail
 PR_NUMBER="${1:?Usage: claude-review.sh <pr-number>}"
 
 # Get repo info
-REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "")
-if [[ -z "$REPO" ]]; then
-    echo "Error: Could not determine repository. Run from within a git repository."
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner') || {
+    echo "Error: Could not determine repository. Run from within a git repository." >&2
     exit 1
-fi
+}
 
 # Get PR details for the prompt
-PR_TITLE=$(gh pr view "$PR_NUMBER" --json title --jq '.title' 2>/dev/null || echo "PR #$PR_NUMBER")
-PR_BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName' 2>/dev/null || echo "unknown")
+PR_TITLE=$(gh pr view "$PR_NUMBER" --json title --jq '.title') || PR_TITLE="PR #$PR_NUMBER"
+PR_BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName') || PR_BRANCH="unknown"
 
 echo "=============================================="
 echo "Claude Code Review for PR #$PR_NUMBER"
