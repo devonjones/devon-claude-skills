@@ -16,7 +16,7 @@ PR_NUMBER="${1:?Usage: claude-review.sh <pr-number>}"
 
 # Get repo info
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner') || {
-    echo "Error: Could not determine repository. Run from within a git repository."
+    echo "Error: Could not determine repository. Run from within a git repository." >&2
     exit 1
 }
 

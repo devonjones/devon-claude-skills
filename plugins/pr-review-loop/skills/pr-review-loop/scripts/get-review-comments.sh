@@ -199,12 +199,12 @@ HAS_NEXT_PAGE=true
 while [[ "$HAS_NEXT_PAGE" == "true" ]]; do
     if [[ -z "$CURSOR" ]]; then
         PAGE_RESULT=$(gh api graphql -f query="$QUERY" -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER") || {
-            echo "Error: Failed to fetch review comments from GitHub API"
+            echo "Error: Failed to fetch review comments from GitHub API" >&2
             exit 1
         }
     else
         PAGE_RESULT=$(gh api graphql -f query="$QUERY" -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" -f cursor="$CURSOR") || {
-            echo "Error: Failed to fetch review comments from GitHub API"
+            echo "Error: Failed to fetch review comments from GitHub API" >&2
             exit 1
         }
     fi
