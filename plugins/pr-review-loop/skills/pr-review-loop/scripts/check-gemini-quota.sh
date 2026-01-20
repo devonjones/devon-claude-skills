@@ -21,7 +21,7 @@ LAST_GEMINI_COMMENT=$(gh pr view "$PR_NUMBER" --json comments --jq '
     sort_by(.createdAt) |
     last |
     {body: .body, createdAt: .createdAt}
-' 2>&1) || LAST_GEMINI_COMMENT="{}"
+' 2>/dev/null) || LAST_GEMINI_COMMENT="{}"
 
 if [[ -z "$LAST_GEMINI_COMMENT" || "$LAST_GEMINI_COMMENT" == "{}" || "$LAST_GEMINI_COMMENT" == "null" ]]; then
     echo '{"status": "available", "reason": "no gemini comments found"}'

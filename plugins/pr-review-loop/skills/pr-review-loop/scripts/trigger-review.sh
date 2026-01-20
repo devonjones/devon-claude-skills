@@ -55,9 +55,7 @@ done
 
 # Get PR number if not provided
 if [[ -z "$PR_NUMBER" ]]; then
-    PR_NUMBER=$(gh pr view --json number --jq '.number' 2>&1) || {
-        PR_NUMBER=""
-    }
+    PR_NUMBER=$(gh pr view --json number --jq '.number' 2>/dev/null) || PR_NUMBER=""
 fi
 
 if [[ -z "$PR_NUMBER" ]]; then
