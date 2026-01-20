@@ -53,7 +53,7 @@ while [[ "$HAS_NEXT_PAGE" == "true" ]]; do
                 }
             }
         " -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER") || {
-            echo "Error: Failed to fetch thread info from GitHub API"
+            echo "Error: Failed to fetch thread info from GitHub API" >&2
             exit 1
         }
     else
@@ -78,7 +78,7 @@ while [[ "$HAS_NEXT_PAGE" == "true" ]]; do
                 }
             }
         " -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" -f cursor="$CURSOR") || {
-            echo "Error: Failed to fetch thread info from GitHub API"
+            echo "Error: Failed to fetch thread info from GitHub API" >&2
             exit 1
         }
     fi
@@ -114,7 +114,7 @@ else
 fi
 
 if [[ -z "$THREAD_ID" || "$THREAD_ID" == "null" ]]; then
-    echo "Error: Could not find thread for comment $COMMENT_ID"
+    echo "Error: Could not find thread for comment $COMMENT_ID" >&2
     exit 1
 fi
 
@@ -175,7 +175,7 @@ REPLY_RESULT=$(gh api graphql -f query='
         -f body="$REOPEN_COMMENT" > /dev/null 2>&1 && {
         echo "Reply posted via REST API. Thread is now reopened."
     } || {
-        echo "Warning: Could not post reply, but thread was unresolved."
-        echo "Error: $REPLY_RESULT"
+        echo "Warning: Could not post reply, but thread was unresolved." >&2
+        echo "Error: $REPLY_RESULT" >&2
     }
 }

@@ -46,8 +46,8 @@ RESULT=$(gh api \
     -f path="$FILE_PATH" \
     -F line="$LINE_NUMBER" \
     -f side="RIGHT" 2>&1) || {
-    echo "Error: Failed to post comment to ${FILE_PATH}:${LINE_NUMBER}"
-    echo "$RESULT"
+    echo "Error: Failed to post comment to ${FILE_PATH}:${LINE_NUMBER}" >&2
+    echo "$RESULT" >&2
     exit 1
 }
 
