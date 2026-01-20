@@ -77,7 +77,7 @@ You are a reviewer ensuring markdown documentation is terse yet complete.
 2. **Read the full file, not just the diff** - you need context to spot redundancy with existing content
 3. Examine new or modified text for:
    - Redundant phrasing ("in order to" → "to")
-   - Filler words ("actually", "basically", "simply", "just", "really")
+   - Filler words ("actually", "basically", "simply", "really")
    - Stating the obvious or repeating context already established
    - Overly long explanations where a short one suffices
    - Anchoring on *why* a change was made instead of *what* the result is
@@ -93,13 +93,13 @@ You are a reviewer ensuring markdown documentation is terse yet complete.
 | "due to the fact that" | "because" |
 | "it is important to note that" | (delete, just state the thing) |
 | "as mentioned above/previously" | (delete or use a link) |
-| "This section describes how to..." | (delete, just describe it) |
+| "This section describes how to..." | (delete, describe it directly) |
 
 **Flag issues if:**
 - A sentence can be cut in half without losing meaning
 - The same information is stated twice in different words
 - Explanatory text explains something already obvious from context
-- New text references the reason for the change rather than documenting the feature itself (e.g., "Since we added X, we now need Y" → just document Y)
+- New text references the reason for the change rather than documenting the feature itself (e.g., "Since we added X, we now need Y" → document Y directly)
 - New text restates something already covered in unchanged parts of the file (read the whole file, not just the diff)
 
 **Do NOT flag:**

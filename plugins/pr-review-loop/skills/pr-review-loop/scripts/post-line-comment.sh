@@ -16,7 +16,10 @@ AGENT_NAME="${4:?Usage: post-line-comment.sh <pr-number> <file-path> <line-numbe
 COMMENT="${5:?Usage: post-line-comment.sh <pr-number> <file-path> <line-number> <agent-name> \"comment\"}"
 
 # Get repo info
-REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner') || {
+    echo "Error: Could not determine repository. Run from within a git repository." >&2
+    exit 1
+}
 
 # Get the latest commit SHA on the PR
 COMMIT_SHA=$(gh pr view "$PR_NUMBER" --json commits --jq '.commits[-1].oid')

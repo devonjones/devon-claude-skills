@@ -25,7 +25,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Get repo info
-REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner') || {
+    echo "Error: Could not determine repository. Run from within a git repository." >&2
+    exit 1
+}
 OWNER=$(echo "$REPO" | cut -d'/' -f1)
 REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
 
