@@ -1,3 +1,13 @@
+# Guidelines
+
+This is a Claude Code skills marketplace repository. When reviewing PRs:
+
+- Skills must be self-contained within their plugin directory
+- All shell scripts must use `set -euo pipefail`
+- Error messages must go to stderr (`>&2`)
+- Scripts should handle both success and failure cases gracefully
+- New dependencies require installation instructions in SKILL.md
+
 # Agents
 
 ## marketplace-reviewer
