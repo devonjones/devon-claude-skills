@@ -93,24 +93,31 @@ done
 THREAD_INFO=$(echo "$ALL_THREADS" | jq '{data: {repository: {pullRequest: {reviewThreads: {nodes: .}}}}}')
 
 # Extract thread ID - handle both numeric and node IDs
+# Always resolve both DB_ID and NODE_ID for REST/GraphQL compatibility
 if [[ "$COMMENT_ID" =~ ^[0-9]+$ ]]; then
-    THREAD_ID=$(echo "$THREAD_INFO" | jq -r --argjson cid "$COMMENT_ID" '
+    DB_ID="$COMMENT_ID"
+    THREAD_ID=$(echo "$THREAD_INFO" | jq -r --argjson cid "$DB_ID" '
         .data.repository.pullRequest.reviewThreads.nodes[] |
         select(.comments.nodes[0].databaseId == $cid) |
         .id
     ')
-    NODE_ID=$(echo "$THREAD_INFO" | jq -r --argjson cid "$COMMENT_ID" '
+    NODE_ID=$(echo "$THREAD_INFO" | jq -r --argjson cid "$DB_ID" '
         .data.repository.pullRequest.reviewThreads.nodes[] |
         select(.comments.nodes[0].databaseId == $cid) |
         .comments.nodes[0].id
     ')
 else
-    THREAD_ID=$(echo "$THREAD_INFO" | jq -r --arg cid "$COMMENT_ID" '
+    NODE_ID="$COMMENT_ID"
+    THREAD_ID=$(echo "$THREAD_INFO" | jq -r --arg cid "$NODE_ID" '
         .data.repository.pullRequest.reviewThreads.nodes[] |
         select(.comments.nodes[0].id == $cid) |
         .id
     ')
-    NODE_ID="$COMMENT_ID"
+    DB_ID=$(echo "$THREAD_INFO" | jq -r --arg cid "$NODE_ID" '
+        .data.repository.pullRequest.reviewThreads.nodes[] |
+        select(.comments.nodes[0].id == $cid) |
+        .comments.nodes[0].databaseId
+    ')
 fi
 
 if [[ -z "$THREAD_ID" || "$THREAD_ID" == "null" ]]; then
@@ -168,10 +175,10 @@ REPLY_RESULT=$(gh api graphql -f query='
 ' -f body="$REOPEN_COMMENT" -f commentId="$NODE_ID" 2>&1) && {
     echo "Reply posted. Thread is now reopened."
 } || {
-    # Fallback to REST API if GraphQL fails
+    # Fallback to REST API if GraphQL fails (REST requires numeric DB_ID)
     gh api \
         --method POST \
-        "repos/$REPO/pulls/$PR_NUMBER/comments/$COMMENT_ID/replies" \
+        "repos/$REPO/pulls/$PR_NUMBER/comments/$DB_ID/replies" \
         -f body="$REOPEN_COMMENT" > /dev/null 2>&1 && {
         echo "Reply posted via REST API. Thread is now reopened."
     } || {

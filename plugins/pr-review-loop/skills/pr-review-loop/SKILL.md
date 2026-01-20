@@ -518,4 +518,4 @@ Bash(scripts/reopen-comment.sh:*)
   Install with: `pip install pre-commit && pre-commit install`
 - `bd` (beads) (optional) - Issue tracker for capturing out-of-scope suggestions as tickets.
   If not installed, out-of-scope suggestions are handled with "Out of scope for this PR" replies.
-  See: https://github.com/anthropics/beads
+  See: https://github.com/steveyegge/beads
