@@ -61,7 +61,7 @@ Task tool:
     2. **Address Gemini comments** - For EACH comment:
        - If worthwhile: fix it, reply "Fixed - [description]"
        - If bad suggestion: reply "Won't fix - [reason]"
-       - If GOOD but out of scope: check `bd --version`, if beads available create ticket, reply "Out of scope - tracked in BD-XXX"
+       - If GOOD but out of scope: check `bd --version`, if beads available create ticket with full context (see "Out of Scope Suggestions"), reply "Out of scope - tracked in BD-XXX"
 
     3. **Check for other bot PR comments** (Claude, Cursor, Copilot):
        - These post single PR comments (not line comments) with multiple issues
@@ -224,7 +224,7 @@ EACH ROUND:
 4. Run agent reviewers (if AGENT-REVIEWERS.md exists and agents not retired):
    - Spawn non-retired agents as parallel Tasks
    - Wait for all agents to return
-   - Address agent comments (same as step 2)
+   - Address agent comments (fix/wontfix/out-of-scope flow)
    - Track per-agent diminishing returns, retire unproductive agents
 5. Use commit-and-push.sh (NEVER raw git commands) - if any fixes were made
 6. Trigger next review: trigger-review.sh <PR> --wait
@@ -239,14 +239,14 @@ AND this was the "final verification" round:
 
 ### Step-by-step (Each Round)
 
-**1. Check for unresolved Gemini comments (ALWAYS use --wait for first check after PR creation or push):**
+**1. Check for unresolved Gemini line comments (ALWAYS use --wait for first check after PR creation or push):**
 ```bash
 scripts/summarize-reviews.sh <PR>
 scripts/get-review-comments.sh <PR> --with-ids --wait
 ```
 The `--wait` flag polls every 30s for up to 5 minutes, waiting for Gemini to respond. Do NOT skip this or use a shorter timeout.
 
-**2. Address Gemini comments (MANDATORY - never skip this):**
+**2. Address Gemini line comments (MANDATORY - never skip this):**
 - Evaluate if suggestion is worthwhile
 - Apply fix locally OR decide to skip
 - **ALWAYS reply using the script** - this resolves the thread:
@@ -282,7 +282,7 @@ gh pr comment <PR> --body "## Response to Claude Review
 **4. Run agent reviewers (if AGENT-REVIEWERS.md exists):**
 - Spawn non-retired agents as parallel Tasks
 - Wait for all agents to return
-- Address agent comments using the same flow
+- Address agent comments (fix/wontfix/out-of-scope flow)
 - Track per-agent diminishing returns
 
 **5. Commit and push (ALWAYS use the script, NEVER raw git) - if any fixes were made:**
@@ -457,7 +457,7 @@ Authentication uses JWT tokens stored in httpOnly cookies.
 1. For each changed file, collect `AGENT-REVIEWERS.md` files from its directory up to repo root
 2. Resolve sections by H1 name - **lower directory definitions override same-named sections from above**
 3. For `# Agents`: each agent only reviews changes **within its directory scope and below**
-4. For other H1 sections: context is combined and passed to the review loop, scoped to relevant files
+4. For other H1 sections: winning version of each section (per override rule) is combined and passed to the review loop
 5. Root-level definitions see all changes; subdirectory definitions see only their subtree
 
 **Example structure:**
