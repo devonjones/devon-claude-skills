@@ -1,9 +1,11 @@
 #!/bin/bash
-# Post a line comment on a PR with agent signature
+# Post a line comment on a PR with Claude attribution and agent signature
 # Usage: post-line-comment.sh <pr-number> <file-path> <line-number> <agent-name> "comment"
 #
 # Posts a review comment on a specific line of the PR diff.
-# Automatically adds an agent signature: <!-- Agent: <agent-name> -->
+# Automatically adds:
+#   - Visible header: 🤖 **Claude Code** (<agent-name>):
+#   - Machine-readable signature: <!-- Agent: <agent-name> -->
 
 set -euo pipefail
 
@@ -24,8 +26,10 @@ if [[ -z "$COMMIT_SHA" ]]; then
     exit 1
 fi
 
-# Add agent signature to comment
-SIGNED_COMMENT="<!-- Agent: ${AGENT_NAME} -->
+# Add visible header attribution and machine-readable agent signature
+SIGNED_COMMENT="🤖 **Claude Code** (${AGENT_NAME}):
+<!-- Agent: ${AGENT_NAME} -->
+
 ${COMMENT}"
 
 echo "Posting comment from agent '${AGENT_NAME}' on ${FILE_PATH}:${LINE_NUMBER}..."

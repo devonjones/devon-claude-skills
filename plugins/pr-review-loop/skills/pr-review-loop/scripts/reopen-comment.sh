@@ -1,18 +1,19 @@
 #!/bin/bash
 # Reopen a resolved PR review thread by unresolving it and posting a reply
-# Usage: reopen-comment.sh <pr-number> <comment-id> "reason"
+# Usage: reopen-comment.sh <pr-number> <comment-id> <agent-name> "reason"
 #
 # This script:
 # 1. Unresolves the thread (if it was resolved)
-# 2. Posts a reply explaining why it's being reopened
+# 2. Posts a reply with Claude attribution explaining why it's being reopened
 #
 # Use this when an agent reviewer disagrees with a "Won't fix" response.
 
 set -euo pipefail
 
-PR_NUMBER="${1:?Usage: reopen-comment.sh <pr-number> <comment-id> \"reason\"}"
-COMMENT_ID="${2:?Usage: reopen-comment.sh <pr-number> <comment-id> \"reason\"}"
-REASON="${3:?Usage: reopen-comment.sh <pr-number> <comment-id> \"reason\"}"
+PR_NUMBER="${1:?Usage: reopen-comment.sh <pr-number> <comment-id> <agent-name> \"reason\"}"
+COMMENT_ID="${2:?Usage: reopen-comment.sh <pr-number> <comment-id> <agent-name> \"reason\"}"
+AGENT_NAME="${3:?Usage: reopen-comment.sh <pr-number> <comment-id> <agent-name> \"reason\"}"
+REASON="${4:?Usage: reopen-comment.sh <pr-number> <comment-id> <agent-name> \"reason\"}"
 
 # Get repo info
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
@@ -97,7 +98,10 @@ fi
 # Post a reply with the reason
 echo "Posting reopen reason..."
 
-REOPEN_COMMENT="**Reopening this thread.**
+REOPEN_COMMENT="🤖 **Claude Code** (${AGENT_NAME}):
+<!-- Agent: ${AGENT_NAME} -->
+
+**Reopening this thread.**
 
 ${REASON}"
 

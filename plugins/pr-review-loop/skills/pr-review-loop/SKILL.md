@@ -395,7 +395,7 @@ Task tool:
        - If the response is reasonable (good explanation, valid fix, or acceptable tradeoff), do NOT re-raise
        - If the response is UNREASONABLE (dismissive, incorrect, or ignores the issue), reopen:
          ```bash
-         scripts/reopen-comment.sh <PR> <comment-id> "Reopening - <reason why response is insufficient>"
+         scripts/reopen-comment.sh <PR> <comment-id> <agent-name> "Reopening - <reason why response is insufficient>"
          ```
 
     3. **Review the PR diff** (filter to your scope):
@@ -494,7 +494,7 @@ When detected, the script suggests:
 | `resolve-comment.sh <node-id> [reason]` | Manually resolve a thread |
 | `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post line comment with agent signature |
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |
-| `reopen-comment.sh <PR> <comment-id> "reason"` | Reply to resolved thread (reopens discussion) |
+| `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |
 
 ## Permission Setup
 
