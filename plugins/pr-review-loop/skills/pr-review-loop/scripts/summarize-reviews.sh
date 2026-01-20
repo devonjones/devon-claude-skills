@@ -27,12 +27,16 @@ REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
 echo "=== PR #$PR_NUMBER Review Summary ==="
 echo ""
 
-# Use GraphQL to get review threads with resolution status
+# Use GraphQL to get review threads with resolution status (with pagination)
 QUERY='
-query($owner: String!, $repo: String!, $pr: Int!) {
+query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $pr) {
-      reviewThreads(first: 100) {
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
         nodes {
           isResolved
           comments(first: 1) {
@@ -50,9 +54,34 @@ query($owner: String!, $repo: String!, $pr: Int!) {
 }
 '
 
-RESULT=$(gh api graphql -f query="$QUERY" -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" 2>/dev/null)
+# Fetch all pages of review threads
+ALL_THREADS="[]"
+CURSOR=""
+HAS_NEXT_PAGE=true
 
-if [[ -z "$RESULT" ]]; then
+while [[ "$HAS_NEXT_PAGE" == "true" ]]; do
+    if [[ -z "$CURSOR" ]]; then
+        PAGE_RESULT=$(gh api graphql -f query="$QUERY" -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER") || {
+            echo "Error: Failed to fetch review comments from GitHub API"
+            exit 1
+        }
+    else
+        PAGE_RESULT=$(gh api graphql -f query="$QUERY" -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" -f cursor="$CURSOR") || {
+            echo "Error: Failed to fetch review comments from GitHub API"
+            exit 1
+        }
+    fi
+
+    PAGE_THREADS=$(echo "$PAGE_RESULT" | jq '.data.repository.pullRequest.reviewThreads.nodes')
+    ALL_THREADS=$(echo "$ALL_THREADS $PAGE_THREADS" | jq -s 'add')
+
+    HAS_NEXT_PAGE=$(echo "$PAGE_RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+    CURSOR=$(echo "$PAGE_RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
+done
+
+RESULT=$(echo "$ALL_THREADS" | jq '{data: {repository: {pullRequest: {reviewThreads: {nodes: .}}}}}')
+
+if [[ -z "$RESULT" ]] || [[ "$ALL_THREADS" == "[]" ]]; then
     echo "No review comments."
     exit 0
 fi

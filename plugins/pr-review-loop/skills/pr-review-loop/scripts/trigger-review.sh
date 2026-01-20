@@ -55,7 +55,9 @@ done
 
 # Get PR number if not provided
 if [[ -z "$PR_NUMBER" ]]; then
-    PR_NUMBER=$(gh pr view --json number --jq '.number' 2>/dev/null || echo "")
+    PR_NUMBER=$(gh pr view --json number --jq '.number' 2>&1) || {
+        PR_NUMBER=""
+    }
 fi
 
 if [[ -z "$PR_NUMBER" ]]; then
@@ -104,21 +106,49 @@ REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 OWNER=$(echo "$REPO" | cut -d'/' -f1)
 REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
 
-# Function to get current unresolved comment count
+# Function to get current unresolved comment count (with pagination)
 get_comment_count() {
-    gh api graphql -f query='
-    query($owner: String!, $repo: String!, $pr: Int!) {
-      repository(owner: $owner, name: $repo) {
-        pullRequest(number: $pr) {
-          reviewThreads(first: 100) {
-            nodes {
-              isResolved
-            }
-          }
-        }
-      }
-    }' -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" 2>/dev/null | \
-    jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length'
+    local count=0
+    local cursor=""
+    local has_next=true
+
+    while [[ "$has_next" == "true" ]]; do
+        local result
+        if [[ -z "$cursor" ]]; then
+            result=$(gh api graphql -f query='
+            query($owner: String!, $repo: String!, $pr: Int!) {
+              repository(owner: $owner, name: $repo) {
+                pullRequest(number: $pr) {
+                  reviewThreads(first: 100) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes { isResolved }
+                  }
+                }
+              }
+            }' -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" 2>/dev/null)
+        else
+            result=$(gh api graphql -f query='
+            query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+              repository(owner: $owner, name: $repo) {
+                pullRequest(number: $pr) {
+                  reviewThreads(first: 100, after: $cursor) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes { isResolved }
+                  }
+                }
+              }
+            }' -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" -f cursor="$cursor" 2>/dev/null)
+        fi
+
+        local page_count
+        page_count=$(echo "$result" | jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length')
+        count=$((count + page_count))
+
+        has_next=$(echo "$result" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false')
+        cursor=$(echo "$result" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty')
+    done
+
+    echo "$count"
 }
 
 # Only Gemini needs a manual trigger command
