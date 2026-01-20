@@ -511,6 +511,11 @@ Bash(scripts/reopen-comment.sh:*)
 ## Prerequisites
 
 - `gh` CLI authenticated
+- `jq` - JSON processor for parsing GitHub API responses
+  Install with: `apt install jq` (Ubuntu/Debian) or `brew install jq` (macOS)
 - `pre-commit` (optional) - If `.pre-commit-config.yaml` exists in the repo, pre-commit will be run.
   If pre-commit is not installed, a warning is shown but commits proceed.
   Install with: `pip install pre-commit && pre-commit install`
+- `bd` (beads) (optional) - Issue tracker for capturing out-of-scope suggestions as tickets.
+  If not installed, out-of-scope suggestions are handled with "Out of scope for this PR" replies.
+  See: https://github.com/anthropics/beads

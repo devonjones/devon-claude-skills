@@ -54,26 +54,50 @@ if [[ "$REPLY_POSTED" == "false" ]]; then
         # If we have a numeric ID but REST failed, convert to Node ID
         NODE_ID="$COMMENT_ID"
         if [[ "$COMMENT_ID" =~ ^[0-9]+$ ]]; then
-            # Look up the Node ID from the database ID
-            NODE_ID=$(gh api graphql -f query="
-                query(\$owner: String!, \$repo: String!, \$pr: Int!) {
-                    repository(owner: \$owner, name: \$repo) {
-                        pullRequest(number: \$pr) {
-                            reviewThreads(first: 100) {
-                                nodes {
-                                    comments(first: 1) {
+            # Look up the Node ID from the database ID (with pagination)
+            NODE_ID=""
+            CURSOR=""
+            HAS_NEXT=true
+            while [[ "$HAS_NEXT" == "true" ]] && [[ -z "$NODE_ID" ]]; do
+                if [[ -z "$CURSOR" ]]; then
+                    PAGE=$(gh api graphql -f query="
+                        query(\$owner: String!, \$repo: String!, \$pr: Int!) {
+                            repository(owner: \$owner, name: \$repo) {
+                                pullRequest(number: \$pr) {
+                                    reviewThreads(first: 100) {
+                                        pageInfo { hasNextPage endCursor }
                                         nodes {
-                                            id
-                                            databaseId
+                                            comments(first: 1) {
+                                                nodes { id databaseId }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
-                }
-            " -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" \
-            --jq ".data.repository.pullRequest.reviewThreads.nodes[].comments.nodes[] | select(.databaseId == $COMMENT_ID) | .id" 2>/dev/null || echo "")
+                    " -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" 2>/dev/null || echo "{}")
+                else
+                    PAGE=$(gh api graphql -f query="
+                        query(\$owner: String!, \$repo: String!, \$pr: Int!, \$cursor: String) {
+                            repository(owner: \$owner, name: \$repo) {
+                                pullRequest(number: \$pr) {
+                                    reviewThreads(first: 100, after: \$cursor) {
+                                        pageInfo { hasNextPage endCursor }
+                                        nodes {
+                                            comments(first: 1) {
+                                                nodes { id databaseId }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    " -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" -f cursor="$CURSOR" 2>/dev/null || echo "{}")
+                fi
+                NODE_ID=$(echo "$PAGE" | jq -r ".data.repository.pullRequest.reviewThreads.nodes[].comments.nodes[] | select(.databaseId == $COMMENT_ID) | .id" 2>/dev/null | head -1 || echo "")
+                HAS_NEXT=$(echo "$PAGE" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false')
+                CURSOR=$(echo "$PAGE" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty')
+            done
         fi
 
         if [[ -n "$NODE_ID" ]]; then
@@ -106,26 +130,52 @@ fi
 if [[ "$NO_RESOLVE" != "--no-resolve" ]]; then
     echo "Resolving thread..."
 
-    # Get thread ID by finding the thread that contains this comment
-    THREAD_ID=$(gh api graphql -f query="
-        query(\$owner: String!, \$repo: String!, \$pr: Int!) {
-            repository(owner: \$owner, name: \$repo) {
-                pullRequest(number: \$pr) {
-                    reviewThreads(first: 100) {
-                        nodes {
-                            id
-                            comments(first: 1) {
+    # Get thread ID by finding the thread that contains this comment (with pagination)
+    THREAD_ID=""
+    CURSOR=""
+    HAS_NEXT=true
+    while [[ "$HAS_NEXT" == "true" ]] && [[ -z "$THREAD_ID" ]]; do
+        if [[ -z "$CURSOR" ]]; then
+            PAGE=$(gh api graphql -f query="
+                query(\$owner: String!, \$repo: String!, \$pr: Int!) {
+                    repository(owner: \$owner, name: \$repo) {
+                        pullRequest(number: \$pr) {
+                            reviewThreads(first: 100) {
+                                pageInfo { hasNextPage endCursor }
                                 nodes {
-                                    databaseId
+                                    id
+                                    comments(first: 1) {
+                                        nodes { databaseId }
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-        }
-    " -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" \
-    --jq ".data.repository.pullRequest.reviewThreads.nodes[] | select(.comments.nodes[0].databaseId == $COMMENT_ID) | .id" 2>/dev/null || echo "")
+            " -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" 2>/dev/null || echo "{}")
+        else
+            PAGE=$(gh api graphql -f query="
+                query(\$owner: String!, \$repo: String!, \$pr: Int!, \$cursor: String) {
+                    repository(owner: \$owner, name: \$repo) {
+                        pullRequest(number: \$pr) {
+                            reviewThreads(first: 100, after: \$cursor) {
+                                pageInfo { hasNextPage endCursor }
+                                nodes {
+                                    id
+                                    comments(first: 1) {
+                                        nodes { databaseId }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            " -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" -f cursor="$CURSOR" 2>/dev/null || echo "{}")
+        fi
+        THREAD_ID=$(echo "$PAGE" | jq -r ".data.repository.pullRequest.reviewThreads.nodes[] | select(.comments.nodes[0].databaseId == $COMMENT_ID) | .id" 2>/dev/null | head -1 || echo "")
+        HAS_NEXT=$(echo "$PAGE" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false')
+        CURSOR=$(echo "$PAGE" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty')
+    done
 
     if [[ -n "$THREAD_ID" && "$THREAD_ID" != "null" ]]; then
         gh api graphql -f query="

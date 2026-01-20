@@ -43,21 +43,9 @@ RESULT=$(gh api \
     -f path="$FILE_PATH" \
     -F line="$LINE_NUMBER" \
     -f side="RIGHT" 2>&1) || {
-    echo "Error posting comment: $RESULT"
-
-    # Try with subject_type for newer API
-    RESULT=$(gh api \
-        --method POST \
-        "repos/${REPO}/pulls/${PR_NUMBER}/comments" \
-        -f body="$SIGNED_COMMENT" \
-        -f commit_id="$COMMIT_SHA" \
-        -f path="$FILE_PATH" \
-        -F line="$LINE_NUMBER" \
-        -f subject_type="line" 2>&1) || {
-        echo "Error: Failed to post comment"
-        echo "$RESULT"
-        exit 1
-    }
+    echo "Error: Failed to post comment to ${FILE_PATH}:${LINE_NUMBER}"
+    echo "$RESULT"
+    exit 1
 }
 
 COMMENT_ID=$(echo "$RESULT" | jq -r '.id // empty')

@@ -22,27 +22,72 @@ REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
 
 echo "Reopening thread for comment $COMMENT_ID on PR #$PR_NUMBER..."
 
-# Find the thread ID for this comment
-THREAD_INFO=$(gh api graphql -f query="
-    query(\$owner: String!, \$repo: String!, \$pr: Int!) {
-        repository(owner: \$owner, name: \$repo) {
-            pullRequest(number: \$pr) {
-                reviewThreads(first: 100) {
-                    nodes {
-                        id
-                        isResolved
-                        comments(first: 1) {
+# Find the thread ID for this comment (with pagination)
+ALL_THREADS="[]"
+CURSOR=""
+HAS_NEXT_PAGE=true
+
+while [[ "$HAS_NEXT_PAGE" == "true" ]]; do
+    if [[ -z "$CURSOR" ]]; then
+        PAGE_RESULT=$(gh api graphql -f query="
+            query(\$owner: String!, \$repo: String!, \$pr: Int!) {
+                repository(owner: \$owner, name: \$repo) {
+                    pullRequest(number: \$pr) {
+                        reviewThreads(first: 100) {
+                            pageInfo { hasNextPage endCursor }
                             nodes {
                                 id
-                                databaseId
+                                isResolved
+                                comments(first: 1) {
+                                    nodes {
+                                        id
+                                        databaseId
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
+        " -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER") || {
+            echo "Error: Failed to fetch thread info from GitHub API"
+            exit 1
         }
-    }
-" -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" 2>/dev/null)
+    else
+        PAGE_RESULT=$(gh api graphql -f query="
+            query(\$owner: String!, \$repo: String!, \$pr: Int!, \$cursor: String) {
+                repository(owner: \$owner, name: \$repo) {
+                    pullRequest(number: \$pr) {
+                        reviewThreads(first: 100, after: \$cursor) {
+                            pageInfo { hasNextPage endCursor }
+                            nodes {
+                                id
+                                isResolved
+                                comments(first: 1) {
+                                    nodes {
+                                        id
+                                        databaseId
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        " -f owner="$OWNER" -f repo="$REPO_NAME" -F pr="$PR_NUMBER" -f cursor="$CURSOR") || {
+            echo "Error: Failed to fetch thread info from GitHub API"
+            exit 1
+        }
+    fi
+
+    PAGE_THREADS=$(echo "$PAGE_RESULT" | jq '.data.repository.pullRequest.reviewThreads.nodes')
+    ALL_THREADS=$(echo "$ALL_THREADS $PAGE_THREADS" | jq -s 'add')
+
+    HAS_NEXT_PAGE=$(echo "$PAGE_RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+    CURSOR=$(echo "$PAGE_RESULT" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
+done
+
+THREAD_INFO=$(echo "$ALL_THREADS" | jq '{data: {repository: {pullRequest: {reviewThreads: {nodes: .}}}}}')
 
 # Extract thread ID - handle both numeric and node IDs
 if [[ "$COMMENT_ID" =~ ^[0-9]+$ ]]; then
