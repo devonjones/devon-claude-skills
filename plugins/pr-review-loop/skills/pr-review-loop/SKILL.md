@@ -47,54 +47,60 @@ Task tool:
   prompt: |
     Execute the PR review feedback loop for PR #<PR>.
 
+    ⚠️ CRITICAL: Each round must include ALL reviewer types (Gemini, other bots, agents)
+    BEFORE triggering the next review. Do NOT run multiple Gemini rounds first.
+
     **Setup (first round only):**
     - Check for AGENT-REVIEWERS.md files in changed directories (up to repo root)
+    - Parse the # Agents section to discover agent reviewers
     - Load non-Agents H1 sections (e.g., # Guidelines, # Context) as review context
-    - Apply hierarchical scoping: lower directories override same-named sections
 
-    **Each round of the loop:**
+    **Each round of the loop (ALL steps before triggering next review):**
 
-    1. **Get Gemini comments**:
+    1. **Get Gemini comments** (do NOT use --wait after first round):
        - scripts/summarize-reviews.sh <PR>
-       - scripts/get-review-comments.sh <PR> --with-ids --wait
+       - scripts/get-review-comments.sh <PR> --with-ids
 
-    2. **Address Gemini comments** - For EACH comment:
+    2. **Address ALL Gemini comments** - For EACH comment:
        - If worthwhile: fix it, reply "Fixed - [description]"
        - If bad suggestion: reply "Won't fix - [reason]"
-       - If GOOD but out of scope: check `bd --version`, if beads available create ticket with full context (see "Out of Scope Suggestions"), reply "Out of scope - tracked in BD-XXX"
+       - If GOOD but out of scope: reply "Out of scope - tracked in BD-XXX" (create beads ticket if `bd --version` works)
 
     3. **Check for other bot PR comments** (Claude, Cursor, Copilot):
-       - These post single PR comments (not line comments) with multiple issues
+       - gh pr view <PR> --json comments --jq '.comments[] | select(.author.login | test("claude|cursor|copilot"; "i"))'
+       - These post single PR comments with multiple issues
        - Parse the structured markdown to extract individual issues
-       - Reply with `gh pr comment` addressing each issue (see "Comment Formats" section)
 
-    4. **Run agent reviewers** (if AGENT-REVIEWERS.md exists and agents not retired):
-       - Spawn non-retired agents as parallel Tasks
+    4. **Address ALL other bot comments**:
+       - Reply using `reply-to-comment.sh <PR> <comment-id> "response"` (handles PR comments)
+
+    5. **Run agent reviewers** (if AGENT-REVIEWERS.md exists and agents not retired):
+       - Spawn non-retired agents as parallel Tasks (multiple Task calls in ONE message)
        - Wait for all agents to return
-       - Address agent comments (same fix/wontfix/out-of-scope flow)
+
+    6. **Address ALL agent comments**:
+       - Same fix/wontfix/out-of-scope flow as Gemini
        - Track per-agent diminishing returns - retire agents with no actionable feedback
 
-    5. **Commit and push** (if any fixes were made):
+    7. **Commit and push** (if ANY fixes were made in steps 2, 4, or 6):
        - scripts/commit-and-push.sh "fix: address review comments"
 
-    6. **Trigger next review round**:
+    8. **Trigger next review round**:
        - scripts/trigger-review.sh <PR> --wait
        - Go to step 1
 
     **Completion:**
-    When a full round produces no actionable feedback (only nitpicks/won't-fix) AND this was already the "final verification" round:
+    When a full round (steps 1-6) produces no actionable feedback AND this was the "final verification" round:
     - Report all beads tickets created during the review loop (if any)
     - Ask user about merge
 
-    Critical rules:
+    **Critical rules:**
+    - ⚠️ Complete ALL steps 1-6 before step 7-8. Never skip to triggering another review.
     - ALWAYS use commit-and-push.sh, NEVER git commit/push
     - For LINE comments (Gemini, agents): reply using reply-to-comment.sh
-    - For PR comments (Claude): reply using gh pr comment with consolidated response
-    - ALWAYS use --wait flags when polling for reviews (5min timeout)
+    - For PR comments (Claude, IC_...): reply using reply-to-comment.sh (it handles both types)
     - Be skeptical of review suggestions - not all should be implemented
-    - For good suggestions out of scope: create beads ticket if `bd --version` succeeds
-    - Track created beads tickets to report at completion
-    - Track state with TodoWrite (loop state + per-agent state)
+    - Track state with TodoWrite (current step, loop round, per-agent state)
     - Spawn agent reviewers in PARALLEL (multiple Task calls in one message)
 ```
 
@@ -208,11 +214,34 @@ Track review rounds. After 2-3 iterations, evaluate:
 
 ### The Loop
 
-Each round includes all reviewers before triggering the next cycle:
+**⚠️ CRITICAL: Each round includes ALL reviewer types before triggering the next cycle.**
+
+**DO NOT** run multiple Gemini rounds before checking other reviewers. After addressing Gemini comments, you MUST check for other bot comments and run agent reviewers BEFORE triggering another Gemini review. This interleaving is essential because:
+- Fixes made for Gemini may resolve issues other reviewers would have flagged
+- Running all Gemini rounds first makes other reviewer feedback stale and irrelevant
 
 ```
-EACH ROUND:
-1. Get unresolved Gemini LINE comments (use --wait to poll for up to 5 minutes)
+EACH ROUND (all steps before next review trigger):
+┌─────────────────────────────────────────────────────────────┐
+│ 1. Get Gemini comments (--wait only on first check)         │
+│ 2. Address ALL Gemini comments                              │
+│ 3. Check for other bot PR comments (Claude, Cursor, etc.)   │
+│ 4. Address ALL other bot comments                           │
+│ 5. Run agent reviewers (AGENT-REVIEWERS.md)                 │
+│ 6. Address ALL agent comments                               │
+│ 7. Commit and push (if ANY fixes were made in steps 2,4,6)  │
+│ 8. Trigger next review (--wait)                             │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+                    Go to step 1 (next round)
+```
+
+**Step details:**
+
+1. Get unresolved Gemini LINE comments:
+   - First round after PR creation/push: use `--wait` to poll up to 5 minutes
+   - Subsequent rounds: `--wait` is already triggered by step 8
 2. Address Gemini line comments:
    - Fix it → reply "Fixed - ..."
    - Bad suggestion → reply "Won't fix - ..."
@@ -220,22 +249,23 @@ EACH ROUND:
 3. Check for other bot PR comments (Claude, Cursor, Copilot):
    - These are single PR comments containing multiple issues
    - Parse the structured markdown to extract individual issues
-   - Reply to the PR comment addressing each issue (see "Comment Formats" section)
-4. Run agent reviewers (if AGENT-REVIEWERS.md exists and agents not retired):
+4. Address other bot comments:
+   - Reply using `reply-to-comment.sh <PR> <comment-id> "response"` (handles PR comments)
+5. Run agent reviewers (if AGENT-REVIEWERS.md exists and agents not retired):
    - Spawn non-retired agents as parallel Tasks
    - Wait for all agents to return
-   - Address agent comments (fix/wontfix/out-of-scope flow)
+6. Address agent comments:
+   - Same fix/wontfix/out-of-scope flow as Gemini
    - Track per-agent diminishing returns, retire unproductive agents
-5. Use commit-and-push.sh (NEVER raw git commands) - if any fixes were made
-6. Trigger next review: trigger-review.sh <PR> --wait
-7. Go to step 1
+7. Commit and push (NEVER raw git commands) - if ANY fixes were made in this round
+8. Trigger next review: `trigger-review.sh <PR> --wait`
+9. Go to step 1
 
-COMPLETION:
+**COMPLETION:**
 When a full round produces no actionable feedback (Gemini + other bots + agents all stable)
 AND this was the "final verification" round:
-8. Report all beads tickets created during the loop (if any)
-9. Ask user about merge
-```
+- Report all beads tickets created during the loop (if any)
+- Ask user about merge
 
 ### Step-by-step (Each Round)
 
