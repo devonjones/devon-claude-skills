@@ -276,16 +276,28 @@ scripts/get-review-comments.sh <PR> --with-ids --wait
 ```
 The `--wait` flag polls every 30s for up to 5 minutes, waiting for Gemini to respond. Do NOT skip this or use a shorter timeout.
 
+The `--with-ids` flag outputs comment IDs needed for replies. Example output:
+```
+=== Comment ID: 2710906366 | Node ID: PRRC_kwDOD3ZsRc6hlSX- ===
+File: pfsrd2/equipment.py:84
+Priority: high
+
+The function appears to duplicate functionality...
+```
+
+**Use the Node ID (PRRC_...) when replying to comments.** The Node ID is required for `reply-to-comment.sh` to properly attach your reply to the review thread.
+
 **2. Address Gemini line comments (MANDATORY - never skip this):**
 - Evaluate if suggestion is worthwhile
 - Apply fix locally OR decide to skip
-- **ALWAYS reply using the script** - this resolves the thread:
+- **ALWAYS reply using the script with the Node ID** - this resolves the thread:
 ```bash
-scripts/reply-to-comment.sh <PR> <comment-id> "Fixed - description"
+# Use the Node ID (PRRC_...) from get-review-comments.sh --with-ids output
+scripts/reply-to-comment.sh <PR> PRRC_kwDOD3ZsRc6hlSX- "Fixed - description"
 # OR for bad/inappropriate suggestions:
-scripts/reply-to-comment.sh <PR> <comment-id> "Won't fix - reason"
+scripts/reply-to-comment.sh <PR> PRRC_kwDOD3ZsRc6hlSX- "Won't fix - reason"
 # OR for good suggestions outside PR scope - see "Out of Scope Suggestions" section:
-scripts/reply-to-comment.sh <PR> <comment-id> "Out of scope - tracked in BD-XXX"
+scripts/reply-to-comment.sh <PR> PRRC_kwDOD3ZsRc6hlSX- "Out of scope - tracked in BD-XXX"
 ```
 
 **3. Check for other bot PR comments (Claude, Cursor, Copilot):**
