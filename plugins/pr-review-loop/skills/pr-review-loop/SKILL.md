@@ -9,8 +9,9 @@ description: |
   Also supports custom agent reviewers defined in AGENT-REVIEWERS.md for focused reviews (security, DRY, etc.).
   Automatically detects priority levels from different bot formats and handles rate limits.
 
-  RECOMMENDED: Spawn a Task agent (subagent_type: general-purpose) to execute the review loop autonomously.
-  See "Recommended Usage: Run as Task Agent" section for the prompt template.
+  IMPORTANT: Do NOT run the main review loop as a background Task agent. Tasks cannot spawn sub-Tasks,
+  which means agent reviewers (from AGENT-REVIEWERS.md) will silently fail to run. Execute the review
+  loop directly in the main conversation so it can spawn agent reviewer Tasks.
 
   CRITICAL: When using this skill, NEVER use raw git commit/push commands. ALWAYS use commit-and-push.sh script.
   The user has NOT granted permission for raw git commands - only the script is allowed.
@@ -33,78 +34,21 @@ description: |
 
 ---
 
-## ⭐ Recommended Usage: Run as Task Agent
+## ⚠️ Do NOT Run as a Background Task Agent
 
-**The PR review loop should be executed as a background Task, not in the main conversation.**
+**The PR review loop MUST run in the main conversation, NOT as a background Task.**
 
-When the user creates a PR or wants to iterate on reviews, spawn a Task agent to handle the loop autonomously:
+Tasks cannot spawn sub-Tasks. If the review loop runs as a Task, agent reviewers (from
+AGENT-REVIEWERS.md) will silently fail to spawn — they require the Task tool, which is
+only available from the main conversation context.
 
-```yaml
-Task tool:
-  subagent_type: general-purpose
-  model: sonnet
-  description: PR review loop for #<PR>
-  prompt: |
-    Execute the PR review feedback loop for PR #<PR>.
+**What to do instead:** Execute the review loop steps directly in the main conversation.
+This allows you to spawn agent reviewer Tasks in parallel (step 5 of each round) while
+keeping Gemini/bot comment handling inline.
 
-    ⚠️ CRITICAL: Each round must include ALL reviewer types (Gemini, other bots, agents)
-    BEFORE triggering the next review. Do NOT run multiple Gemini rounds first.
-
-    **Setup (first round only):**
-    - Check for AGENT-REVIEWERS.md files in changed directories (up to repo root)
-    - Parse the # Agents section to discover agent reviewers
-    - Load non-Agents H1 sections (e.g., # Guidelines, # Context) as review context
-
-    **Each round of the loop (ALL steps before triggering next review):**
-
-    1. **Get Gemini comments** (do NOT use --wait after first round):
-       - scripts/summarize-reviews.sh <PR>
-       - scripts/get-review-comments.sh <PR> --with-ids
-
-    2. **Address ALL Gemini comments** - For EACH comment:
-       - If worthwhile: fix it, reply "Fixed - [description]"
-       - If bad suggestion: reply "Won't fix - [reason]"
-       - If GOOD but out of scope: reply "Out of scope - tracked in BD-XXX" (create beads ticket if `bd --version` works)
-
-    3. **Check for other bot PR comments** (Claude, Cursor, Copilot):
-       - gh pr view <PR> --json comments --jq '.comments[] | select(.author.login | test("claude|cursor|copilot"; "i"))'
-       - These post single PR comments with multiple issues
-       - Parse the structured markdown to extract individual issues
-
-    4. **Address ALL other bot comments**:
-       - Reply using `reply-to-comment.sh <PR> <comment-id> "response"` (handles PR comments)
-
-    5. **Run agent reviewers** (if AGENT-REVIEWERS.md exists and agents not retired):
-       - Spawn non-retired agents as parallel Tasks (multiple Task calls in ONE message)
-       - Wait for all agents to return
-
-    6. **Address ALL agent comments**:
-       - Same fix/wontfix/out-of-scope flow as Gemini
-       - Track per-agent diminishing returns - retire agents with no actionable feedback
-
-    7. **Commit and push** (if ANY fixes were made in steps 2, 4, or 6):
-       - scripts/commit-and-push.sh "fix: address review comments"
-
-    8. **Trigger next review round**:
-       - scripts/trigger-review.sh <PR> --wait
-       - Go to step 1
-
-    **Completion:**
-    When a full round (steps 1-6) produces no actionable feedback AND this was the "final verification" round:
-    - Report all beads tickets created during the review loop (if any)
-    - Ask user about merge
-
-    **Critical rules:**
-    - ⚠️ Complete ALL steps 1-6 before step 7-8. Never skip to triggering another review.
-    - ALWAYS use commit-and-push.sh, NEVER git commit/push
-    - For LINE comments (Gemini, agents): reply using reply-to-comment.sh
-    - For PR comments (Claude, IC_...): reply using reply-to-comment.sh (it handles both types)
-    - Be skeptical of review suggestions - not all should be implemented
-    - Track state with TodoWrite (current step, loop round, per-agent state)
-    - Spawn agent reviewers in PARALLEL (multiple Task calls in one message)
-```
-
-This keeps the main conversation clean while the agent autonomously handles the review cycles.
+Individual agent reviewers (leaf-level Tasks that don't need to spawn further Tasks)
+should still be spawned via the Task tool — that works because they're called from the
+main conversation, not from within another Task.
 
 ---
 
