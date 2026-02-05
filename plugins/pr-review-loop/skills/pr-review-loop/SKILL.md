@@ -10,7 +10,7 @@ description: |
   Automatically detects priority levels from different bot formats and handles rate limits.
 
   IMPORTANT: Do NOT run the main review loop as a background Task agent. Tasks cannot spawn sub-Tasks,
-  which means agent reviewers (from AGENT-REVIEWERS.md) will silently fail to run. Execute the review
+  so agent reviewers (from AGENT-REVIEWERS.md) will silently fail to run. Execute the review
   loop directly in the main conversation so it can spawn agent reviewer Tasks.
 
   CRITICAL: When using this skill, NEVER use raw git commit/push commands. ALWAYS use commit-and-push.sh script.
@@ -40,7 +40,7 @@ description: |
 
 Tasks cannot spawn sub-Tasks. If the review loop runs as a Task, agent reviewers (from
 AGENT-REVIEWERS.md) will silently fail to spawn — they require the Task tool, which is
-only available from the main conversation context.
+only available in the main conversation.
 
 **What to do instead:** Execute the review loop steps directly in the main conversation.
 This allows you to spawn agent reviewer Tasks in parallel (step 5 of each round) while
