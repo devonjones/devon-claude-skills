@@ -21,7 +21,25 @@ description: |
 
 ## ⛔ STOP - READ THIS FIRST ⛔
 
-**YOU DO NOT HAVE PERMISSION TO USE RAW GIT COMMANDS.**
+### 1. Locate the scripts directory
+
+**FIRST**, use the Glob tool to find the scripts:
+```
+Glob pattern: **/pr-review-loop/*/scripts/commit-and-push.sh
+Path: ~/.claude/plugins/cache
+```
+This gives you the full absolute path to the scripts directory.
+
+**Then use the full literal path for every script call.** For example:
+```bash
+/home/user/.claude/plugins/cache/devon-claude-skills/pr-review-loop/1.0.0/skills/pr-review-loop/scripts/commit-and-push.sh "msg"
+```
+
+**NEVER use variables** like `$SCRIPTS/commit-and-push.sh` — this breaks permission matching.
+**NEVER use compound commands** like `export PATH=... && commit-and-push.sh` — this also breaks permissions.
+**Always inline the full absolute path** in every Bash call.
+
+### 2. No raw git commands
 
 | ❌ FORBIDDEN | ✅ USE INSTEAD |
 |--------------|----------------|
@@ -149,12 +167,13 @@ Track review rounds. After 2-3 iterations, evaluate:
 ## Autonomous Loop Workflow
 
 **CRITICAL RULES - NEVER VIOLATE THESE:**
-1. **ALWAYS use `commit-and-push.sh`** - NEVER `git commit` or `git push` (see table at top of document)
-2. **ALWAYS reply to EVERY comment**:
+1. **ALWAYS use full absolute paths for scripts** - Glob once to find the scripts directory, then inline the full path in every Bash call. NEVER use variables or compound commands (see setup at top of document)
+2. **ALWAYS use `commit-and-push.sh`** - NEVER `git commit` or `git push` (see table at top of document)
+3. **ALWAYS reply to EVERY comment**:
    - Line comments (Gemini, agents): use `reply-to-comment.sh`
    - PR comments (Claude): use `gh pr comment` with consolidated response
-3. **ALWAYS use `--wait` flag** when checking for comments - this ensures proper 5-minute polling
-4. **PR creation automatically triggers Gemini review** - use `get-review-comments.sh --wait` to wait for the first review
+4. **ALWAYS use `--wait` flag** when checking for comments - this ensures proper 5-minute polling
+5. **PR creation automatically triggers Gemini review** - use `get-review-comments.sh --wait` to wait for the first review
 
 ### The Loop
 
