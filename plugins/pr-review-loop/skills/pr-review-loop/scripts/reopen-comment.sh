@@ -16,7 +16,7 @@ AGENT_NAME="${3:?Usage: reopen-comment.sh <pr-number> <comment-id> <agent-name> 
 REASON="${4:?Usage: reopen-comment.sh <pr-number> <comment-id> <agent-name> \"reason\"}"
 
 # Get repo info
-REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner') || {
+REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//') || {
     echo "Error: Could not determine repository. Run from within a git repository." >&2
     exit 1
 }

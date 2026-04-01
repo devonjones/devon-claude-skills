@@ -31,7 +31,7 @@ echo ""
 # Get initial counts
 LAST_REVIEW_COUNT=$(gh api $REPO_FLAG repos/:owner/:repo/pulls/$PR_NUMBER/reviews --jq 'length' 2>/dev/null || echo 0)
 LAST_COMMENT_COUNT=$(gh api $REPO_FLAG repos/:owner/:repo/pulls/$PR_NUMBER/comments --jq 'length' 2>/dev/null || echo 0)
-LAST_PR_COMMENT_COUNT=$(gh pr view "$PR_NUMBER" $REPO_FLAG --json comments --jq '.comments | length' 2>/dev/null || echo 0)
+LAST_PR_COMMENT_COUNT=$(gh pr view "$PR_NUMBER" -R "$REPO" $REPO_FLAG --json comments --jq '.comments | length' 2>/dev/null || echo 0)
 
 echo "Initial state: $LAST_REVIEW_COUNT reviews, $LAST_COMMENT_COUNT inline comments, $LAST_PR_COMMENT_COUNT PR comments"
 echo ""
@@ -60,7 +60,7 @@ while true; do
     fi
 
     # Check for new PR comments (where Gemini posts quota warnings)
-    CURRENT_PR_COMMENT_COUNT=$(gh pr view "$PR_NUMBER" $REPO_FLAG --json comments --jq '.comments | length' 2>/dev/null || echo 0)
+    CURRENT_PR_COMMENT_COUNT=$(gh pr view "$PR_NUMBER" -R "$REPO" $REPO_FLAG --json comments --jq '.comments | length' 2>/dev/null || echo 0)
     if [[ "$CURRENT_PR_COMMENT_COUNT" -gt "$LAST_PR_COMMENT_COUNT" ]]; then
         echo ""
         echo "--- New PR comment detected, checking for quota warning ---"

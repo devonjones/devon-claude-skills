@@ -55,7 +55,7 @@ done
 
 # Get PR number if not provided
 if [[ -z "$PR_NUMBER" ]]; then
-    PR_NUMBER=$(gh pr view --json number --jq '.number' 2>/dev/null) || PR_NUMBER=""
+    PR_NUMBER=$(gh pr view -R "$REPO" --json number --jq '.number' 2>/dev/null) || PR_NUMBER=""
 fi
 
 if [[ -z "$PR_NUMBER" ]]; then
@@ -100,7 +100,7 @@ if [[ "$BOT_TYPE" == "gemini" ]]; then
 fi
 
 # Get repo info for GraphQL queries
-REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//')
 OWNER=$(echo "$REPO" | cut -d'/' -f1)
 REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
 
@@ -151,7 +151,7 @@ get_comment_count() {
 
 # Only Gemini needs a manual trigger command
 if [[ "$BOT_TYPE" == "gemini" ]]; then
-    gh pr comment "$PR_NUMBER" --body "/gemini review"
+    gh pr comment "$PR_NUMBER" -R "$REPO" --body "/gemini review"
     echo "Review requested."
 fi
 
@@ -188,7 +188,7 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
 
         # Check for Gemini quota exceeded (only relevant for Gemini bot)
         if [[ "$BOT_TYPE" == "gemini" ]]; then
-            QUOTA_CHECK=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist[bot]" or .author.login == "gemini-code-assist") | .body' 2>/dev/null | tail -1 || echo "")
+            QUOTA_CHECK=$(gh pr view "$PR_NUMBER" -R "$REPO" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist[bot]" or .author.login == "gemini-code-assist") | .body' 2>/dev/null | tail -1 || echo "")
             if echo "$QUOTA_CHECK" | grep -qi "daily quota limit"; then
                 echo "Gemini is rate-limited. Use Claude fallback:"
                 echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"

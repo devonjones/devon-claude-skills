@@ -16,7 +16,7 @@ set -euo pipefail
 PR_NUMBER="${1:?Usage: check-gemini-quota.sh <pr-number>}"
 
 # Get the most recent comment from gemini-code-assist (may appear as bot or non-bot)
-LAST_GEMINI_COMMENT=$(gh pr view "$PR_NUMBER" --json comments --jq '
+LAST_GEMINI_COMMENT=$(gh pr view "$PR_NUMBER" -R "$REPO" --json comments --jq '
     [.comments[] | select(.author.login == "gemini-code-assist" or .author.login == "gemini-code-assist[bot]")] |
     sort_by(.createdAt) |
     last |

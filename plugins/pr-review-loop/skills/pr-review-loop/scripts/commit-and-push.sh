@@ -60,10 +60,10 @@ git push
 # Optionally trigger new review
 if [[ "$TRIGGER_REVIEW" == "true" ]]; then
     # Get PR number from current branch
-    PR_NUMBER=$(gh pr view --json number --jq '.number' 2>/dev/null || echo "")
+    PR_NUMBER=$(gh pr view -R "$REPO" --json number --jq '.number' 2>/dev/null || echo "")
     if [[ -n "$PR_NUMBER" ]]; then
         echo "Triggering Gemini review on PR #$PR_NUMBER..."
-        gh pr comment "$PR_NUMBER" --body "/gemini review"
+        gh pr comment "$PR_NUMBER" -R "$REPO" --body "/gemini review"
     else
         echo "Warning: Could not determine PR number to trigger review"
     fi

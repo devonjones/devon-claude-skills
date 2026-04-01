@@ -15,14 +15,14 @@ set -euo pipefail
 PR_NUMBER="${1:?Usage: claude-review.sh <pr-number>}"
 
 # Get repo info
-REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner') || {
+REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//') || {
     echo "Error: Could not determine repository. Run from within a git repository." >&2
     exit 1
 }
 
 # Get PR details for the prompt
-PR_TITLE=$(gh pr view "$PR_NUMBER" --json title --jq '.title') || PR_TITLE="PR #$PR_NUMBER"
-PR_BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName') || PR_BRANCH="unknown"
+PR_TITLE=$(gh pr view "$PR_NUMBER" -R "$REPO" --json title --jq '.title') || PR_TITLE="PR #$PR_NUMBER"
+PR_BRANCH=$(gh pr view "$PR_NUMBER" -R "$REPO" --json headRefName --jq '.headRefName') || PR_BRANCH="unknown"
 
 echo "=============================================="
 echo "Claude Code Review for PR #$PR_NUMBER"
@@ -121,7 +121,7 @@ Perform a thorough code review on PR #${PR_NUMBER} in repository ${REPO}.
 
 1. **Fetch the PR diff and details:**
    \`\`\`bash
-   gh pr view ${PR_NUMBER} --json title,body,files,commits
+   gh pr view ${PR_NUMBER} -R "$REPO" --json title,body,files,commits
    gh api repos/${REPO}/pulls/${PR_NUMBER}/files --jq '.[] | {path: .filename, status: .status, patch: .patch}'
    \`\`\`
 
@@ -137,7 +137,7 @@ Perform a thorough code review on PR #${PR_NUMBER} in repository ${REPO}.
 
 4. **Post your review as a PR comment:**
    \`\`\`bash
-   gh pr review ${PR_NUMBER} --comment --body-file /tmp/claude_review.md
+   gh pr review ${PR_NUMBER} -R "$REPO" --comment --body-file /tmp/claude_review.md
    \`\`\`
 
 ## Review Format

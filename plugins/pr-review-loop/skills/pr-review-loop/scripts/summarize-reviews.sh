@@ -20,7 +20,7 @@ for arg in "$@"; do
 done
 
 # Get repo info
-REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//')
 OWNER=$(echo "$REPO" | cut -d'/' -f1)
 REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
 

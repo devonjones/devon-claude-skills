@@ -25,7 +25,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Get repo info
-REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner') || {
+REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//') || {
     echo "Error: Could not determine repository. Run from within a git repository." >&2
     exit 1
 }
