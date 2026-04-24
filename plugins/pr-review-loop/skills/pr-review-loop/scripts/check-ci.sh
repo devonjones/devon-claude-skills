@@ -100,8 +100,9 @@ get_failure_details() {
         echo "Link: $link"
 
         # Try to extract run ID from the link and get failure logs
+        # (use sed, not grep -oP, for portability — -P is not in BSD grep on macOS)
         local run_id
-        run_id=$(echo "$link" | grep -oP 'runs/\K[0-9]+' || echo "")
+        run_id=$(echo "$link" | sed -n 's|.*runs/\([0-9]\+\).*|\1|p')
 
         if [[ -n "$run_id" ]]; then
             echo ""
@@ -166,15 +167,12 @@ while [[ $ELAPSED -lt $TIMEOUT ]]; do
             echo "⏳ Checks running (${status#pending:} pending, ${ELAPSED}s elapsed)"
             ;;
         failing:*)
-            # Some failed but others might still be running - check if any pending
-            local_pending=$(echo "$status" | grep -c "pending" || true)
-            if [[ "$local_pending" -eq 0 ]]; then
-                echo "✗ CI checks failed (${status#failing:} failed)"
-                echo ""
-                get_failure_details
-                exit 1
-            fi
-            echo "⚠ Some checks failing, others still running (${ELAPSED}s elapsed)"
+            # get_check_status only returns failing:* when no checks are pending,
+            # so we can report and exit immediately.
+            echo "✗ CI checks failed (${status#failing:} failed)"
+            echo ""
+            get_failure_details
+            exit 1
             ;;
     esac
 

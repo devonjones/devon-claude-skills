@@ -25,6 +25,11 @@ WAIT_FOR_COMMENTS=false
 WAIT_TIMEOUT=300  # 5 minutes
 POLL_INTERVAL=30
 
+# Get repo info (needed for all gh calls below)
+REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//')
+OWNER=$(echo "$REPO" | cut -d'/' -f1)
+REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
+
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -98,11 +103,6 @@ if [[ "$BOT_TYPE" == "gemini" ]]; then
     fi
     echo "Triggering Gemini review on PR #$PR_NUMBER..."
 fi
-
-# Get repo info for GraphQL queries
-REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//')
-OWNER=$(echo "$REPO" | cut -d'/' -f1)
-REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
 
 # Function to get current unresolved comment count (with pagination)
 get_comment_count() {

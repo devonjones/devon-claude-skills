@@ -59,6 +59,8 @@ git push
 
 # Optionally trigger new review
 if [[ "$TRIGGER_REVIEW" == "true" ]]; then
+    # Derive repo slug from origin so -R works on forks with both origin and upstream remotes
+    REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//')
     # Get PR number from current branch
     PR_NUMBER=$(gh pr view -R "$REPO" --json number --jq '.number' 2>/dev/null || echo "")
     if [[ -n "$PR_NUMBER" ]]; then

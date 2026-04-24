@@ -304,7 +304,6 @@ This script runs pre-commit, commits with proper footer, and pushes.
 ```bash
 scripts/check-ci.sh <PR> --wait
 ```
-This polls until all CI checks complete (up to 10 minutes). See "CI Failure Handling" below for details.
 
 **7. Trigger next review and wait for response:**
 ```bash
@@ -315,8 +314,6 @@ The `--wait` flag polls for up to 5 minutes until new comments appear. Do NOT us
 **8. When new reviews detected, go to step 1**
 
 ## CI Failure Handling
-
-After pushing changes, **always wait for CI before triggering the next review**. Broken CI invalidates review feedback and blocks merging.
 
 ### CI Fix Loop
 
@@ -337,7 +334,7 @@ CI FIX SUB-LOOP (max 3 attempts per round):
 
 ### Rules for CI Fixes
 
-1. **Be conservative** — CI fixes should be minimal. Don't refactor, don't "improve" code, don't change behavior beyond what's needed to make CI pass.
+1. **Be conservative** — minimal fixes only; don't change behavior beyond what's needed to pass CI.
 
 2. **Diagnose before fixing** — Read the failure logs carefully. Common CI failures:
    - **Lint/format errors**: Run the linter/formatter locally, commit the fix
@@ -350,9 +347,9 @@ CI FIX SUB-LOOP (max 3 attempts per round):
    - A lint rule conflicts with the PR's approach (may need a targeted disable)
    - CI infrastructure issues (flaky tests, service outages) — not your problem to fix
 
-4. **Max 3 attempts** — If CI still fails after 3 fix-push cycles, stop and escalate to the user. Continuing risks introducing bugs or drifting from the PR's intent.
+4. **Max 3 attempts** — If CI still fails after 3 fix-push cycles, stop and escalate to the user.
 
-5. **Timeout (exit code 2)** — If `check-ci.sh` times out waiting for checks to complete, ask the user whether to wait longer or proceed.
+5. **Timeout (exit code 2)** — If `check-ci.sh` times out waiting for checks to complete, ask the user whether to wait longer.
 
 ### Example CI Fix Flow
 
