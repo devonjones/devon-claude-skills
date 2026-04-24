@@ -40,8 +40,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Get repo info
-REPO=$(gh pr view "$PR_NUMBER" --json url --jq '.url' 2>/dev/null | sed 's|https://github.com/||' | sed 's|/pull/.*||') || REPO=""
+# Derive repo slug from origin so -R works on forks with both origin and upstream remotes
+REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//') || REPO=""
 REPO_FLAG=""
 if [[ -n "$REPO" ]]; then
     REPO_FLAG="-R $REPO"
