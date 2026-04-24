@@ -202,7 +202,7 @@ When a full round (Gemini + other bots + agent reviewers) produces no actionable
 
 ## Merge Readiness
 
-When the review loop is complete (final verification round produced no actionable feedback), check CI status and read repo-specific merge guidance before proceeding.
+When the review loop is complete, check CI status and read repo-specific merge guidance before proceeding.
 
 ### 1. Check CI Status
 
@@ -223,7 +223,7 @@ Use whatever you find to determine:
 
 ### 3. Prepare Merge-Readiness Summary
 
-Always prepare a summary of what the review loop did and observed. This is useful regardless of repo merge policy:
+Always prepare a summary of what the review loop did and observed:
 
 - **Review loop activity**: Rounds completed, total comments addressed (fixed / won't fix / out of scope)
 - **CI status**: All checks passed, any failures, any checks still running
@@ -523,7 +523,7 @@ scripts/reply-to-comment.sh <PR> <comment-id> "Out of scope - tracked in BD-XXX"
 3. In the completion summary, list all out-of-scope findings and recommend installing beads to track them. Offer to create a follow-up PR that:
    - Creates a markdown file (e.g., `TODO-beads.md`) with pre-filled `bd create` commands for each out-of-scope finding, using the context collected in step 2
    - Includes instructions for the user to run `bd init` and execute the commands in the markdown file
-4. If the user agrees, create a follow-up PR containing the generated markdown file and documentation updates explaining how users can install and use beads. This avoids requiring the agent to install and run beads itself.
+4. If the user agrees, create a follow-up PR containing the generated markdown file and documentation updates explaining how users can install and use beads.
 
 ## Triggering Reviews by Bot Type
 

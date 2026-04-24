@@ -165,7 +165,7 @@ gemini_has_reviewed() {
     local sha="$1"
     local count
     count=$(gh api --paginate "repos/$OWNER/$REPO_NAME/pulls/$PR_NUMBER/reviews" \
-      | jq --arg sha "$sha" '[.[] | select((.user.login == "gemini-code-assist[bot]" or .user.login == "gemini-code-assist") and .commit_id == $sha)] | length') || {
+      | jq -s --arg sha "$sha" 'add | [.[] | select((.user.login == "gemini-code-assist[bot]" or .user.login == "gemini-code-assist") and .commit_id == $sha)] | length') || {
         echo "Warning: Failed to check Gemini review status via API. Assuming not reviewed." >&2
         count=0
     }
