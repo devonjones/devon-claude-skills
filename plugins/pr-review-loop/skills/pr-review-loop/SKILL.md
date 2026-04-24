@@ -224,7 +224,7 @@ EACH ROUND (all steps before next review trigger):
    - Track per-agent diminishing returns, retire unproductive agents
 7. Commit and push (NEVER raw git commands) - if ANY fixes were made in this round
 8. Wait for CI checks to complete: `check-ci.sh <PR> --wait`
-9. If CI fails: fix the failures and go to step 7 (max 3 CI fix attempts per round — see "CI Failure Handling" below)
+9. If CI fails: fix the failures and go to step 7 (max 3 CI fix attempts per round)
 10. Trigger next review: `trigger-review.sh <PR> --wait`
 11. Go to step 1
 
