@@ -92,6 +92,11 @@ get_failure_details() {
     echo "=== FAILED CI CHECKS ==="
     echo ""
 
+    # Track run IDs we've already fetched logs for — multiple failed checks
+    # can belong to the same workflow run (parallel jobs), and --log-failed
+    # returns logs for the whole run, so we'd otherwise print them N times.
+    local seen_runs="|"
+
     while IFS=$'\t' read -r name state link; do
         echo "--- $name ($state) ---"
         echo "Link: $link"
@@ -102,11 +107,16 @@ get_failure_details() {
         run_id=$(echo "$link" | sed -n 's|.*runs/\([0-9][0-9]*\).*|\1|p')
 
         if [[ -n "$run_id" ]]; then
-            echo ""
-            echo "Failure logs (last 80 lines):"
-            echo ""
-            # Get failed job logs - limit output to avoid overwhelming
-            gh run view "$run_id" $REPO_FLAG --log-failed 2>/dev/null | tail -80 || echo "(Could not fetch logs)"
+            if [[ "$seen_runs" == *"|$run_id|"* ]]; then
+                echo "(logs for run $run_id already printed above)"
+            else
+                echo ""
+                echo "Failure logs (last 80 lines):"
+                echo ""
+                # Get failed job logs - limit output to avoid overwhelming
+                gh run view "$run_id" $REPO_FLAG --log-failed 2>/dev/null | tail -80 || echo "(Could not fetch logs)"
+                seen_runs="${seen_runs}${run_id}|"
+            fi
         fi
         echo ""
     done <<< "$failed_checks"
