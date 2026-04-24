@@ -44,8 +44,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Get repo info (needed for all gh calls to work from worktrees or when origin remote differs)
-REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//')
+# Get repo info (needed for all gh calls to work from worktrees or when origin remote differs).
+# Let git's own error surface if we're not in a git repo or origin is missing.
+REPO=$(git remote get-url origin | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//')
 
 # Validate PR number to fail fast on invalid input
 if ! gh pr view "$PR_NUMBER" -R "$REPO" --json number &> /dev/null; then
