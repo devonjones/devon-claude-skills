@@ -27,6 +27,16 @@
       "author": {
         "name": "Devon Jones"
       }
+    },
+    {
+      "name": "youtube-transcript",
+      "description": "Extract transcripts from YouTube videos (plain or timestamped) via youtube-transcript-api",
+      "version": "1.0.0",
+      "source": "./plugins/youtube-transcript",
+      "category": "productivity",
+      "author": {
+        "name": "Devon Jones"
+      }
     }
   ]
 }
