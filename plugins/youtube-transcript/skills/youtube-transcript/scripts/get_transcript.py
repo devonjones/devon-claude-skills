@@ -17,8 +17,10 @@ from pathlib import Path
 from youtube_transcript_api import YouTubeTranscriptApi
 
 VIDEO_ID_RE = re.compile(
-    r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/v/|youtube\.com/shorts/)([a-zA-Z0-9_-]{11})"
-    r"|^([a-zA-Z0-9_-]{11})$"
+    r"[?&]v=([a-zA-Z0-9_-]{11})"                                                  # watch?...&v=ID anywhere in the query
+    r"|(?:youtu\.be/|youtube\.com/embed/|youtube\.com/v/|youtube\.com/shorts/)"   # path-based forms
+    r"([a-zA-Z0-9_-]{11})"
+    r"|^([a-zA-Z0-9_-]{11})$"                                                     # bare 11-char ID
 )
 
 
@@ -26,7 +28,7 @@ def extract_video_id(url_or_id: str) -> str:
     m = VIDEO_ID_RE.search(url_or_id)
     if not m:
         raise ValueError(f"Could not extract a YouTube video ID from: {url_or_id}")
-    return m.group(1) or m.group(2)
+    return m.group(1) or m.group(2) or m.group(3)
 
 
 def format_timestamp(seconds: float) -> str:

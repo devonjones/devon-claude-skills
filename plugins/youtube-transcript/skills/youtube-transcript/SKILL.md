@@ -1,11 +1,11 @@
 ---
 name: youtube-transcript
-description: Extract transcripts from YouTube videos. Use when the user asks for a transcript, subtitles, or captions of a YouTube video and provides a YouTube URL (youtube.com/watch?v=, youtu.be/, youtube.com/shorts/, youtube.com/embed/) or an 11-character video ID. Supports plain text, timestamped output, language selection, and writing directly to a file.
+description: Extract transcripts from YouTube videos. Use when the user asks for a transcript, subtitles, or captions and provides a YouTube URL or 11-character video ID. Supports plain text, timestamped output, language selection, and writing directly to a file.
 ---
 
 # YouTube Transcript
 
-Fetch auto-generated or manually-uploaded captions from a YouTube video via the `youtube-transcript-api` library (run via `uv run --script`, isolated per-invocation — no persistent install).
+Fetch auto-generated or manually-uploaded captions from a YouTube video via the `youtube-transcript-api` library (run via `uv run --script`).
 
 ## Usage
 
