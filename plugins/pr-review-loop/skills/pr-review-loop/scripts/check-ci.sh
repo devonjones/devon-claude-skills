@@ -47,9 +47,6 @@ if [[ -n "$REPO" ]]; then
     REPO_FLAG="-R $REPO"
 fi
 
-# Get the HEAD SHA of the PR for matching check runs
-HEAD_SHA=$(gh pr view "$PR_NUMBER" $REPO_FLAG --json headRefOid --jq '.headRefOid' 2>/dev/null) || HEAD_SHA=""
-
 # Function to get check status summary
 # Returns: "pending", "passing", or "failing"
 get_check_status() {
@@ -102,7 +99,7 @@ get_failure_details() {
         # Try to extract run ID from the link and get failure logs
         # (use sed, not grep -oP, for portability — -P is not in BSD grep on macOS)
         local run_id
-        run_id=$(echo "$link" | sed -n 's|.*runs/\([0-9]\+\).*|\1|p')
+        run_id=$(echo "$link" | sed -n 's|.*runs/\([0-9][0-9]*\).*|\1|p')
 
         if [[ -n "$run_id" ]]; then
             echo ""
