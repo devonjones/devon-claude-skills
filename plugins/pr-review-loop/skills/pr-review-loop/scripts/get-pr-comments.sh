@@ -53,21 +53,20 @@ if ! gh pr view "$PR_NUMBER" -R "$REPO" --json number &> /dev/null; then
     exit 1
 fi
 
-# Default bot pattern (regex); --author uses exact match instead
-BOT_PATTERN="claude|cursor|copilot|gemini-code-assist"
-EXACT_MATCH=false
+# Build jq select filter inline — gh pr view --jq does not support --arg/--argjson,
+# so the pattern is interpolated into the filter string by the shell.
 if [[ -n "$AUTHOR_FILTER" ]]; then
-    BOT_PATTERN="$AUTHOR_FILTER"
-    EXACT_MATCH=true
+    # Exact case-insensitive match on the author filter; lowercase in shell before inlining
+    LOWER_AUTHOR=$(printf '%s' "$AUTHOR_FILTER" | tr '[:upper:]' '[:lower:]')
+    JQ_SELECT="select((.author.login | ascii_downcase) == \"$LOWER_AUTHOR\")"
+else
+    # Regex match against the default bot pattern
+    JQ_SELECT='select(.author.login | test("claude|cursor|copilot|gemini-code-assist"; "i"))'
 fi
-
-# jq filter: exact case-insensitive match for --author, regex for default
-JQ_SELECT='select(if $exact then (.author.login | ascii_downcase) == ($pattern | ascii_downcase) else .author.login | test($pattern; "i") end)'
 
 # Function to get bot PR comment count
 get_bot_comment_count() {
     gh pr view "$PR_NUMBER" -R "$REPO" --json comments \
-        --arg pattern "$BOT_PATTERN" --argjson exact "$EXACT_MATCH" \
         --jq "[.comments[] | $JQ_SELECT] | length" 2>/dev/null || echo 0
 }
 
@@ -110,10 +109,9 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
     fi
 fi
 
-# Fetch bot PR comments
+# Fetch bot PR comments (let gh failures propagate via set -e)
 COMMENTS=$(gh pr view "$PR_NUMBER" -R "$REPO" --json comments \
-    --arg pattern "$BOT_PATTERN" --argjson exact "$EXACT_MATCH" \
-    --jq "[.comments[] | $JQ_SELECT | {id: .id, author: .author.login, createdAt: .createdAt, body: .body}]" 2>/dev/null || echo "[]")
+    --jq "[.comments[] | $JQ_SELECT | {id: .id, author: .author.login, createdAt: .createdAt, body: .body}]")
 
 if [[ "$COMMENTS" == "[]" ]] || [[ -z "$COMMENTS" ]]; then
     echo "No PR comments found from bot reviewers."
