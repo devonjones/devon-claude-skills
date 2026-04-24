@@ -3,7 +3,9 @@
 # Usage: trigger-review.sh [pr-number] [--gemini|--cursor|--claude] [--wait]
 #
 # This script supports multiple review bot types:
-# - Gemini Code Assist: Manually triggered via /gemini review comment
+# - Gemini Code Assist: Triggered via /gemini review comment, but skipped if
+#   Gemini has already reviewed the current commit (e.g., auto-review on push).
+#   Also checks for .gemini/config.yaml to detect repos with auto-review enabled.
 # - Cursor Bugbot: Auto-reviews on push (no manual trigger needed)
 # - Claude: Fallback using a Claude agent to review the PR
 #
@@ -149,10 +151,51 @@ get_comment_count() {
     echo "$count"
 }
 
-# Only Gemini needs a manual trigger command
+# Check if repo has Gemini auto-review configured (.gemini/config.yaml with code_review: true)
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+GEMINI_AUTO_REVIEW=false
+if [[ -n "$REPO_ROOT" && -f "$REPO_ROOT/.gemini/config.yaml" ]]; then
+    if grep -qEi '^[[:space:]]*code_review:[[:space:]]*true[[:space:]]*$' "$REPO_ROOT/.gemini/config.yaml" 2>/dev/null; then
+        GEMINI_AUTO_REVIEW=true
+    fi
+fi
+
+# Check if Gemini has already reviewed a specific commit
+gemini_has_reviewed() {
+    local sha="$1"
+    local count
+    count=$(gh api --paginate "repos/$OWNER/$REPO_NAME/pulls/$PR_NUMBER/reviews" \
+      | jq --arg sha "$sha" '[.[] | select((.user.login == "gemini-code-assist[bot]" or .user.login == "gemini-code-assist") and .commit_id == $sha)] | length') || {
+        echo "Warning: Failed to check Gemini review status via API. Assuming not reviewed." >&2
+        count=0
+    }
+    [[ "$count" -gt 0 ]]
+}
+
+# Only Gemini needs a manual trigger command — but skip if already reviewed this commit
 if [[ "$BOT_TYPE" == "gemini" ]]; then
-    gh pr comment "$PR_NUMBER" -R "$REPO" --body "/gemini review"
-    echo "Review requested."
+    CURRENT_SHA=$(git rev-parse HEAD)
+
+    if gemini_has_reviewed "$CURRENT_SHA"; then
+        echo "Gemini already reviewed commit ${CURRENT_SHA:0:7}, skipping manual trigger."
+    elif [[ "$GEMINI_AUTO_REVIEW" == "true" && "$WAIT_FOR_COMMENTS" == "true" ]]; then
+        # Repo has auto-review configured — wait one interval for it before triggering manually
+        echo "Auto-review detected in .gemini/config.yaml. Waiting ${POLL_INTERVAL}s for auto-review..."
+        sleep "$POLL_INTERVAL"
+
+        if gemini_has_reviewed "$CURRENT_SHA"; then
+            echo "Gemini auto-reviewed commit ${CURRENT_SHA:0:7}, skipping manual trigger."
+        else
+            echo "No auto-review yet. Triggering manually..."
+            gh pr comment "$PR_NUMBER" -R "$REPO" --body "/gemini review"
+            echo "Review requested."
+        fi
+        # Account for the grace period in the wait timeout below
+        GRACE_ELAPSED=$POLL_INTERVAL
+    else
+        gh pr comment "$PR_NUMBER" -R "$REPO" --body "/gemini review"
+        echo "Review requested."
+    fi
 fi
 
 if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
@@ -166,12 +209,15 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
         exit 0
     fi
 
+    # Account for any grace period already waited
+    ELAPSED=${GRACE_ELAPSED:-0}
+    REMAINING=$((WAIT_TIMEOUT - ELAPSED))
+
     echo ""
     echo "Waiting for review comments..."
-    echo "Will poll every ${POLL_INTERVAL}s for up to ${WAIT_TIMEOUT}s (5 minutes)"
+    echo "Will poll every ${POLL_INTERVAL}s for up to ${REMAINING}s"
     echo ""
 
-    ELAPSED=0
     while [[ $ELAPSED -lt $WAIT_TIMEOUT ]]; do
         sleep "$POLL_INTERVAL"
         ELAPSED=$((ELAPSED + POLL_INTERVAL))
