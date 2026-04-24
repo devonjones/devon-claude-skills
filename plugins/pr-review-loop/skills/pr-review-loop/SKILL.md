@@ -568,13 +568,13 @@ Authentication uses JWT tokens stored in httpOnly cookies.
 
 Agent reviewers run as part of **each review round**, after addressing Gemini and other bot comments.
 
-On the first round (or when new agents are discovered), discover agent reviewers using the discovery script:
+On the first round (or when new agents are discovered), discover agent reviewers:
 
 ```bash
 scripts/discover-agents.sh <PR>
 ```
 
-Each agent's `changed_files` list contains only the PR's changed files within that agent's scope. Pass this list to the agent so it reviews only relevant files.
+Each agent's `changed_files` list contains only the PR's changed files within that agent's scope. Pass this list to the agent.
 
 Spawn non-retired agents **in parallel** at step 4 of each round. Track per-agent state to avoid re-running retired agents.
 
@@ -705,7 +705,7 @@ When detected, the script suggests:
 | `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post line comment with agent signature |
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |
 | `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |
-| `discover-agents.sh <PR>` | Discover AGENT-REVIEWERS.md files with hierarchical scoping, returns JSON |
+| `discover-agents.sh <PR>` | Discover agent reviewers with hierarchical scoping |
 
 ## Permission Setup
 

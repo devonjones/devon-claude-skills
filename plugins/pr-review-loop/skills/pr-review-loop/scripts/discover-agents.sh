@@ -149,18 +149,13 @@ parse_agent_file() {
     ' "$file"
 }
 
-# Collect all parsed sections from all files
-ALL_SECTIONS=""
-for file in "${AGENT_FILES[@]}"; do
-    parsed="$(parse_agent_file "$file")"
-    if [[ -n "$parsed" ]]; then
-        if [[ -n "$ALL_SECTIONS" ]]; then
-            ALL_SECTIONS="$ALL_SECTIONS"$'\n'"$parsed"
-        else
-            ALL_SECTIONS="$parsed"
-        fi
-    fi
-done
+# Collect all parsed sections from all files. Capturing the loop's output
+# with command substitution is O(n) vs repeated string concatenation (O(n²)).
+ALL_SECTIONS=$(
+    for file in "${AGENT_FILES[@]}"; do
+        parse_agent_file "$file"
+    done
+)
 
 if [[ -z "$ALL_SECTIONS" ]]; then
     echo '{"agents":[],"context":[]}'
@@ -173,7 +168,7 @@ fi
 # Build a JSON array of changed files for scoping
 CHANGED_FILES_JSON=$(jq -n --arg files "$CHANGED_FILES" '$files | split("\n") | map(select(. != ""))')
 
-echo "$ALL_SECTIONS" | jq -s --argjson files "$CHANGED_FILES_JSON" '
+printf '%s\n' "$ALL_SECTIONS" | jq -s --argjson files "$CHANGED_FILES_JSON" '
     {
         agents: (
             [.[] | select(.type == "agent")] |
