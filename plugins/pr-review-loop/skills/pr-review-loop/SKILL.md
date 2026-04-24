@@ -557,13 +557,12 @@ Authentication uses JWT tokens stored in httpOnly cookies.
 - For `plugins/auth/login.py`: combines `# Guidelines` from `/plugins/` + `# Context` from `/plugins/auth/`
 - For `plugins/utils.py`: uses `# Guidelines` from `/plugins/`
 
-**Discovery algorithm:**
-```bash
-# For each unique directory containing changed files:
-# 1. Walk up to repo root collecting AGENT-REVIEWERS.md paths
-# 2. Parse each file, building agent map (lower wins on name collision)
-# 3. Track each agent's scope (directory where it was defined)
-```
+**Discovery algorithm** (implemented by `scripts/discover-agents.sh`):
+1. Get changed files via `gh pr diff <PR> --name-only`
+2. For each unique directory containing changed files, walk up to repo root collecting `AGENT-REVIEWERS.md` paths
+3. Parse each file, building agent map (lower directory wins on name collision)
+4. Track each agent's scope (directory where it was defined)
+5. Filter changed files per agent to only those within the agent's scope
 
 ### When to Run Agent Reviewers
 
@@ -572,11 +571,10 @@ Agent reviewers run as part of **each review round**, after addressing Gemini an
 On the first round (or when new agents are discovered), discover agent reviewers:
 
 ```bash
-# Get list of changed files
-gh pr diff <PR> --name-only
-
-# For each unique parent directory, check for AGENT-REVIEWERS.md up to repo root
+scripts/discover-agents.sh <PR>
 ```
+
+Each agent's `changed_files` list contains only the PR's changed files within that agent's scope. Pass this list to the agent.
 
 Spawn non-retired agents **in parallel** at step 4 of each round. Track per-agent state to avoid re-running retired agents.
 
@@ -595,7 +593,10 @@ Task tool:
     Your focus: <instructions from AGENT-REVIEWERS.md>
 
     **Your scope: <scope-path>/**
-    You should ONLY review changes to files under this path. Ignore changes outside your scope.
+    You should ONLY review changes to the files listed below. Ignore all other files.
+
+    **Changed files in your scope:**
+    <changed_files list from discover-agents.sh output>
 
     ## Your workflow:
 
@@ -611,11 +612,11 @@ Task tool:
          scripts/reopen-comment.sh <PR> <comment-id> <agent-name> "Reopening - <reason why response is insufficient>"
          ```
 
-    3. **Review the PR diff** (filter to your scope):
+    3. **Review the PR diff** (only your changed_files):
+       Read each file from your changed_files list directly, or filter the diff:
        ```bash
-       gh pr diff <PR> -- '<scope-path>/*'
+       gh pr diff <PR> -- <file1> <file2> ...
        ```
-       If scope is repo root, use `gh pr diff <PR>` without path filter.
 
     4. **Post NEW findings** as line comments (only issues not already raised, only files in your scope):
        ```bash
@@ -704,6 +705,7 @@ When detected, the script suggests:
 | `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post line comment with agent signature |
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |
 | `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |
+| `discover-agents.sh <PR>` | Discover agent reviewers with hierarchical scoping |
 
 ## Permission Setup
 
@@ -716,6 +718,7 @@ Bash(scripts/check-ci.sh:*)
 Bash(scripts/post-line-comment.sh:*)
 Bash(scripts/get-agent-comments.sh:*)
 Bash(scripts/reopen-comment.sh:*)
+Bash(scripts/discover-agents.sh:*)
 ```
 
 ## Prerequisites

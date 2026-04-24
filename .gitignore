@@ -2,3 +2,6 @@
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# Claude Code local state (per-machine, must not be committed)
+.claude/
