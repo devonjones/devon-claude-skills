@@ -147,22 +147,99 @@ The key difference: Claude comments don't have "threads" to resolve - you reply 
 
 When in doubt, ask the user rather than blindly applying changes.
 
-## Diminishing Returns Detection
+### Self-Contradiction Detection
 
-Track review rounds. After 2-3 iterations, evaluate:
-- Are new comments addressing real issues or nitpicks?
-- Are we fixing the same type of issue repeatedly?
-- Are reviewers finding fewer/lower-priority issues?
+Track changes across rounds. When a fix in round N reverses or conflicts with a fix from a previous round, this signals that the review loop may be degrading the code rather than improving it.
 
-**ONE MORE LOOP rule**: When a full round (Gemini + other bots + agent reviewers) produces no actionable feedback (or only "Won't fix" responses), do ONE additional round to catch any final feedback.
+**When a contradiction is detected:**
+
+1. **Identify all involved changes**: List the original code, the round N-K change, and the round N change that contradicts it.
+2. **Analyze both positions**: Each round may have had valid reasoning. Assess whether the later round caught a genuine mistake in the earlier fix, or whether the loop is oscillating.
+3. **Check against the original**: Compare both the round N-K and round N versions against the original pre-review-loop code. Often the original is the correct version.
+4. **Report to the user** with a clear summary: what changed, what contradicted it, your assessment of which version is correct and why, and a recommendation.
+5. **Do not silently apply the contradicting change.** Pause and get user input.
+
+**Parallel valid findings**: Multiple reviewers may independently flag different aspects of the same code. This is not a contradiction — it's convergent analysis. The key distinction is whether round N is *undoing* round N-K's work (contradiction) vs. addressing a *different concern* in nearby code (parallel findings).
+
+## Stopping Heuristics
+
+Use signal quality — not a fixed round cap — to decide when to stop iterating.
+
+### Per-Round Assessment
+
+After each round, evaluate:
+
+| Metric | What It Means |
+|--------|---------------|
+| **Fix/rejection ratio** | What fraction of comments led to actual code fixes vs. "Won't fix" responses? A declining ratio suggests diminishing returns. |
+| **Severity trend** | Are new comments addressing high-priority issues (correctness, security) or low-priority nitpicks (style, documentation)? |
+| **Contradiction count** | Has this round contradicted any previous round's fixes? If so, investigate before continuing. |
+| **Net code quality** | Is the code measurably better than after the previous round? Or are changes lateral (different but not better)? |
+
+### When to Continue
+
+- The current round produced fixes for genuine correctness or security issues
+- New comments are addressing aspects not previously reviewed
+- The fix/rejection ratio remains above ~50% (most comments are actionable)
+
+### When to Stop
+
+- Two consecutive rounds with mostly "Won't fix" or nitpick-only feedback
+- A self-contradiction is detected (pause for user input)
+- The fix/rejection ratio drops below ~25% (most comments are not actionable)
+- All remaining comments are stylistic or theoretical
+- Hard ceiling: 7 total rounds, or 5 consecutive nitpick-only rounds — stop regardless of other signals
+
+### ONE MORE LOOP Rule
+
+When a full round (Gemini + other bots + agent reviewers) produces no actionable feedback, do ONE additional "final verification" round to catch any last feedback from the final push.
 
 **Tracking state**: Use TodoWrite to track whether you're in the "final verification round". Create a todo like "Final verification round - if no actionable feedback, ready to merge".
 
-**Reset condition**: If the final verification round produces feedback you actually fix (not just "Won't fix"), remove the "final verification round" todo - you need a fresh "one more" after pushing those fixes.
+**Reset condition**: If the final verification round produces feedback you actually fix (not just "Won't fix"), remove the "final verification round" todo — you need a fresh "one more" after pushing those fixes.
 
-**Exit condition**: If the "final verification round" todo exists AND the round produces no actionable feedback (only nitpicks/won't-fix responses), you're done - ask about merge.
+**Exit condition**: If the "final verification round" todo exists AND the round produces no actionable feedback (only nitpicks/won't-fix responses), you're done — proceed to merge readiness checks.
 
-**After the final round**, ask the user: "We've completed the review cycles. Ready to merge, or want to address more?"
+## Merge Readiness
+
+When the review loop is complete (final verification round produced no actionable feedback), check CI status and read repo-specific merge guidance before proceeding.
+
+### 1. Check CI Status
+
+```bash
+gh pr checks <PR> --watch
+```
+
+Do not proceed to merge if any checks are still running or failing. If CI is still running or newly failing at this point, fall back to the [CI Fix Loop](#ci-failure-handling) to diagnose and fix before reporting readiness.
+
+### 2. Read Repo-Specific Merge Guidance
+
+Read the repo's `CLAUDE.md` and follow any linked files it references (e.g., `.ai-knowledge/code-review-guidelines.md`). These define the repo's merge policy — what approvals are required, whether auto-merge is permitted, attestation requirements, and any other merge criteria.
+
+Use whatever you find to determine:
+- Whether this PR is ready to merge or needs further action
+- Whether to merge automatically or ask the user
+- What information to include in a merge-readiness summary
+
+### 3. Prepare Merge-Readiness Summary
+
+Always prepare a summary of what the review loop did and observed. This is useful regardless of repo merge policy:
+
+- **Review loop activity**: Rounds completed, total comments addressed (fixed / won't fix / out of scope)
+- **CI status**: All checks passed, any failures, any checks still running
+- **Unresolved items**: Any review comments that remain open or contested
+- **Self-contradictions**: Any detected during the loop and how they were resolved
+- **Beads tickets**: Out-of-scope items captured for follow-up
+- **Branch protection status**: Whether all required checks and approvals are satisfied
+
+If repo-specific guidance defines additional merge criteria (attestation requirements, approval types, etc.), include the status of those criteria in the summary as well.
+
+### 4. Merge or Ask
+
+- **If repo guidance authorizes auto-merge** and all its criteria are met (CI passed, required approvals present, branch protections satisfied): merge
+- **If any criteria are not met**, or no repo-specific guidance exists: present the summary and ask the user
+
+The review loop should **not** override branch protections or bypass repo-defined merge requirements.
 
 ## Autonomous Loop Workflow
 
@@ -436,10 +513,17 @@ scripts/reply-to-comment.sh <PR> <comment-id> "Out of scope - tracked in BD-XXX"
 
 **Track the ticket** for reporting at the end of the review loop. Keep a list of all created tickets (ID and title) to include in the completion summary.
 
-**If beads is NOT installed**, just reply without creating a ticket:
-```bash
-scripts/reply-to-comment.sh <PR> <comment-id> "Out of scope for this PR"
-```
+**If beads is NOT installed:**
+
+1. Still reply to the comment noting the finding is out of scope:
+   ```bash
+   scripts/reply-to-comment.sh <PR> <comment-id> "Out of scope for this PR - see review loop completion summary"
+   ```
+2. Collect all out-of-scope findings with full context (original comment text, file paths, line numbers, PR number, reviewer, and the `gh api` command to fetch the comment). Store these in your TodoWrite state so they survive across rounds.
+3. In the completion summary, list all out-of-scope findings and recommend installing beads to track them. Offer to create a follow-up PR that:
+   - Creates a markdown file (e.g., `TODO-beads.md`) with pre-filled `bd create` commands for each out-of-scope finding, using the context collected in step 2
+   - Includes instructions for the user to run `bd init` and execute the commands in the markdown file
+4. If the user agrees, create a follow-up PR containing the generated markdown file and documentation updates explaining how users can install and use beads. This avoids requiring the agent to install and run beads itself.
 
 ## Triggering Reviews by Bot Type
 
@@ -447,7 +531,11 @@ scripts/reply-to-comment.sh <PR> <comment-id> "Out of scope for this PR"
 ```bash
 scripts/trigger-review.sh <PR> --gemini --wait
 ```
-Gemini has a daily quota. When exceeded, the skill automatically detects this and suggests alternatives.
+The script uses two checks to avoid redundant `/gemini review` triggers and conserve quota (33 reviews/day on free tier):
+1. **Commit check**: If Gemini has already reviewed the current HEAD commit, skips the trigger entirely.
+2. **Config check**: If `.gemini/config.yaml` exists with `code_review: true`, the repo has auto-review enabled. When `--wait` is used, the script waits one poll interval for an auto-review before falling back to a manual trigger.
+
+When quota is exceeded, the skill automatically detects this and suggests alternatives.
 
 ### Cursor Bugbot
 ```bash
@@ -679,6 +767,24 @@ As agents reach diminishing returns, stop calling them. The main loop should:
 
 This keeps the review loop efficient while ensuring all perspectives are heard at least once.
 
+## Suggesting AGENT-REVIEWERS.md Creation or Updates
+
+During the review loop, if you identify guidance that would improve review quality for the repo but isn't captured anywhere, suggest creating or updating an `AGENT-REVIEWERS.md` file.
+
+**When to suggest creating AGENT-REVIEWERS.md:**
+- The repo has no `AGENT-REVIEWERS.md` AND you identify specific guidance that would help — e.g., recurring review patterns, repo-specific conventions reviewers should know, or specialized review concerns (security, API compatibility) that warrant a custom agent reviewer.
+
+**When to suggest updating an existing AGENT-REVIEWERS.md:**
+- You notice review comments repeatedly flagging the same kind of issue that a `# Guidelines` entry could prevent.
+- A new area of the codebase (e.g., a new subdirectory with different conventions) would benefit from scoped agents or guidelines.
+- Existing agent definitions are missing context that would make their reviews more accurate.
+
+**What NOT to suggest:**
+- Don't suggest creating AGENT-REVIEWERS.md just because the file doesn't exist — only when you have concrete content that would go in it.
+- Don't duplicate guidance that already exists in CLAUDE.md or other repo documentation.
+
+**How to suggest it:** Present the recommendation to the user with the proposed content. Do not create or modify AGENT-REVIEWERS.md without user approval.
+
 ## Rate Limit Detection
 
 The scripts automatically detect Gemini quota limits by checking for:
@@ -694,7 +800,8 @@ When detected, the script suggests:
 |--------|---------|
 | `commit-and-push.sh "msg"` | **ALWAYS USE** - Never use raw git commit/push |
 | `reply-to-comment.sh <PR> <id> "msg"` | **ALWAYS USE** - Reply and auto-resolve every comment |
-| `get-review-comments.sh <PR> [--with-ids] [--wait]` | **USE --wait** - Fetch comments, polls 5min if --wait |
+| `get-review-comments.sh <PR> [--with-ids] [--wait]` | **USE --wait** - Fetch line comments (Gemini, Cursor), polls 5min if --wait |
+| `get-pr-comments.sh <PR> [--with-ids] [--wait] [--author]` | Fetch PR-level comments (Claude, Copilot) with priority detection |
 | `trigger-review.sh [PR] [--gemini\|--cursor\|--claude] [--wait]` | **USE --wait** - Trigger review and poll for response |
 | `check-ci.sh <PR> [--wait] [--timeout N]` | **USE --wait** - Wait for CI, report failures with logs |
 | `summarize-reviews.sh <PR> [--all]` | Summary of unresolved by priority/file |
@@ -719,6 +826,7 @@ Bash(scripts/post-line-comment.sh:*)
 Bash(scripts/get-agent-comments.sh:*)
 Bash(scripts/reopen-comment.sh:*)
 Bash(scripts/discover-agents.sh:*)
+Bash(scripts/get-pr-comments.sh:*)
 ```
 
 ## Prerequisites
