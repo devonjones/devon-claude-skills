@@ -10,10 +10,11 @@
 set -euo pipefail
 
 PR_NUMBER="${1:?Usage: watch-pr.sh <pr-number> [repo]}"
-REPO="${2:-}"
+# Accept repo as optional arg; otherwise derive from origin (consistent with other scripts).
+# This ensures -R works on forks with both origin and upstream remotes.
+REPO="${2:-$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//')}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Build repo flag if provided
 REPO_FLAG=""
 if [[ -n "$REPO" ]]; then
     REPO_FLAG="-R $REPO"

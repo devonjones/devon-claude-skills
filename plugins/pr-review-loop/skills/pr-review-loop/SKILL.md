@@ -193,7 +193,9 @@ EACH ROUND (all steps before next review trigger):
 │ 5. Run agent reviewers (AGENT-REVIEWERS.md)                 │
 │ 6. Address ALL agent comments                               │
 │ 7. Commit and push (if ANY fixes were made in steps 2,4,6)  │
-│ 8. Trigger next review (--wait)                             │
+│ 8. Wait for CI checks to complete                           │
+│ 9. If CI fails → fix and go to step 7 (max 3 CI retries)   │
+│ 10. Trigger next review (--wait)                            │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -204,7 +206,7 @@ EACH ROUND (all steps before next review trigger):
 
 1. Get unresolved Gemini LINE comments:
    - First round after PR creation/push: use `--wait` to poll up to 5 minutes
-   - Subsequent rounds: `--wait` is already triggered by step 8
+   - Subsequent rounds: `--wait` is already triggered by step 10
 2. Address Gemini line comments:
    - Fix it → reply "Fixed - ..."
    - Bad suggestion → reply "Won't fix - ..."
@@ -221,8 +223,10 @@ EACH ROUND (all steps before next review trigger):
    - Same fix/wontfix/out-of-scope flow as Gemini
    - Track per-agent diminishing returns, retire unproductive agents
 7. Commit and push (NEVER raw git commands) - if ANY fixes were made in this round
-8. Trigger next review: `trigger-review.sh <PR> --wait`
-9. Go to step 1
+8. Wait for CI checks to complete: `check-ci.sh <PR> --wait`
+9. If CI fails: fix the failures and go to step 7 (max 3 CI fix attempts per round)
+10. Trigger next review: `trigger-review.sh <PR> --wait`
+11. Go to step 1
 
 **COMPLETION:**
 When a full round produces no actionable feedback (Gemini + other bots + agents all stable)
@@ -296,13 +300,79 @@ scripts/commit-and-push.sh "fix: description"
 ```
 This script runs pre-commit, commits with proper footer, and pushes.
 
-**6. Trigger next review and wait for response:**
+**6. Wait for CI checks and fix failures (if any):**
+```bash
+scripts/check-ci.sh <PR> --wait
+```
+
+**7. Trigger next review and wait for response:**
 ```bash
 scripts/trigger-review.sh <PR> --wait
 ```
 The `--wait` flag polls for up to 5 minutes until new comments appear. Do NOT use sleep or manual polling.
 
-**7. When new reviews detected, go to step 1**
+**8. When new reviews detected, go to step 1**
+
+## CI Failure Handling
+
+### CI Fix Loop
+
+```
+CI FIX SUB-LOOP (max 3 attempts per round):
+┌──────────────────────────────────────────────────┐
+│ 1. Run check-ci.sh <PR> --wait                   │
+│ 2. If passed → continue to trigger next review    │
+│ 3. If failed:                                     │
+│    a. Read the failure logs from check-ci output  │
+│    b. Diagnose the root cause                     │
+│    c. Apply a MINIMAL, TARGETED fix               │
+│    d. commit-and-push.sh "fix: CI failure desc"   │
+│    e. Go to step 1 (decrement retry counter)      │
+│ 4. If max retries exhausted → STOP and ask user   │
+└──────────────────────────────────────────────────┘
+```
+
+### Rules for CI Fixes
+
+1. **Be conservative** — minimal fixes only; don't change behavior beyond what's needed to pass CI.
+
+2. **Diagnose before fixing** — Read the failure logs carefully. Common CI failures:
+   - **Lint/format errors**: Run the linter/formatter locally, commit the fix
+   - **Test failures**: Read the failing test, understand what broke, fix the regression
+   - **Type errors**: Fix the specific type issue flagged
+   - **Build failures**: Fix the compilation/build error
+
+3. **Don't break the PR to fix CI** — If a CI fix would require significant changes that alter PR behavior, STOP and ask the user. Examples:
+   - A test is failing because the PR intentionally changed behavior (test needs updating, not the code)
+   - A lint rule conflicts with the PR's approach (may need a targeted disable)
+   - CI infrastructure issues (flaky tests, service outages) — not your problem to fix
+
+4. **Max 3 attempts** — If CI still fails after 3 fix-push cycles, stop and escalate to the user.
+
+5. **Timeout (exit code 2)** — If `check-ci.sh` times out waiting for checks to complete, ask the user whether to wait longer.
+
+### Example CI Fix Flow
+
+```bash
+# After pushing review fixes
+scripts/check-ci.sh <PR> --wait
+
+# Output shows: ✗ CI checks failed (1/4 failed)
+# === FAILED CI CHECKS ===
+# --- lint (FAILURE) ---
+# src/utils.py:42:1: E302 expected 2 blank lines, got 1
+
+# Fix it
+# (edit the file to add the missing blank line)
+
+# Push the fix
+scripts/commit-and-push.sh "fix: lint error in utils.py"
+
+# Check again
+scripts/check-ci.sh <PR> --wait
+# ✓ All CI checks passed (4/4)
+# → Proceed to trigger next review
+```
 
 ## Reply Templates
 
@@ -625,6 +695,7 @@ When detected, the script suggests:
 | `reply-to-comment.sh <PR> <id> "msg"` | **ALWAYS USE** - Reply and auto-resolve every comment |
 | `get-review-comments.sh <PR> [--with-ids] [--wait]` | **USE --wait** - Fetch comments, polls 5min if --wait |
 | `trigger-review.sh [PR] [--gemini\|--cursor\|--claude] [--wait]` | **USE --wait** - Trigger review and poll for response |
+| `check-ci.sh <PR> [--wait] [--timeout N]` | **USE --wait** - Wait for CI, report failures with logs |
 | `summarize-reviews.sh <PR> [--all]` | Summary of unresolved by priority/file |
 | `watch-pr.sh <PR>` | Background monitor (optional, for long-running watches) |
 | `claude-review.sh <PR>` | Generate Claude agent prompt for code review |
@@ -641,6 +712,7 @@ To enable autonomous loops, user should grant access:
 Bash(scripts/commit-and-push.sh:*)
 Bash(scripts/reply-to-comment.sh:*)
 Bash(scripts/trigger-review.sh:*)
+Bash(scripts/check-ci.sh:*)
 Bash(scripts/post-line-comment.sh:*)
 Bash(scripts/get-agent-comments.sh:*)
 Bash(scripts/reopen-comment.sh:*)

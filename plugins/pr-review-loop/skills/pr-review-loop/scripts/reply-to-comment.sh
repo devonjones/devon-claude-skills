@@ -17,7 +17,7 @@ REPLY="${3:?Usage: reply-to-comment.sh <pr-number> <comment-id> \"reply message\
 NO_RESOLVE="${4:-}"
 
 # Get repo info
-REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//')
 OWNER=$(echo "$REPO" | cut -d'/' -f1)
 REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
 
@@ -29,7 +29,7 @@ if [[ "$COMMENT_ID" =~ ^IC_ ]]; then
     echo "Detected PR comment (issue comment). Will quote and reply..."
 
     # Fetch the original comment to quote it
-    ORIGINAL_COMMENT=$(gh pr view "$PR_NUMBER" --json comments \
+    ORIGINAL_COMMENT=$(gh pr view "$PR_NUMBER" -R "$REPO" --json comments \
         --jq ".comments[] | select(.id == \"$COMMENT_ID\") | {author: .author.login, body: .body}" 2>/dev/null || echo "")
 
     if [[ -z "$ORIGINAL_COMMENT" || "$ORIGINAL_COMMENT" == "null" ]]; then
@@ -61,7 +61,7 @@ EOF
 )
 
     # Post as a new PR comment
-    REPLY_RESULT=$(gh pr comment "$PR_NUMBER" --body "$REPLY_BODY" 2>&1) && {
+    REPLY_RESULT=$(gh pr comment "$PR_NUMBER" -R "$REPO" --body "$REPLY_BODY" 2>&1) && {
         echo "Reply posted successfully (as new PR comment with quote)."
         exit 0
     } || {

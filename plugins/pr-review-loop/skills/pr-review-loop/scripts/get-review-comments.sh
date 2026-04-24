@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Get repo info
-REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//')
 OWNER=$(echo "$REPO" | cut -d'/' -f1)
 REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
 
@@ -124,7 +124,7 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
             fi
 
             # Check for Gemini quota exceeded
-            QUOTA_CHECK=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist[bot]" or .author.login == "gemini-code-assist") | .body' 2>/dev/null | tail -1 || echo "")
+            QUOTA_CHECK=$(gh pr view "$PR_NUMBER" -R "$REPO" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist[bot]" or .author.login == "gemini-code-assist") | .body' 2>/dev/null | tail -1 || echo "")
             if echo "$QUOTA_CHECK" | grep -qi "daily quota limit"; then
                 echo "Gemini is rate-limited. Use Claude fallback:"
                 echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
@@ -146,7 +146,7 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
 fi
 
 # Check for Gemini rate-limit in PR comments
-RATE_LIMITED=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist[bot]" or .author.login == "gemini-code-assist") | .body' 2>/dev/null | grep -q "daily quota limit" && echo "true" || echo "false")
+RATE_LIMITED=$(gh pr view "$PR_NUMBER" -R "$REPO" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist[bot]" or .author.login == "gemini-code-assist") | .body' 2>/dev/null | grep -q "daily quota limit" && echo "true" || echo "false")
 if [[ "$RATE_LIMITED" == "true" ]]; then
     echo "⚠️  Gemini is rate-limited. Use Claude fallback:"
     echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
@@ -156,7 +156,7 @@ fi
 # Get latest commit if --latest flag
 SINCE_COMMIT=""
 if [[ "$LATEST_ONLY" == "true" ]]; then
-    SINCE_COMMIT=$(gh pr view "$PR_NUMBER" --json commits --jq '.commits[-1].oid')
+    SINCE_COMMIT=$(gh pr view "$PR_NUMBER" -R "$REPO" --json commits --jq '.commits[-1].oid')
 fi
 
 # Use GraphQL to get review threads with resolution status (with pagination)
