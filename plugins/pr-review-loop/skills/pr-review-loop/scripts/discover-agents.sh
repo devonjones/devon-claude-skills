@@ -26,8 +26,10 @@ PR_NUMBER="${1:?Usage: discover-agents.sh <pr-number>}"
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
-# Get changed files in the PR
-CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --name-only 2>/dev/null || true)
+# Get changed files in the PR. Let gh errors propagate (set -e) so a missing
+# gh, unauthenticated user, or bad PR number fails loudly instead of silently
+# returning an empty agent list.
+CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --name-only)
 
 if [[ -z "$CHANGED_FILES" ]]; then
     echo '{"agents":[],"context":[]}'
