@@ -56,7 +56,12 @@ fi
 # Build jq select filter inline — gh pr view --jq does not support --arg/--argjson,
 # so the pattern is interpolated into the filter string by the shell.
 if [[ -n "$AUTHOR_FILTER" ]]; then
-    # Exact case-insensitive match on the author filter; lowercase in shell before inlining
+    # Validate author looks like a GitHub login (alphanumerics + hyphens, 1-39 chars, no leading/trailing hyphen).
+    # This prevents inlining unsafe characters into the jq filter string.
+    if [[ ! "$AUTHOR_FILTER" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
+        echo "Error: --author must be a valid GitHub login (alphanumerics and hyphens, 1-39 chars, no leading/trailing hyphen)." >&2
+        exit 2
+    fi
     LOWER_AUTHOR=$(printf '%s' "$AUTHOR_FILTER" | tr '[:upper:]' '[:lower:]')
     JQ_SELECT="select((.author.login | ascii_downcase) == \"$LOWER_AUTHOR\")"
 else
@@ -109,9 +114,12 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
     fi
 fi
 
-# Fetch bot PR comments (let gh failures propagate via set -e)
-COMMENTS=$(gh pr view "$PR_NUMBER" -R "$REPO" --json comments \
-    --jq "[.comments[] | $JQ_SELECT | {id: .id, author: .author.login, createdAt: .createdAt, body: .body}]")
+# Fetch bot PR comments
+if ! COMMENTS=$(gh pr view "$PR_NUMBER" -R "$REPO" --json comments \
+    --jq "[.comments[] | $JQ_SELECT | {id: .id, author: .author.login, createdAt: .createdAt, body: .body}]"); then
+    echo "Error: Failed to fetch PR comments for #$PR_NUMBER." >&2
+    exit 1
+fi
 
 if [[ "$COMMENTS" == "[]" ]] || [[ -z "$COMMENTS" ]]; then
     echo "No PR comments found from bot reviewers."
