@@ -29,8 +29,11 @@ Install the plugins you want to use:
 # Install YouTube screenshotter
 /plugin install youtube-screenshotter@devon-claude-skills
 
+# Install YouTube synthesizer (recommended: install all three YouTube plugins together)
+/plugin install youtube-synthesizer@devon-claude-skills
+
 # Or install all
-/plugin install pr-review-loop@devon-claude-skills nano-banana@devon-claude-skills youtube-transcript@devon-claude-skills youtube-screenshotter@devon-claude-skills
+/plugin install pr-review-loop@devon-claude-skills nano-banana@devon-claude-skills youtube-transcript@devon-claude-skills youtube-screenshotter@devon-claude-skills youtube-synthesizer@devon-claude-skills
 ```
 
 ### Step 3: Verify Installation
@@ -157,6 +160,36 @@ scripts/phash.py compute frame.png
 scripts/phash.py compare frame_a.png frame_b.png
 ```
 
+### youtube-synthesizer
+
+Ingest a YouTube video as a faithful-capture literature note in an Obsidian vault. Combines transcript + canonical visual scenes + structured extraction (TL;DR, takeaways, references, code, tags). The smart layer on top of `youtube-transcript` and `youtube-screenshotter` — drives a bisection + visual-diff judgment loop using the agent's native vision capability (no separate API calls).
+
+**Install:**
+```bash
+/plugin install youtube-synthesizer@devon-claude-skills
+```
+
+Recommended companions: `youtube-transcript` and `youtube-screenshotter` (this skill orchestrates them).
+
+**Features:**
+- Faithful capture, no editorializing — the entry preserves what the video communicated; weaving content into your mental model stays in your hands
+- Per-note folder under `<vault>/sources/videos/<ingested-date>-<sanitized-title>/` so each entry self-contains its assets and is portable
+- Frontmatter follows a stable base schema shared with future article/pdf/substack source-skills, plus YouTube-specific extras (`channel_id`, `playlist_id`, `chapter_markers`, etc.) — designed for a future sqlite3 corpus indexer
+- Hierarchical (chapter → scenes) when chapter markers exist; flat for short videos
+- Skip-by-default if entry already exists; `--rerun` to overwrite
+- All inference runs on your existing Claude Code session — no separate `ANTHROPIC_API_KEY`
+
+**Usage:**
+
+The skill is invoked via natural language or slash command, not a CLI script. Provide a video URL and a target vault path:
+
+```
+Use the youtube-synthesizer skill to ingest
+https://www.youtube.com/watch?v=VIDEO_ID into ~/Obsidian/woodworking
+```
+
+Optional flags interpreted by the skill: `--rerun` to overwrite an existing entry, `--why "<reason>"` to seed the `why_ingested` frontmatter field.
+
 ## Migration Notice
 
 These skills were previously hosted in separate repositories:
@@ -183,6 +216,11 @@ These skills were previously hosted in separate repositories:
 - `uv` — installs Python deps (yt-dlp, imagehash, Pillow) in an ephemeral venv per invocation.
 - `ffmpeg` — required for frame extraction and yt-dlp's video+audio merge. `sudo apt install ffmpeg` (Linux), `brew install ffmpeg` (macOS).
 - Network access to `youtube.com` and `googlevideo.com` for downloads.
+
+### youtube-synthesizer
+- `youtube-transcript` and `youtube-screenshotter` plugins installed (transitively requires `uv` and `ffmpeg`)
+- Network access to YouTube
+- A target Obsidian vault path (writable). Per-note folder convention; the skill writes only under `<vault>/sources/videos/`.
 
 ## License
 
