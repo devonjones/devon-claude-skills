@@ -26,8 +26,11 @@ Install the plugins you want to use:
 # Install YouTube transcripts
 /plugin install youtube-transcript@devon-claude-skills
 
+# Install YouTube screenshotter
+/plugin install youtube-screenshotter@devon-claude-skills
+
 # Or install all
-/plugin install pr-review-loop@devon-claude-skills nano-banana@devon-claude-skills youtube-transcript@devon-claude-skills
+/plugin install pr-review-loop@devon-claude-skills nano-banana@devon-claude-skills youtube-transcript@devon-claude-skills youtube-screenshotter@devon-claude-skills
 ```
 
 ### Step 3: Verify Installation
@@ -125,6 +128,35 @@ scripts/get_transcript.py "VIDEO_ID" --timestamps
 scripts/get_transcript.py "VIDEO_ID" --lang en -o transcript.txt
 ```
 
+### youtube-screenshotter
+
+Download a YouTube video at 720p and extract frames at specified timestamps with perceptual hashes. Mechanical only — pairs with `youtube-synthesizer` (which adds the smart bisection + visual-diff judgment) or any other downstream tool that needs frames + pHashes.
+
+**Install:**
+```bash
+/plugin install youtube-screenshotter@devon-claude-skills
+```
+
+**Features:**
+- Single `extract.py` CLI batches yt-dlp download + ffmpeg frame extraction + pHash computation
+- Manifest JSON output: video metadata block + per-frame entries `{timestamp, frame_path, phash}`
+- Cached on disk: video file by `<video_id>.mp4`, frames by `t<ms>.png` — repeat invocations are cheap
+- Sub-scripts also runnable independently: `video.py` (download/metadata), `frames.py` (frame extraction), `phash.py` (compute / 3-band Hamming classifier)
+- Dependencies via `uv run --script` (yt-dlp, imagehash, Pillow)
+
+**Usage:**
+```bash
+# Extract frames at given timestamps + emit manifest JSON
+scripts/extract.py "https://www.youtube.com/watch?v=VIDEO_ID" -t 1 -t 30 -t 500 -o ./out
+
+# Just metadata, no download
+scripts/video.py "VIDEO_ID" --no-download
+
+# Compute pHash of one image; compare two
+scripts/phash.py compute frame.png
+scripts/phash.py compare frame_a.png frame_b.png
+```
+
 ## Migration Notice
 
 These skills were previously hosted in separate repositories:
@@ -146,6 +178,11 @@ These skills were previously hosted in separate repositories:
 ### youtube-transcript
 - `uv` — installs the Python deps in an ephemeral venv per invocation. Install with `curl -LsSf https://astral.sh/uv/install.sh | sh` or `pip install uv`.
 - Network access to `youtube.com`.
+
+### youtube-screenshotter
+- `uv` — installs Python deps (yt-dlp, imagehash, Pillow) in an ephemeral venv per invocation.
+- `ffmpeg` — required for frame extraction and yt-dlp's video+audio merge. `sudo apt install ffmpeg` (Linux), `brew install ffmpeg` (macOS).
+- Network access to `youtube.com` and `googlevideo.com` for downloads.
 
 ## License
 

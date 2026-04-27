@@ -37,6 +37,16 @@
       "author": {
         "name": "Devon Jones"
       }
+    },
+    {
+      "name": "youtube-screenshotter",
+      "description": "Download YouTube videos and extract frames at given timestamps with perceptual hashes (mechanical, no LLM)",
+      "version": "1.0.0",
+      "source": "./plugins/youtube-screenshotter",
+      "category": "productivity",
+      "author": {
+        "name": "Devon Jones"
+      }
     }
   ]
 }
