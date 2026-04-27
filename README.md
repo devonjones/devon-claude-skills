@@ -23,8 +23,11 @@ Install the plugins you want to use:
 # Install image generation
 /plugin install nano-banana@devon-claude-skills
 
-# Or install both
-/plugin install pr-review-loop@devon-claude-skills nano-banana@devon-claude-skills
+# Install YouTube transcripts
+/plugin install youtube-transcript@devon-claude-skills
+
+# Or install all
+/plugin install pr-review-loop@devon-claude-skills nano-banana@devon-claude-skills youtube-transcript@devon-claude-skills
 ```
 
 ### Step 3: Verify Installation
@@ -94,6 +97,34 @@ scripts/edit_image.py input.png "add a sunset" output.png
 scripts/compose_images.py "combine these" output.png img1.png img2.png img3.png
 ```
 
+### youtube-transcript
+
+Extract transcripts (auto-generated or uploaded) from YouTube videos.
+
+**Install:**
+```bash
+/plugin install youtube-transcript@devon-claude-skills
+```
+
+**Features:**
+- URL parsing for `watch?v=`, `youtu.be/`, `youtube.com/shorts/`, `youtube.com/embed/`, and bare 11-character video IDs
+- Plain text or `[MM:SS]` / `[HH:MM:SS]` timestamped output
+- Language preference via `--lang`
+- Direct file output via `-o PATH`
+- Dependencies installed in an ephemeral per-invocation venv via `uv run --script` (no persistent Python install pollution)
+
+**Usage:**
+```bash
+# Plain transcript to stdout
+scripts/get_transcript.py "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# With timestamps
+scripts/get_transcript.py "VIDEO_ID" --timestamps
+
+# Specific language, write to a file
+scripts/get_transcript.py "VIDEO_ID" --lang en -o transcript.txt
+```
+
 ## Migration Notice
 
 These skills were previously hosted in separate repositories:
@@ -111,6 +142,10 @@ These skills were previously hosted in separate repositories:
 - Python 3.8+
 - `GEMINI_API_KEY` environment variable
 - Dependencies: `pip install google-genai Pillow pyyaml`
+
+### youtube-transcript
+- `uv` — installs the Python deps in an ephemeral venv per invocation. Install with `curl -LsSf https://astral.sh/uv/install.sh | sh` or `pip install uv`.
+- Network access to `youtube.com`.
 
 ## License
 
