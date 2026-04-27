@@ -8,3 +8,7 @@
 
 # Beads / Dolt files (added by bd init)
 .beads-credential-key
+
+# Python bytecode
+__pycache__/
+*.pyc
