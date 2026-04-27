@@ -64,7 +64,7 @@ Returns a manifest with `(timestamp, frame_path, phash)` per requested timestamp
 
 ### A.4. Classify consecutive pairs
 
-For each consecutive pair `(A, B)` in the manifest, compute the Hamming distance between their pHashes (you can do this in your head from the hex strings, or use `<youtube-screenshotter scripts dir>/phash.py compare`).
+For each consecutive pair `(A, B)` in the manifest, compute the Hamming distance between their pHashes via `<youtube-screenshotter scripts dir>/phash.py compare <frame_a> <frame_b>` — it prints `hamming=N verdict=...`. Do not eyeball the hex strings; manual XOR-and-popcount on 16-character hex is error-prone and the script is the canonical source of truth.
 
 | Hamming distance | Verdict | Action |
 |---|---|---|

@@ -99,17 +99,21 @@ def download(url: str, output_dir: Path, *, skip_download: bool = False) -> Down
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=not skip_download)
+        prepared_path = Path(ydl.prepare_filename(info))
 
     metadata = _parse_metadata(info)
 
     if skip_download:
         return DownloadResult(video_path=None, metadata=metadata)
 
-    video_id = metadata.video_id
-    candidates = sorted(output_dir.glob(f"{video_id}.*"))
+    if prepared_path.exists():
+        return DownloadResult(video_path=prepared_path, metadata=metadata)
+
+    # Fallback: post-merge extension can differ from prepare_filename's prediction.
+    candidates = sorted(output_dir.glob(f"{metadata.video_id}.*"))
     media = [p for p in candidates if p.suffix.lower() in {".mp4", ".mkv", ".webm"}]
     if not media:
-        raise RuntimeError(f"download finished but no media file matches {video_id}.*")
+        raise RuntimeError(f"download finished but no media file matches {metadata.video_id}.*")
     return DownloadResult(video_path=media[0], metadata=metadata)
 
 
