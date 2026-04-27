@@ -5,3 +5,6 @@
 
 # Claude Code local state (per-machine, must not be committed)
 .claude/
+
+# Beads / Dolt files (added by bd init)
+.beads-credential-key
