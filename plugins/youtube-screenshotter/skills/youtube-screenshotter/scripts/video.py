@@ -92,6 +92,8 @@ def download(url: str, output_dir: Path, *, skip_download: bool = False) -> Down
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
+        "noplaylist": True,
+        "nooverwrites": True,
         "skip_download": skip_download,
     }
 
@@ -129,8 +131,8 @@ def main() -> int:
 
     try:
         result = download(args.url, args.output_dir, skip_download=args.no_download)
-    except yt_dlp.utils.DownloadError as exc:
-        print(f"download failed: {exc}", file=sys.stderr)
+    except (yt_dlp.utils.DownloadError, RuntimeError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
 
     print(json.dumps(

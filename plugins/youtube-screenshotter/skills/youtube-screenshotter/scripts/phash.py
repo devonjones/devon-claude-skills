@@ -33,7 +33,8 @@ Verdict = Literal["same", "different", "ambiguous"]
 
 
 def compute(image_path: Path) -> imagehash.ImageHash:
-    return imagehash.phash(Image.open(image_path))
+    with Image.open(image_path) as img:
+        return imagehash.phash(img)
 
 
 def hamming(a: imagehash.ImageHash, b: imagehash.ImageHash) -> int:

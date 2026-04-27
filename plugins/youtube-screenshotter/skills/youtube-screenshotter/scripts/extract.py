@@ -31,33 +31,19 @@ import yt_dlp  # noqa: E402
 
 from frames import extract_frames  # noqa: E402
 from phash import compute as phash_compute  # noqa: E402
-from video import DownloadResult, download  # noqa: E402
-
-VIDEO_EXTENSIONS = {".mp4", ".mkv", ".webm"}
-
-
-def _cached_video(output_dir: Path, video_id: str) -> Path | None:
-    """Return the existing video file for this id, or None if not cached."""
-    for ext in VIDEO_EXTENSIONS:
-        candidate = output_dir / f"{video_id}{ext}"
-        if candidate.exists():
-            return candidate
-    return None
+from video import download  # noqa: E402
 
 
 def extract(url: str, timestamps: list[float], output_dir: Path) -> dict:
-    """Download (or reuse) video, extract frames, compute pHashes; return manifest."""
+    """Download (or reuse) video, extract frames, compute pHashes; return manifest.
+
+    yt-dlp's `nooverwrites=True` (set in video.py) makes a re-invocation a
+    metadata-extract call only — the actual file isn't re-downloaded. So this
+    function makes one network round-trip whether or not the video is cached.
+    """
+    timestamps = sorted(set(timestamps))
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Probe metadata first (cheap, no download).
-    probe = download(url, output_dir, skip_download=True)
-    video_id = probe.metadata.video_id
-
-    cached = _cached_video(output_dir, video_id)
-    if cached is not None:
-        result = DownloadResult(video_path=cached, metadata=probe.metadata)
-    else:
-        result = download(url, output_dir, skip_download=False)
+    result = download(url, output_dir, skip_download=False)
 
     frames_dir = output_dir / "frames"
     frames = extract_frames(result.video_path, timestamps, frames_dir)
@@ -100,11 +86,8 @@ def main() -> int:
 
     try:
         manifest = extract(args.url, args.timestamp, args.output_dir)
-    except yt_dlp.utils.DownloadError as exc:
-        print(f"download failed: {exc}", file=sys.stderr)
-        return 1
-    except RuntimeError as exc:
-        print(str(exc), file=sys.stderr)
+    except (yt_dlp.utils.DownloadError, RuntimeError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
 
     print(json.dumps(manifest, indent=2))
