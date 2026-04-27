@@ -18,10 +18,10 @@ Build a personal, searchable archive of practical-application videos. Each entry
 Three composable skills, deliberately separated:
 
 1. **`youtube-transcript`** (already shipped, unchanged) — extracts time-stamped text via `youtube-transcript-api`.
-2. **`youtube-screenshotter`** (new) — given a video URL + a list of timestamps, returns frames. Owns video download (yt-dlp), frame extraction (ffmpeg), pHash diffing, vision-LLM diff judgment, and bisection sampling. Generic over downstream use; doesn't know about wikis or Obsidian. Reusable for future tools (video summarization, scene extraction).
-3. **`youtube-synthesizer`** (new) — wiki-specific orchestrator. Given a video URL + target vault path, calls `youtube-transcript` and `youtube-screenshotter`, consolidates results into scenes, generates structured wiki entry, writes to vault.
+2. **`youtube-screenshotter`** (new) — purely mechanical. Given a video URL + a list of timestamps, downloads the video (yt-dlp), extracts frames at those timestamps (ffmpeg), and computes perceptual hashes (pHash). Emits a manifest JSON with metadata + per-frame entries. **No LLM calls.** Generic over downstream use; doesn't know about wikis or Obsidian. Reusable for future tools.
+3. **`youtube-synthesizer`** (new) — wiki-specific orchestrator. Runs as a Claude Code skill driven by the parent agent. Owns the bisection + diff-judgment loop (using the parent agent's native vision capability — no separate API calls), scene consolidation, structured extraction, and output writing.
 
-The screenshotter is dumb (extracts and judges); the synthesizer is smart (orchestrates and writes). This separation lets each be tested and improved independently.
+The screenshotter is mechanical (download, extract, hash); the synthesizer is smart (everything that requires reasoning, including the same/different/additive verdict). This separation puts every LLM call on the user's existing Claude Code session — there's no separate `ANTHROPIC_API_KEY` and no double-billing.
 
 ## Sampling & frame selection
 
@@ -42,22 +42,24 @@ Either trigger fires the same recursive bisection. Termination conditions:
 
 ### Hybrid diff judge
 
-**pHash pre-filter** — cheap perceptual-hash comparison:
-- Very-low Hamming distance → declare `same` without LLM call
-- Very-high Hamming distance → declare `different` without LLM call
-- Ambiguous middle band → vision LLM
+The judging is split between a cheap mechanical pre-filter (in the screenshotter) and the parent Claude Code agent's reasoning (in the synthesizer). No separate API calls — the synthesizer is a Claude Code skill, so the agent that's already driving it does the visual judgment as part of its normal reasoning loop.
 
-Thresholds will need tuning per video class. Likely 60–80% of pairs decided by pHash alone.
+**pHash pre-filter (screenshotter side)** — perceptual-hash Hamming distance is computed for every extracted frame. The synthesizer reads these from the manifest:
+- Very-low Hamming distance (≤ `SAME_MAX`, default 5) → declare `same` without further work
+- Very-high Hamming distance (≥ `DIFFERENT_MIN`, default 20) → declare `different` without further work
+- Ambiguous middle band → defer to the agent's visual judgment
 
-**Vision LLM judge (Haiku 4.5)** — receives both frames + the transcript span between their timestamps as context. Returns one of:
+In practice ~30–60% of pairs are resolvable from pHash alone (varies by video class — talking-head-heavy content has more ambiguous pairs because pHash can't tell "presenter moved" from "slide changed").
+
+**Agent visual judgment (synthesizer side)** — for ambiguous pairs, the synthesizer's procedure (in its SKILL.md) instructs the parent Claude Code agent to open both frame images via the Read tool and decide the verdict using its native vision capability. Returns one of:
 
 - `same` — no meaningful change
 - `different` — new content / scene change
 - `additive` — frame B contains everything in A plus more (slide animation, code being typed, equation revealed step-by-step)
 
-**Bias the prompt toward false positives.** Calling `different` on actual-same wastes one frame in the wiki — cheap. Calling `same` on actual-different loses information forever — expensive. Default to `different`/`additive` when uncertain.
+**Bias toward false positives.** Calling `different` on actual-same wastes one frame in the wiki — cheap. Calling `same` on actual-different loses information forever — expensive. The SKILL.md instructs the agent to default to `different`/`additive` when uncertain.
 
-**Why transcript context matters.** The model can match expected change (from spoken content) against observed change (from images). "If the spoken content suggests something visual should change and you don't see it, lean toward `same`; if the spoken content suggests build-up, lean toward `additive`." Dramatically improves accuracy over images-alone judging.
+**Why transcript context matters.** The agent should match expected change (from spoken content) against observed change (from images). If the speaker says "as you can see in this new diagram" between frames, expect `different`. If they say "and now we add the next term", expect `additive`. If they're continuing to talk on the same slide, expect `same`. Silent windows often correlate with `different` or `additive` — presenter pausing while showing something visual.
 
 ### Additive handling
 
@@ -153,11 +155,11 @@ No auto-generated wikilinks in Phase 1. Cross-references between video entries s
 
 ## Cost & runtime estimates
 
-- 1hr lecture: ~600–1500 vision-LLM judge calls before pHash filter; ~150–500 after
-- Haiku 4.5 with two ~720p images per call + cached system prompt → cents to low single dollars per video
+- All LLM judgment runs on the user's existing Claude Code session — no separate `ANTHROPIC_API_KEY`, no double-billing. Per-video LLM cost is whatever the parent agent's reasoning loop incurs on its normal tariff.
+- 1hr lecture: ~600–1500 candidate frames after transcript-aligned sampling; ~30–60% resolved by pHash alone, leaving a few hundred ambiguous pairs that go to agent vision in batches
 - yt-dlp download: ~few hundred MB for typical 1hr 720p video
 - ffmpeg frame extraction: trivial
-- Total runtime: ~few minutes to ~15 minutes per video on commodity hardware
+- Total runtime: ~few minutes to ~15 minutes per video on commodity hardware (dominated by download + agent reasoning turns)
 
 ## Phasing
 
@@ -173,13 +175,14 @@ No auto-generated wikilinks in Phase 1. Cross-references between video entries s
 
 See child issues under the epic. Ordered by dependency:
 
-1. screenshotter: yt-dlp video download + metadata extraction
-2. screenshotter: ffmpeg frame extraction at given timestamps + pHash hybrid pre-filter
-3. screenshotter: vision-LLM diff judge (same/different/additive with transcript context)
-4. screenshotter: transcript-aligned bisection sampling pipeline
-5. screenshotter: SKILL.md + CLI entrypoint
-6. synthesizer: scene consolidation + frontmatter generation
-7. synthesizer: structured extraction (TL;DR, takeaways, references, code, tags)
-8. synthesizer: output writing (folder structure, image storage, hierarchical-vs-flat)
-9. synthesizer: SKILL.md + CLI entrypoint
-10. End-to-end validation on the grain-haul test video
+1. screenshotter: yt-dlp video download + metadata extraction *(ih2.1 — done)*
+2. screenshotter: ffmpeg frame extraction + pHash pre-filter *(ih2.2 — done)*
+3. ~~screenshotter: vision-LLM diff judge~~ *(ih2.3 — closed; relocated to ih2.11 in the synthesizer to avoid a separate API key + double-billing)*
+4. screenshotter: unified extract CLI batching download + frames + pHash *(ih2.4)*
+5. screenshotter: SKILL.md + CLI entrypoint *(ih2.5)*
+6. synthesizer: bisection + LLM judgment loop using parent agent's vision *(ih2.11 — new)*
+7. synthesizer: scene consolidation + frontmatter generation *(ih2.6)*
+8. synthesizer: structured extraction (TL;DR, takeaways, references, code, tags) *(ih2.7)*
+9. synthesizer: output writing (folder structure, image storage, hierarchical-vs-flat) *(ih2.8)*
+10. synthesizer: SKILL.md + CLI entrypoint *(ih2.9)*
+11. End-to-end validation on the grain-haul test video *(ih2.10)*
