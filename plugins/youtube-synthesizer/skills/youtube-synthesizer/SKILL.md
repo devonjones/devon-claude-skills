@@ -271,7 +271,7 @@ Pull the references list from the video description, not from the transcript pro
 - A separate video on vassal/loyalty systems — referenced at workflow step 7 (no URL provided in description).
 ```
 
-**Avoid auto-generated wikilinks in Phase 1.** Cross-references between video entries should emerge organically as the corpus grows; auto-linking on heuristic guesses tends to produce noise. The future Phase 4 sqlite3-backed cross-source linker resolves names to wikilinks once matching `sources/` entries exist.
+**Avoid auto-generated wikilinks at this skill version.** Cross-references between video entries should emerge organically as the corpus grows; auto-linking on heuristic guesses tends to produce noise. A future cross-source linker (sqlite3-backed) will resolve names to wikilinks once matching `sources/` entries exist.
 
 ### C.5. Commands & Code
 
@@ -485,7 +485,7 @@ Write `<entry_dir>/index.md`. After writing, verify the file is non-empty and th
 
 Print a clear success message with the absolute path to `index.md` so the user knows where to open it.
 
-### D.6. Failure-mode degradations (Phase 1 scope)
+### D.6. Failure-mode degradations (current scope)
 
 - Re-running on existing entry without `--rerun`: print message, exit (D.2).
 - Very short video (≤ 3 min) or no `chapter_markers`: force flat structure (D.4.a).
