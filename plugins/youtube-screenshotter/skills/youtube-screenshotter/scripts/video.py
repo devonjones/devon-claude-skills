@@ -37,6 +37,7 @@ class VideoMetadata:
     channel: str                 # mirror of source_author for in-context clarity
     channel_id: str              # stable handle, survives channel renames
     duration_seconds: int
+    description: str = ""        # author-written video description verbatim
     chapter_markers: list[Chapter] = field(default_factory=list)
     playlist_id: str | None = None
     playlist_title: str | None = None
@@ -71,6 +72,7 @@ def _parse_metadata(info: dict) -> VideoMetadata:
         channel=info.get("channel", "") or info.get("uploader", ""),
         channel_id=info.get("channel_id", ""),
         duration_seconds=int(info.get("duration") or 0),
+        description=info.get("description", "") or "",
         chapter_markers=chapters,
         playlist_id=info.get("playlist_id"),
         playlist_title=info.get("playlist_title"),
