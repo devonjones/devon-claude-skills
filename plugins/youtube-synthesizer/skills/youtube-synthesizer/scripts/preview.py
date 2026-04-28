@@ -43,23 +43,34 @@ def render_body(md: str) -> str:
     out: list[str] = []
     in_list = False
     in_code = False
-    code_lang = ""
+    para_lines: list[str] = []  # buffered consecutive plain lines forming one paragraph
+
+    def flush_para() -> None:
+        if para_lines:
+            joined = " ".join(para_lines)
+            out.append(f"<p>{render_inline(html.escape(joined))}</p>")
+            para_lines.clear()
+
+    def close_list() -> None:
+        nonlocal in_list
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+
     for raw in md.split("\n"):
         line = raw.rstrip()
 
         # Fenced code block fence (```optional-lang or ```)
         fence_match = re.match(r"^```(\S*)\s*$", line)
         if fence_match:
-            if in_list:
-                out.append("</ul>")
-                in_list = False
+            flush_para()
+            close_list()
             if in_code:
                 out.append("</code></pre>")
                 in_code = False
-                code_lang = ""
             else:
-                code_lang = fence_match.group(1)
-                cls = f' class="language-{html.escape(code_lang)}"' if code_lang else ""
+                lang = fence_match.group(1)
+                cls = f' class="language-{html.escape(lang)}"' if lang else ""
                 out.append(f"<pre><code{cls}>")
                 in_code = True
             continue
@@ -71,24 +82,23 @@ def render_body(md: str) -> str:
 
         m = re.match(r"^!\[\[([^\]]+)\]\]\s*$", line)
         if m:
-            if in_list:
-                out.append("</ul>")
-                in_list = False
+            flush_para()
+            close_list()
             target = html.escape(m.group(1))
             out.append(f'<p><img src="{target}" alt="{target}" /></p>')
             continue
 
         m = re.match(r"^(#{1,4})\s+(.*)$", line)
         if m:
-            if in_list:
-                out.append("</ul>")
-                in_list = False
+            flush_para()
+            close_list()
             level = len(m.group(1))
             out.append(f"<h{level}>{render_inline(html.escape(m.group(2)))}</h{level}>")
             continue
 
         m = re.match(r"^[-*]\s+(.*)$", line)
         if m:
+            flush_para()
             if not in_list:
                 out.append("<ul>")
                 in_list = True
@@ -96,19 +106,18 @@ def render_body(md: str) -> str:
             continue
 
         if not line.strip():
-            if in_list:
-                out.append("</ul>")
-                in_list = False
+            flush_para()
+            close_list()
             out.append("")
             continue
 
-        if in_list:
-            out.append("</ul>")
-            in_list = False
-        out.append(f"<p>{render_inline(html.escape(line))}</p>")
+        # Plain text line: append to current paragraph buffer.
+        # Consecutive non-empty plain lines join into one paragraph; blank lines flush.
+        close_list()
+        para_lines.append(line)
 
-    if in_list:
-        out.append("</ul>")
+    flush_para()
+    close_list()
     if in_code:
         out.append("</code></pre>")
     return "\n".join(out)
@@ -134,7 +143,7 @@ li { margin: .25em 0; }
 
 def render_html(md_path: Path) -> Path:
     """Read md_path, write a sibling .html file, return the html path."""
-    src = md_path.read_text()
+    src = md_path.read_text(encoding="utf-8")
 
     # Split YAML frontmatter
     parts = src.split("---\n", 2)
@@ -175,7 +184,7 @@ def render_html(md_path: Path) -> Path:
 """
 
     out_path = md_path.with_suffix(".html")
-    out_path.write_text(doc)
+    out_path.write_text(doc, encoding="utf-8")
     return out_path
 
 
@@ -189,6 +198,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 def serve(directory: Path, bind: str, port: int) -> None:
     handler = lambda *a, **kw: Handler(*a, directory=str(directory), **kw)
+    # allow_reuse_address avoids "Address already in use" on quick restart
+    # while the previous socket is still in TIME_WAIT.
+    socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer((bind, port), handler) as httpd:
         sys.stderr.write(f"[preview] serving {directory} at http://{bind or '0.0.0.0'}:{port}/\n")
         try:
