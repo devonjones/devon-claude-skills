@@ -31,8 +31,10 @@ from pathlib import Path
 
 
 def render_inline(text: str) -> str:
-    text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
-    text = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<em>\1</em>", text)
+    # Process most-specific to least-specific so `***x***` becomes <strong><em>x</em></strong>.
+    text = re.sub(r"\*\*\*(.+?)\*\*\*", r"<strong><em>\1</em></strong>", text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+    text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
     text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
     return text
 
@@ -40,8 +42,32 @@ def render_inline(text: str) -> str:
 def render_body(md: str) -> str:
     out: list[str] = []
     in_list = False
+    in_code = False
+    code_lang = ""
     for raw in md.split("\n"):
         line = raw.rstrip()
+
+        # Fenced code block fence (```optional-lang or ```)
+        fence_match = re.match(r"^```(\S*)\s*$", line)
+        if fence_match:
+            if in_list:
+                out.append("</ul>")
+                in_list = False
+            if in_code:
+                out.append("</code></pre>")
+                in_code = False
+                code_lang = ""
+            else:
+                code_lang = fence_match.group(1)
+                cls = f' class="language-{html.escape(code_lang)}"' if code_lang else ""
+                out.append(f"<pre><code{cls}>")
+                in_code = True
+            continue
+
+        # Inside a code block: emit raw escaped lines without further parsing.
+        if in_code:
+            out.append(html.escape(line))
+            continue
 
         m = re.match(r"^!\[\[([^\]]+)\]\]\s*$", line)
         if m:
@@ -83,6 +109,8 @@ def render_body(md: str) -> str:
 
     if in_list:
         out.append("</ul>")
+    if in_code:
+        out.append("</code></pre>")
     return "\n".join(out)
 
 
@@ -160,7 +188,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 
 def serve(directory: Path, bind: str, port: int) -> None:
-    Handler.directory = str(directory)  # type: ignore[attr-defined]
     handler = lambda *a, **kw: Handler(*a, directory=str(directory), **kw)
     with socketserver.TCPServer((bind, port), handler) as httpd:
         sys.stderr.write(f"[preview] serving {directory} at http://{bind or '0.0.0.0'}:{port}/\n")

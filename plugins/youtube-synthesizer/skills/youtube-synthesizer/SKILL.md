@@ -30,8 +30,6 @@ A single Obsidian literature note at `<vault>/sources/videos/<ingested-date>-<sa
 - `index.md` — frontmatter + body (TL;DR, key takeaways, chapter-level prose with inline images, references, commands & code)
 - `image-NN.png` siblings — one per kept informational frame, in source order
 
-The four-phase procedure that produces this output is below.
-
 ---
 
 ## The value-filter principle
@@ -64,7 +62,7 @@ For each candidate frame, classify as exactly one of:
 - `animated-build-step` — one frame of a multi-step animated diagram where each step adds information; **keep all of them**, do not collapse to the terminal frame
 - `hybrid-with-info-overlay` — talking-head with a substantive overlay (chart, code, callout) that adds information beyond what the words convey
 
-When uncertain between drop-kinds and keep-kinds, prefer keep. Wasting one frame downstream is cheap; missing a real informational moment is expensive. When uncertain between two keep-kinds, pick the closer match — the kind tag is informational only (it doesn't change rendering in Phase D, but Phase 2 nano-banana regen will route on it).
+When uncertain between drop-kinds and keep-kinds, prefer keep. Wasting one frame downstream is cheap; missing a real informational moment is expensive. When uncertain between two keep-kinds, pick the closer match — the kind tag is informational metadata only and does not change rendering in Phase D.
 
 ---
 
@@ -149,7 +147,7 @@ After bisection and dense sampling, walk the keep-list one more time. For each c
 
 If `hamming ≤ 5` (the `same` verdict), the two frames are visually near-identical — drop `K_{i+1}` from the keep-list.
 
-This catches cases where dense sampling produced redundant captures (e.g. a long-held diagram caught at multiple boundaries). pHash is no longer the primary sampling signal — it's a cheap deduplication check applied after kind-classification.
+This catches cases where dense sampling produced redundant captures (e.g. a long-held diagram caught at multiple boundaries). pHash's role here is as a cheap deduplication check applied after kind-classification, not as a sampling-decision signal.
 
 ### A.8. Emit the final keep-list
 
@@ -380,7 +378,7 @@ Track the mapping `keep_index → (timestamp, relative_filename, kind)` for use 
 
 ### D.4. Compose the body — chapter-level prose flow with inline images
 
-The body is one continuous prose flow per chapter, with images embedded inline at their timestamps. There are **no scene-level headings** — the "scene" abstraction has been dropped. Images are anonymous anchors inside the prose, not section dividers.
+The body is one continuous prose flow per chapter, with images embedded inline at their timestamps. Images are anonymous anchors inside the prose, not section dividers.
 
 #### D.4.a. Decide structure
 
@@ -391,9 +389,9 @@ The body is one continuous prose flow per chapter, with images embedded inline a
 
 #### D.4.b. Snap chapter boundaries to sentence ends
 
-Before concatenating per-chapter, **adjust each non-final chapter's `end_time` to the nearest sentence-terminator-ending snippet within ±15 seconds** of the metadata boundary. Chapter markers in YouTube metadata are timed to visual transitions, not sentence ends — using them strictly produces "...the political map draws itself. Chapter / two." mid-clause splits. The next chapter's `start_time` then equals the previous chapter's snapped `end_time`.
+Before concatenating per-chapter, **adjust each non-final chapter's `end_time` to the nearest sentence-terminator-ending snippet within `[end_time − 5, end_time + 15]`** of the metadata boundary. Chapter markers in YouTube metadata are timed to visual transitions, not sentence ends — using them strictly produces "...the political map draws itself. Chapter / two." mid-clause splits. The next chapter's `start_time` then equals the previous chapter's snapped `end_time`.
 
-Snapping rule: pick the closest snippet whose text ends with `.`, `!`, or `?` and whose timestamp lies in `[end_time − 5, end_time + 15]`. If no such snippet exists in the window, leave the boundary at `end_time`.
+Snapping rule: pick the closest snippet whose text ends with `.`, `!`, or `?` and whose timestamp lies in that window. If no such snippet exists in the window, leave the boundary at `end_time`.
 
 This is also where the spoken "Chapter N." transition lines naturally land: with snapping, "Chapter 3." gets pulled into chapter 2's tail (since the boundary moves to just past it), so chapter 3 starts cleanly with its first content sentence.
 
@@ -430,7 +428,9 @@ The result, per chapter:
 
 **Flat-mode rendering:** same prose flow, no `## <chapter title>` heading. Render the prose under a single `## Body` heading after `## Key takeaways`.
 
-#### D.4.c. Top-level body skeleton
+**Gap handling (chaptered mode):** if `chapter_markers` doesn't cover the full duration, render the gap-time transcript under an `## Uncategorized` section after the last chapter, using the same reflow rules.
+
+#### D.4.d. Top-level body skeleton
 
 ```markdown
 ---
@@ -534,4 +534,4 @@ The soft-correct policy (Phase C.7) is the one place the skill modifies words. I
 - **Video unavailable** (private, members-only, age-restricted, geo-blocked) → error early; stop
 - **Live streams** → refuse for now (no fixed endpoint to sample over)
 - **Very short videos** (≤ 3 min) → flat-mode rendering, no chapter sections
-- **Video has chapter markers but they don't cover the full duration** → render the gap-time transcript under an `## Uncategorized` section at the end (chaptered mode only)
+- **Video has chapter markers but they don't cover the full duration** → see Phase D.4.c gap-handling rule
