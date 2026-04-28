@@ -40,7 +40,7 @@ The four-phase procedure that produces this output is below.
 
 The skill does **not** treat visual change as the trigger for capturing a "scene." A typical explainer video is ~70% talking-head plus filler (title cards, pull-quote text cards, between-content transitions) and ~30% load-bearing visuals (diagrams, maps, charts, code, UI, b-roll). Only the load-bearing 30% should appear as images in the entry. Number of images per video is whatever the source has of substance: 0 in a pure-talking-head section, 4-in-a-row during an animated diagram explanation.
 
-There are no "scenes" in the output. Phase A produces an ordered list of `(timestamp, frame_path, kind)` triples for the kept frames; Phase D renders them as inline image embeds inside chapter-level prose.
+Phase A produces an ordered list of `(timestamp, frame_path, kind)` triples for the kept frames; Phase D renders them as inline image embeds inside chapter-level prose.
 
 ### Frame kinds
 
@@ -70,7 +70,7 @@ When uncertain between drop-kinds and keep-kinds, prefer keep. Wasting one frame
 
 ## Phase A — Value-filter sampling
 
-Produces an ordered list of `(timestamp, frame_path, kind)` triples for the kept frames. This is the smart core of the skill.
+Produces an ordered list of `(timestamp, frame_path, kind)` triples for the kept frames.
 
 ### A.1. Fetch transcript and metadata
 
@@ -125,7 +125,7 @@ After the initial classification pass, walk the keep-list in time order. For eac
 - Re-call `extract.py` with the new timestamps (cached video file makes this fast).
 - Classify the new frames by the same kind taxonomy. Drop-kinds → ignore; keep-kinds → insert into the keep-list and recurse on the new gaps.
 
-This trigger is the inverse of the original design: bisect when there's a **gap** that might contain a missed informational frame in a talking-head-dominated stretch, not when consecutive frames look different.
+Bisect when there's a **gap** that might contain a missed informational frame in a talking-head-dominated stretch, not when consecutive frames look different.
 
 Stop bisecting a window when any of:
 
@@ -161,7 +161,7 @@ The expected size depends entirely on the video's information density. A 1hr lec
 
 ## Phase B — Frontmatter
 
-This phase assembles the YAML frontmatter from the screenshotter's metadata block. It is small — there is no scene consolidation step (the value-filter principle dissolved the scene abstraction).
+This phase assembles the YAML frontmatter from the screenshotter's metadata block.
 
 ### B.1. Generate the frontmatter dictionary
 
