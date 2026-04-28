@@ -26,8 +26,14 @@ Install the plugins you want to use:
 # Install YouTube transcripts
 /plugin install youtube-transcript@devon-claude-skills
 
+# Install YouTube screenshotter
+/plugin install youtube-screenshotter@devon-claude-skills
+
+# Install YouTube synthesizer (recommended: install all three YouTube plugins together)
+/plugin install youtube-synthesizer@devon-claude-skills
+
 # Or install all
-/plugin install pr-review-loop@devon-claude-skills nano-banana@devon-claude-skills youtube-transcript@devon-claude-skills
+/plugin install pr-review-loop@devon-claude-skills nano-banana@devon-claude-skills youtube-transcript@devon-claude-skills youtube-screenshotter@devon-claude-skills youtube-synthesizer@devon-claude-skills
 ```
 
 ### Step 3: Verify Installation
@@ -125,6 +131,65 @@ scripts/get_transcript.py "VIDEO_ID" --timestamps
 scripts/get_transcript.py "VIDEO_ID" --lang en -o transcript.txt
 ```
 
+### youtube-screenshotter
+
+Download a YouTube video at 720p and extract frames at specified timestamps with perceptual hashes. Mechanical only — pairs with `youtube-synthesizer` (which adds the smart bisection + visual-diff judgment) or any other downstream tool that needs frames + pHashes.
+
+**Install:**
+```bash
+/plugin install youtube-screenshotter@devon-claude-skills
+```
+
+**Features:**
+- Single `extract.py` CLI batches yt-dlp download + ffmpeg frame extraction + pHash computation
+- Manifest JSON output: video metadata block + per-frame entries `{timestamp, frame_path, phash}`
+- Cached on disk: video file by `<video_id>.mp4`, frames by `t<ms>.png` — repeat invocations are cheap
+- Sub-scripts also runnable independently: `video.py` (download/metadata), `frames.py` (frame extraction), `phash.py` (compute / 3-band Hamming classifier)
+- Dependencies via `uv run --script` (yt-dlp, imagehash, Pillow)
+
+**Usage:**
+```bash
+# Extract frames at given timestamps + emit manifest JSON
+scripts/extract.py "https://www.youtube.com/watch?v=VIDEO_ID" -t 1 -t 30 -t 500 -o ./out
+
+# Just metadata, no download
+scripts/video.py "VIDEO_ID" --no-download
+
+# Compute pHash of one image; compare two
+scripts/phash.py compute frame.png
+scripts/phash.py compare frame_a.png frame_b.png
+```
+
+### youtube-synthesizer
+
+Ingest a YouTube video as a faithful-capture literature note in an Obsidian vault. Combines transcript + canonical visual scenes + structured extraction (TL;DR, takeaways, references, code, tags). The smart layer on top of `youtube-transcript` and `youtube-screenshotter` — drives a bisection + visual-diff judgment loop using the agent's native vision capability (no separate API calls).
+
+**Install:**
+```bash
+/plugin install youtube-synthesizer@devon-claude-skills
+```
+
+Recommended companions: `youtube-transcript` and `youtube-screenshotter` (this skill orchestrates them).
+
+**Features:**
+- Faithful capture, no editorializing — the entry preserves what the video communicated; weaving content into your mental model stays in your hands
+- Per-note folder under `<vault>/sources/videos/<ingested-date>-<sanitized-title>/` so each entry self-contains its assets and is portable
+- Frontmatter follows a stable base schema shared with future article/pdf/substack source-skills, plus YouTube-specific extras (`channel_id`, `playlist_id`, `chapter_markers`, etc.) — designed for a future sqlite3 corpus indexer
+- Hierarchical (chapter → scenes) when chapter markers exist; flat for short videos
+- Skip-by-default if entry already exists; `--rerun` to overwrite
+- All inference runs on your existing Claude Code session — no separate `ANTHROPIC_API_KEY`
+
+**Usage:**
+
+The skill is invoked via natural language or slash command, not a CLI script. Provide a video URL and a target vault path:
+
+```
+Use the youtube-synthesizer skill to ingest
+https://www.youtube.com/watch?v=VIDEO_ID into ~/Obsidian/woodworking
+```
+
+Optional flags interpreted by the skill: `--rerun` to overwrite an existing entry, `--why "<reason>"` to seed the `why_ingested` frontmatter field.
+
 ## Migration Notice
 
 These skills were previously hosted in separate repositories:
@@ -146,6 +211,16 @@ These skills were previously hosted in separate repositories:
 ### youtube-transcript
 - `uv` — installs the Python deps in an ephemeral venv per invocation. Install with `curl -LsSf https://astral.sh/uv/install.sh | sh` or `pip install uv`.
 - Network access to `youtube.com`.
+
+### youtube-screenshotter
+- `uv` — installs Python deps (yt-dlp, imagehash, Pillow) in an ephemeral venv per invocation.
+- `ffmpeg` — required for frame extraction and yt-dlp's video+audio merge. `sudo apt install ffmpeg` (Linux), `brew install ffmpeg` (macOS).
+- Network access to `youtube.com` and `googlevideo.com` for downloads.
+
+### youtube-synthesizer
+- `youtube-transcript` and `youtube-screenshotter` plugins installed (transitively requires `uv` and `ffmpeg`)
+- Network access to YouTube
+- A target Obsidian vault path (writable). Per-note folder convention; the skill writes only under `<vault>/sources/videos/`.
 
 ## License
 
