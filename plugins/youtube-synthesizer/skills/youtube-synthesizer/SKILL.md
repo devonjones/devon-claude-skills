@@ -1,11 +1,11 @@
 ---
 name: youtube-synthesizer
-description: Turn a YouTube video into a faithful-capture literature note in an Obsidian vault. Use when the user wants to ingest a video (explainer, howto, lecture) into their personal source notes corpus. Combines transcript + canonical visual scenes + structured extraction.
+description: Turn a YouTube video into a faithful-capture literature note in an Obsidian vault. Use when the user wants to ingest a video (explainer, howto, lecture) into their personal source notes corpus. Combines transcript + load-bearing visual frames + structured extraction.
 ---
 
 # YouTube Synthesizer
 
-Orchestrates `youtube-transcript` and `youtube-screenshotter` to produce an Obsidian literature note for a video. Drives the bisection + visual-diff judgment loop using your own native vision capability — no separate API calls, no extra billing.
+Orchestrates `youtube-transcript` and `youtube-screenshotter` to produce an Obsidian literature note for a video. Drives image selection by *value-filter* — every candidate frame is classified by KIND, and only frames that communicate something the transcript words don't survive into the entry. All vision and reasoning runs on your own native capability — no separate API calls, no extra billing.
 
 You — the agent running this skill — do the visual judgment inline as you follow the procedure below. The skill produces faithful capture of the source; downstream synthesis into the user's mental model is their job, not yours.
 
@@ -27,23 +27,59 @@ If any required input is missing, ask the user before starting work — do not g
 
 A single Obsidian literature note at `<vault>/sources/videos/<ingested-date>-<sanitized-title>/` containing:
 
-- `index.md` — frontmatter + body (TL;DR, key takeaways, scenes with embedded frames, references, commands & code)
-- `scene-NN.png` siblings — the canonical frame for each consolidated scene
+- `index.md` — frontmatter + body (TL;DR, key takeaways, chapter-level prose with inline images, references, commands & code)
+- `image-NN.png` siblings — one per kept informational frame, in source order
 
 The four-phase procedure that produces this output is below.
 
 ---
 
-## Phase A — Sampling: bisection + visual-diff judgment
+## The value-filter principle
 
-This phase produces a list of `(timestamp, frame_path, transcript_span, verdict)` triples that downstream phases consume to build the wiki entry. It is the smart core of the skill.
+> **Images appear in the wiki entry only when they communicate something the transcript words don't, or when they help explain the narrative — even if that means several in a row.**
+
+The skill does **not** treat visual change as the trigger for capturing a "scene." A typical explainer video is ~70% talking-head plus filler (title cards, pull-quote text cards, between-content transitions) and ~30% load-bearing visuals (diagrams, maps, charts, code, UI, b-roll). Only the load-bearing 30% should appear as images in the entry. Number of images per video is whatever the source has of substance: 0 in a pure-talking-head section, 4-in-a-row during an animated diagram explanation.
+
+There are no "scenes" in the output. Phase A produces an ordered list of `(timestamp, frame_path, kind)` triples for the kept frames; Phase D renders them as inline image embeds inside chapter-level prose.
+
+### Frame kinds
+
+For each candidate frame, classify as exactly one of:
+
+**Drop (never embed):**
+
+- `talking-head` — presenter's face/torso with no overlaid content
+- `blank` — empty background, between-content transition frame, near-uniform pixels
+- `title-card` — text-only on illustrated background, where the text duplicates the transcript ("THE OXEN PARADOX," "CHAPTER 3," "THREE DAY RULE")
+- `pull-quote-card` — emphasized restatement of what the presenter just said, with no additional information
+
+**Keep (embed at the frame's timestamp):**
+
+- `diagram` — abstract illustration explaining a concept (stick-figures, flowcharts, conceptual visuals)
+- `map` — geographic or topological layout (in-world maps, real-world geography, network diagrams)
+- `chart` — data visualization (bar/line/pie/scatter, tables, math plots)
+- `code` — source code, terminal output, command lines, config files
+- `ui` — software interface, dashboard, application screenshot
+- `b-roll` — real-world footage that is itself the subject (e.g. demonstrating a tool's physical use)
+- `animated-build-step` — one frame of a multi-step animated diagram where each step adds information; **keep all of them**, do not collapse to the terminal frame
+- `hybrid-with-info-overlay` — talking-head with a substantive overlay (chart, code, callout) that adds information beyond what the words convey
+
+When uncertain between drop-kinds and keep-kinds, prefer keep. Wasting one frame downstream is cheap; missing a real informational moment is expensive. When uncertain between two keep-kinds, pick the closer match — the kind tag is informational only (it doesn't change rendering in Phase D, but Phase 2 nano-banana regen will route on it).
+
+---
+
+## Phase A — Value-filter sampling
+
+Produces an ordered list of `(timestamp, frame_path, kind)` triples for the kept frames. This is the smart core of the skill.
 
 ### A.1. Fetch transcript and metadata
 
 - `<youtube-transcript scripts dir>/get_transcript.py "<URL>"` → transcript with timestamps
-- `<youtube-screenshotter scripts dir>/video.py "<URL>" --no-download` → metadata (channel_id, chapter_markers, etc.)
+- `<youtube-screenshotter scripts dir>/video.py "<URL>" --no-download` → metadata (channel_id, chapter_markers, description, etc.)
 
 If the video has no transcript, error with a clear message and stop. **Do not fabricate one.**
+
+Save the metadata block; Phase B reads `description`, `chapter_markers`, `source_published_date`, etc. from it.
 
 ### A.2. Decide initial sample timestamps
 
@@ -51,7 +87,7 @@ Build a sorted unique list from:
 
 - Each transcript snippet boundary
 - Each chapter marker start (from metadata)
-- The video start (`t = 0.5`)
+- **`t = 0.5` — always include this.** The video's opening frame (logo, title card, opening shot) is commonly distinct and load-bearing; the transcript-boundary heuristic alone won't catch it because most transcripts start at `t=0.04` or similar, which rounds away.
 - Any silence gap > 10 seconds between consecutive snippets — anchor a sample at the gap midpoint
 
 ### A.3. Extract initial frames
@@ -62,95 +98,76 @@ Build a sorted unique list from:
 
 Returns a manifest with `(timestamp, frame_path, phash)` per requested timestamp. The video downloads once to `<work_dir>/<video_id>.mp4`; subsequent calls hit the cache.
 
-### A.4. Classify consecutive pairs
+### A.4. Classify every frame by kind
 
-For each consecutive pair `(A, B)` in the manifest, compute the Hamming distance between their pHashes via `<youtube-screenshotter scripts dir>/phash.py compare <frame_a> <frame_b>` — it prints `hamming=N verdict=...`. Do not eyeball the hex strings; manual XOR-and-popcount on 16-character hex is error-prone and the script is the canonical source of truth.
+For each candidate frame, do the visual judgment yourself:
 
-| Hamming distance | Verdict | Action |
-|---|---|---|
-| ≤ 5 | `same` | No further work |
-| ≥ 20 | `different` | No further work |
-| 6–19 | ambiguous → needs visual judgment | See below |
+1. Read the frame image (use the Read tool on `frame_path`)
+2. Read the transcript text spoken in a small window around the frame's timestamp (e.g. ±5 seconds)
+3. Pick exactly one of the eleven kinds from the value-filter principle above
+4. If the kind is in the **drop** set, mark the frame dropped and move on. If in the **keep** set, record `(timestamp, frame_path, kind)` in the keep-list.
 
-For ambiguous pairs, do the visual judgment yourself:
+Process frames in batches per turn (typically 10–20 frames per batch) rather than one at a time. Use a single Read sequence to load each batch's frames, then classify them all in your reasoning before emitting the next batch's reads.
 
-1. Read both frame images (use the Read tool on `frame_path`)
-2. Read the transcript text spoken between `A.timestamp` and `B.timestamp`
-3. Decide the verdict — exactly one of:
-   - **`same`** — no meaningful change. The frames may differ in talking-head pose, camera shake, or compression noise, but slides/diagrams/charts/code are unchanged.
-   - **`different`** — meaningful new visual element. New slide, scene cut, new chart, B-roll cut.
-   - **`additive`** — frame B contains everything in A plus more. Slide animating in further bullets, code being typed line-by-line, equation revealed step-by-step, highlight/arrow/label added on top of unchanged content.
+**Use transcript context.** The intended visual content is often signaled by the words around it:
 
-**Bias toward false positives.** When uncertain between `same` and `different`/`additive`, pick the latter. Wasting a frame downstream is cheap; missing a real visual change is expensive.
+- "As you can see," "let me show you," "here's the diagram" → expect a `diagram`/`chart`/`map`/`ui`/`code` frame
+- "And now we add," "next we get," "step three" → expect `animated-build-step`
+- Continuing to discuss the same conceptual point with no visual cues → likely `talking-head` (drop)
 
-**Use transcript context.** Match expected change against observed change:
-- "As you can see in this new diagram" / "let me show you" → expect `different`
-- "And now we add" / "next we get" → expect `additive`
-- Continuing to discuss the same visible content → expect `same`
-- Silent windows often correlate with `different` or `additive` — presenter pausing while showing something visual
+When a frame is genuinely ambiguous between a keep-kind and `talking-head`, prefer keep.
 
-Process ambiguous pairs in batches per turn (typically 10–20 pairs per batch) rather than one at a time. Use a single Read sequence to load each batch's frames, then classify them all in your reasoning before emitting the next batch's reads.
+### A.5. Bisect gaps between consecutive keepers
 
-### A.5. Bisect interesting windows
+After the initial classification pass, walk the keep-list in time order. For each consecutive pair `(K_i, K_{i+1})`:
 
-For each pair `(A, B)` whose verdict is `different` or `additive`:
+- If `K_{i+1}.timestamp - K_i.timestamp > 15` seconds **and** the intervening transcript suggests visual content (the speaker says "as you can see," "let me show you," "here's the diagram," "and over here," etc.), schedule a midpoint sample.
+- Re-call `extract.py` with the new timestamps (cached video file makes this fast).
+- Classify the new frames by the same kind taxonomy. Drop-kinds → ignore; keep-kinds → insert into the keep-list and recurse on the new gaps.
 
-- If `B.timestamp - A.timestamp > 1` second, schedule an additional timestamp at the midpoint
-- Re-call `extract.py` with the new timestamps (cached frames are free; only fresh ones cost ffmpeg time)
-- Re-classify the new pairs `(A, M)` and `(M, B)`
-
-For `additive` runs specifically, keep bisecting **forward** in time until the next pair lands on `same` (build-up settled — terminal frame found) or `different` (new scene). The terminal frame of the additive run is the canonical capture for that scene; intermediate build-up frames are discarded.
-
-### A.6. Terminal conditions
+This trigger is the inverse of the original design: bisect when there's a **gap** that might contain a missed informational frame in a talking-head-dominated stretch, not when consecutive frames look different.
 
 Stop bisecting a window when any of:
 
-- Window < 1 second
-- Endpoints judged `same`
-- A forward-bisecting `additive` run hits `same` or `different`
+- Window < 5 seconds
+- Midpoint frame classified as a drop-kind (no informational content found)
+- The bisection has run twice in this window and produced no keepers
 
-### A.7. Emit the final tuple list
+### A.6. Densely sample animated-build-step runs
 
-Output a sorted list of `(timestamp, frame_path, transcript_span, verdict)` triples covering the full video. This is the input to Phase B.
+When you classify a frame as `animated-build-step`, the video is in the middle of an animated diagram, equation, or build-up where each step adds information. Sample more densely inside this window: every 2–3 seconds, starting from the build-step frame's timestamp, until the kind transitions to something else (`diagram`/`talking-head`/`title-card`/etc.) or until the next chapter marker.
+
+**Keep every animated-build-step frame.** Do not collapse to the terminal frame; intermediate steps are the point of the build-up. The result is multiple consecutive entries in the keep-list at close timestamps, which Phase D will render as a sequence of inline images.
+
+### A.7. Dedup near-identical keepers via pHash
+
+After bisection and dense sampling, walk the keep-list one more time. For each consecutive pair `(K_i, K_{i+1})`, compare their pHashes via:
+
+```
+<youtube-screenshotter scripts dir>/phash.py compare <K_i.frame_path> <K_{i+1}.frame_path>
+```
+
+If `hamming ≤ 5` (the `same` verdict), the two frames are visually near-identical — drop `K_{i+1}` from the keep-list.
+
+This catches cases where dense sampling produced redundant captures (e.g. a long-held diagram caught at multiple boundaries). pHash is no longer the primary sampling signal — it's a cheap deduplication check applied after kind-classification.
+
+### A.8. Emit the final keep-list
+
+Output a sorted list of `(timestamp, frame_path, kind)` triples. This is the input to Phases C and D.
+
+The expected size depends entirely on the video's information density. A 1hr lecture-with-slides might produce 30–50 kept frames; a 20-minute video that's 80% talking-head might produce 4–6. There is no target count — the value-filter rule sets the bar.
 
 ---
 
-## Phase B — Scene consolidation + frontmatter
+## Phase B — Frontmatter
 
-This phase walks the verdict list from Phase A, collapses runs of `same`/`additive` into discrete scenes, and assembles the YAML frontmatter from the screenshotter's metadata block.
+This phase assembles the YAML frontmatter from the screenshotter's metadata block. It is small — there is no scene consolidation step (the value-filter principle dissolved the scene abstraction).
 
-### B.1. Walk the verdict list to form scenes
+### B.1. Generate the frontmatter dictionary
 
-A scene is a maximal run of consecutive frames that the next-frame verdict joins. The boundary between scenes is a `different` verdict.
+The frontmatter has two parts: a base schema shared with future article/pdf/substack source-skills (so the future sqlite3 indexer joins on a single contract), and YouTube-specific extras alongside.
 
-Algorithm:
-
-1. Start a new scene at the first frame `F0`. Set `canonical = F0`.
-2. For each pair `(F_i, F_{i+1})` in order:
-   - If verdict is `same`: `F_{i+1}` is in the same scene; `canonical` does not change (or set to `F_{i+1}` — they're equivalent).
-   - If verdict is `additive`: `F_{i+1}` is in the same scene; **set `canonical = F_{i+1}`** (the additive build-up brings more content; the later frame wins).
-   - If verdict is `different`: close the current scene; start a new scene at `F_{i+1}` with `canonical = F_{i+1}`.
-3. Close the final scene at end of list.
-
-For each closed scene, record:
-
-```
-{
-  "canonical_frame_path": "...",
-  "start_time": <timestamp of first frame in run>,
-  "end_time": <timestamp of last frame in run>,
-  "transcript_text": <concatenation of transcript snippets in [start_time, end_time]>,
-  "chapter_title": <chapter_markers entry whose [start_time, end_time] contains the scene midpoint, or null>
-}
-```
-
-**Drop intermediate frames within additive runs.** Only the canonical (terminal-state) frame survives; the build-up frames are noise in the wiki.
-
-### B.2. Generate frontmatter from metadata
-
-Use the metadata block from the screenshotter manifest (it carries everything yt-dlp returned). The frontmatter has two parts:
-
-**Base schema** (shared with future article/pdf/substack source-skills — keep field names and shapes identical so the future sqlite3 indexer joins on a single contract):
+**Base schema:**
 
 ```yaml
 source_type: youtube
@@ -158,11 +175,19 @@ source_url: <metadata.source_url>
 source_title: <metadata.source_title>
 source_author: <metadata.source_author>           # channel display name for YouTube
 source_published_date: <metadata.source_published_date>   # YYYY-MM-DD
+source_description: |
+  <metadata.description verbatim from yt-dlp — author-written video description.
+  Block-scalar YAML so multi-line is fine. Leave empty string if no description.>
 ingested_date: <today's date in YYYY-MM-DD>
-tags: []         # populated by Phase C
-topics: []       # populated by Phase C
-why_ingested: "" # optional; prompted from the user at invocation time
+tags: []           # populated by Phase C
+topics: []         # populated by Phase C
+why_ingested: ""   # optional; from --why flag at invocation time
 ```
+
+`source_description` is the verbatim author-written description. It is **not** rendered in the body — it would duplicate TL;DR / takeaways. It lives in frontmatter only, where it serves two purposes:
+
+1. **Hallucination check** — Phase C compares the agent-generated TL;DR against this prose. If the TL;DR introduces framing not grounded in either the transcript or the description, the agent has drifted.
+2. **Searchable reference** — the user (or a future re-run with an updated SKILL.md) can compare against the original.
 
 **YouTube-specific extras** (alongside the base, not nested):
 
@@ -177,28 +202,26 @@ chapter_markers:                       # if present in metadata; otherwise omit
   - title: "..."
     start_time: 0.0
     end_time: 153.0
+transcript_corrections: []  # populated by Phase C / Phase D as soft-corrects are applied
 ```
 
-**Frontmatter discipline:** strict key-value, no nested prose. Narrative content goes in the body, never in frontmatter. The frontmatter is the contract for the future sqlite3 indexer; treat it as machine-parseable.
+`transcript_corrections` is a list of `{original, corrected, timestamp}` entries logging every soft-correct the synthesizer applied to the auto-caption text. Auditable; lets a future linter spot systematic captioner failures across the corpus. Empty list if no corrections were applied.
 
-### B.3. Output of Phase B
+`channel_id` is the key for future "process all videos from this channel and cross-link them" runs — channels can rename themselves, IDs are stable.
 
-You now hold:
-
-- A list of consolidated scenes (each with canonical frame, transcript, time range, chapter)
-- A frontmatter dictionary keyed for YAML emission
+**Frontmatter discipline:** strict key-value, no narrative prose. Structured data (lists of objects) is fine — `chapter_markers` and `transcript_corrections` are both lists of dicts. Narrative content goes in the body, never in frontmatter.
 
 ---
 
 ## Phase C — Structured extraction
 
-This phase produces the body sections of the wiki entry. Source-faithful: extract what the video communicated, do not interpret or synthesize. Use only the transcript text and (for Commands & Code) what's visible in the canonical scene frames.
+Produces the body sections of the wiki entry plus the `tags` / `topics` frontmatter and the `transcript_corrections` log. Source-faithful: extract what the video communicated; do not interpret or synthesize. Use the transcript text, the video description, and (for Commands & Code) what's visible in kept frames.
 
 ### C.1. TL;DR
 
 1–2 sentences capturing the video's central claim or thesis. The highest-leverage section for re-discovery six months later — the user reads this to remember what the video was about.
 
-Source: transcript only. Look for explicit thesis statements (often in the first 60s and the final 60s), the chapter titles (especially the first), and the title.
+Source: transcript primarily. Look for explicit thesis statements (often in the first 60s and the final 60s), the chapter titles (especially the first), and the title.
 
 Avoid: editorializing ("an interesting take on..."), interpretation ("the video argues that... but..."), framing for any particular use case.
 
@@ -210,39 +233,67 @@ Source: transcript. A takeaway is a substantive claim the presenter makes — no
 
 Avoid: meta-statements about the video itself, restating the title, padding the list to hit a count (3 strong bullets beat 5 weak ones).
 
-### C.3. References / Mentioned
+### C.3. Hallucination check via description
 
-A list of every external thing the video cites or points at: people, papers, books, tools, organizations, other videos, websites. Plain text only — **no auto-generated wikilinks in Phase 1.** A future cross-source linker will resolve names to wikilinks once the corpus has matching `sources/` entries; capturing the names cleanly now is what makes that linker possible later.
+Before finalizing the TL;DR and key takeaways, compare them against the verbatim video description (`source_description` from Phase B):
 
-Format each entry as a short identifier + a one-line note about what it was cited for:
+- Many channels include an "ABOUT THIS VIDEO" prose block in the description that summarizes the video's premise in the author's own words. This is ground truth for what the video is about.
+- If the agent-generated TL;DR introduces framing or claims that aren't grounded in **either** the transcript **or** the description, the agent has drifted — re-do the TL;DR.
+- Bias toward attribution-implicit voice rather than asserting claims as fact. An entry in `sources/videos/` is by definition a record of what the source said; the framing should make that clear without explicit "the video argues..." hedging on every sentence.
 
+This is a check, not a copy. Do not paste the description prose into the TL;DR. Use it to detect drift.
+
+### C.4. Description-driven references
+
+Pull the references list from the video description, not from the transcript prose. The description is where authors put the actual URLs they're pointing at; the transcript contains the verbal mentions ("check out my Discord," "see the resources on my website") but rarely the URLs themselves.
+
+**Where references come from (in priority order):**
+
+1. **URLs in the video description** (`metadata.description`). Most cited resources live here. Extract via regex on `https?://` and `www.` prefixes.
+2. **URLs spoken in-video and captured by the transcript** (rare, but worth catching).
+3. **People / titles named in the video without explicit URLs** — emit as plain text (no fabricated URLs).
+
+**URL classification** (kept vs dropped):
+
+| Keep | Drop |
+|---|---|
+| Author's resource page / website (when video mentions specific content there) | Patreon / "support me" / tip jar |
+| Project / tool homepages that are the topic of the video | Merch / store URLs |
+| Cited papers, articles, books | Sponsor codes / affiliate links |
+| GitHub / source code | Generic social media handles (X, IG, TikTok) |
+| Related videos on the same topic | Newsletter signups (unless newsletter is itself the cited source) |
+| Community spaces (Discord, forum) **only when video points at specific topical content there** | Generic "join my community" with no specific in-video reference |
+| Standalone documentation links | Linktree / link-aggregator URLs (resolve to the destination if possible, drop if not) |
+
+**Output format:** one bullet per kept reference, with the actual URL and a one-line annotation noting why it was cited:
+
+```markdown
+- [The Grainbound resources page](https://thegrainbound.com/resources/) — host of the worksheet and practice map referenced in chapter 4.
+- [The Grainbound Discord](https://discord.gg/PTnt72aj8B) — community where the worksheet+map are pinned.
+- A separate video on vassal/loyalty systems — referenced at workflow step 7 (no URL provided in description).
 ```
-- Paul Sellers — referenced when discussing hand-cut dovetail technique
-- "Bread and Circuses" (book) — cited as source for medieval grain-haul economics
-- youtube.com/watch?v=... — linked in description as related video
-```
 
-Source: transcript primarily; pinned chapter descriptions and on-screen text from canonical frames if they show citations or URLs.
+**Avoid auto-generated wikilinks in Phase 1.** Cross-references between video entries should emerge organically as the corpus grows; auto-linking on heuristic guesses tends to produce noise. The future Phase 4 sqlite3-backed cross-source linker resolves names to wikilinks once matching `sources/` entries exist.
 
-### C.4. Commands & Code
+### C.5. Commands & Code
 
 For howto / technical videos: every shell command, code block, or configuration the presenter demonstrates or types out, captured as code blocks with the language tag.
 
-Source: canonical frames where code is visible (read the image, transcribe verbatim) plus transcript where the presenter narrates a command.
+Source: kept frames where code is visible (read the image, transcribe verbatim) plus transcript where the presenter narrates a command.
 
 For non-technical videos (worldbuilding, history, design discussion), this section is omitted entirely — do not pad with pseudo-commands.
 
 Format:
 
 ```python
-# from scene 4 — main loop the presenter demonstrates
+# from frame at 04:32 — the main loop the presenter demonstrates
 for x in range(10):
     process(x)
 ```
 
-Each block gets a one-line lead-in noting the scene it came from, so the reader can locate the visual context.
+Each block gets a one-line lead-in noting the timestamp it came from, so the reader can locate the visual context.
 
-### C.5. Tags + topics
+### C.6. Tags + topics
 
 Populate the frontmatter `tags` and `topics` fields with a controlled list extracted from the video's content.
 
@@ -251,15 +302,48 @@ Populate the frontmatter `tags` and `topics` fields with a controlled list extra
 
 Both lists must be kebab-case strings, no spaces, no special characters. Do not invent vague tags (`interesting`, `useful`); every entry should map to a concrete subject.
 
-### C.6. Output of Phase C
+### C.7. Auto-caption soft-correct policy
 
-You now hold, in addition to Phase B's outputs:
+YouTube's auto-captioner produces transcription errors that propagate verbatim into the wiki entry under a strict "do not change words" rule. Examples: *"kills for measurement"* (meant *"scales for measurement"* — homophone misread). This breaks future full-text search ("scales" matches no results) and produces gibberish in the rendered prose.
 
-- A TL;DR string
+The synthesizer is allowed — and required — to **soft-correct** these obvious mis-transcriptions when composing the body prose in Phase D.
+
+**Categories to correct:**
+
+- **Homophones** — *kills↔scales, their↔there↔they're, write↔right, hear↔here, principle↔principal* — when the intended word is unambiguous from the surrounding sentence.
+- **Garbled compound words** — caption merges or splits words wrongly (e.g. *"a head"* → *"ahead"* in motion contexts; *"every day"* vs *"everyday"* per usage).
+- **Dropped articles** — when the sentence is otherwise grammatical and a missing *the/a/an* is obvious.
+
+**Categories NOT to correct:**
+
+- Paraphrasing or summarizing — the discipline of source-faithfulness applies to *what the presenter intended to say*, not to "improving" their delivery. Do not condense filler words, repair sentence fragments, or smooth out mid-sentence corrections the presenter made themselves.
+- Ambiguous cases — when you're not confident which word the presenter meant, leave the caption verbatim. Better to have one piece of garbled text than to invent the wrong word.
+- Domain jargon you don't recognize — a word you find unfamiliar isn't necessarily a mis-transcription.
+
+**Logging corrections.** For every correction applied, append an entry to the `transcript_corrections` frontmatter list:
+
+```yaml
+transcript_corrections:
+  - original: "kills"
+    corrected: "scales"
+    timestamp: 320.5
+  - original: "their"
+    corrected: "there"
+    timestamp: 487.2
+```
+
+The timestamp is the transcript-snippet timestamp where the original word appears. Logging makes corrections auditable and lets a future linter spot systematic captioner failures across the corpus.
+
+### C.8. Output of Phase C
+
+You now hold:
+
+- A TL;DR string (validated against `source_description`)
 - A key-takeaways bullet list
-- A references / mentioned list (or empty)
+- A references list (description-driven, filtered, with URLs)
 - A commands-and-code block list (or empty)
 - Populated `tags` and `topics` arrays for the frontmatter
+- A `transcript_corrections` list of soft-corrects applied (so far — Phase D applies more during prose composition and appends to this list)
 
 These are consumed by Phase D (output writing).
 
@@ -267,13 +351,13 @@ These are consumed by Phase D (output writing).
 
 ## Phase D — Output writing
 
-Assemble everything from Phases B and C into the Obsidian literature note and write it to the user's vault.
+Assemble everything from Phases B and C, plus the keep-list from Phase A, into the Obsidian literature note and write it to the user's vault.
 
 ### D.1. Resolve the entry path
 
 Given the user-supplied vault path `<vault>` and `metadata.source_title`:
 
-1. Sanitize the title: lowercase, replace spaces with hyphens, strip anything that isn't `[a-z0-9-]`, collapse repeated hyphens, trim leading/trailing hyphens. Truncate at 80 characters.
+1. **Sanitize the title:** lowercase → strip anything not in `[a-z0-9 ]` (apostrophes vanish — produces `thats` not `that-s`; quotes, colons, em-dashes, ampersands all disappear) → collapse whitespace runs into single hyphens → trim leading/trailing hyphens → truncate at 80 characters.
 2. Today's date in `YYYY-MM-DD` format (this is `ingested_date`).
 3. Compose the entry directory: `<vault>/sources/videos/<ingested_date>-<sanitized_title>/`
 
@@ -288,24 +372,57 @@ If the entry directory already exists and the user did not pass `--rerun`:
 
 If `--rerun`, remove the existing directory's contents before writing (preserve nothing — full regeneration).
 
-### D.3. Copy canonical frames
+### D.3. Copy kept frames
 
-Create the entry directory. For each scene in order, copy its `canonical_frame_path` to `<entry_dir>/scene-NN.png`, where `NN` is a 2-digit zero-padded index starting at `01`. Use 3 digits if the scene count exceeds 99.
+Create the entry directory. For each entry in the keep-list (Phase A.8) in timestamp order, copy its `frame_path` to `<entry_dir>/image-NN.png`, where `NN` is a 2-digit zero-padded index starting at `01`. Use 3 digits if the keep-list count exceeds 99.
 
-Track the mapping `scene_index → relative_filename` for use in the body.
+Track the mapping `keep_index → (timestamp, relative_filename, kind)` for use in body composition.
 
-### D.4. Decide structure: hierarchical vs flat
+### D.4. Compose the body — chapter-level prose flow with inline images
 
-- **Flat** if any of:
-  - `metadata.duration_seconds <= 180` (≤ 3 min — short howto, no chapter structure helps)
+The body is one continuous prose flow per chapter, with images embedded inline at their timestamps. There are **no scene-level headings** — the "scene" abstraction has been dropped. Images are anonymous anchors inside the prose, not section dividers.
+
+#### D.4.a. Decide structure
+
+- **Flat (no chapter sections)** if any of:
+  - `metadata.duration_seconds <= 180` (≤ 3 min)
   - `metadata.chapter_markers` is empty or null
-- **Hierarchical (chapter → scenes)** otherwise
+- **Chaptered** otherwise — one `## <chapter title>` section per entry in `chapter_markers`, in source order.
 
-In hierarchical mode, group scenes by their `chapter_title` and emit the chapters in source order. Scenes whose `chapter_title` is null (e.g. they fall in a gap between chapters) go in a `## Uncategorized` section at the end.
+#### D.4.b. Per-chapter (or whole-video, in flat mode) prose composition
 
-### D.5. Compose the markdown body
+For each chapter's `[start_time, end_time)` span (or the full `[0, duration)` in flat mode):
 
-Emit `index.md` with this top-level structure:
+1. **Concatenate all transcript snippets** whose timestamp falls inside the span.
+2. **Apply soft-corrects** per Phase C.7 to the concatenated text. Append every correction made here to the `transcript_corrections` frontmatter list.
+3. **Reflow into paragraphs at sentence boundaries.** Walk the corrected text and break a paragraph every ~3–6 sentences at the next sentence terminator (`. `, `! `, `? `) — choose the break point at a natural feeling pause rather than a fixed sentence count. **Do not change words** beyond the soft-corrects from step 2; do not paraphrase, summarize, or restructure.
+4. **Embed kept frames inline.** For every keep-list entry whose `timestamp` falls inside this chapter's span, inject `![[image-NN.png]]` (on its own line, surrounded by blank lines) at the **nearest sentence boundary** to the timestamp in the reflowed prose. Multiple images in close succession (e.g. an animated-build-step run) appear consecutively, separated only by whatever prose falls between their timestamps if any.
+
+The result, per chapter:
+
+```markdown
+## <chapter title verbatim from chapter_markers>
+
+<reflowed paragraph 1>
+
+<reflowed paragraph 2>
+
+![[image-03.png]]
+
+<reflowed paragraph 3>
+
+![[image-04.png]]
+
+![[image-05.png]]
+
+<reflowed paragraph 4>
+```
+
+**Chapter title rule:** use the author's chapter titles **verbatim**, including placeholder titles like "Chapter 2," "Chapter 3," or numerically-prefixed titles like "1. Setup." The chapter structure is the author's deliberate framing of the video; do not synthesize "better" chapter titles from content. If `chapter_markers` is missing, fall back to flat mode.
+
+**Flat-mode rendering:** same prose flow, no `## <chapter title>` heading. Render the prose under a single `## Body` heading after `## Key takeaways`.
+
+#### D.4.c. Top-level body skeleton
 
 ```markdown
 ---
@@ -326,73 +443,45 @@ Emit `index.md` with this top-level structure:
 - <bullet 2>
 - ...
 
-## Scenes
+## <Chapter 1 title>
 
-<flat or hierarchical, see below>
+<reflowed prose with inline ![[image-NN.png]] embeds>
+
+## <Chapter 2 title>
+
+<reflowed prose with inline image embeds>
+
+...
 
 ## References
 
-<list from Phase C.3, or omit the section if empty>
+<list from Phase C.4, or omit the section entirely if empty>
 
 ## Commands & Code
 
-<consolidated list from Phase C.4, or omit the section if empty>
+<consolidated list from Phase C.5, or omit the section entirely if empty>
 ```
 
-**Scene rendering — flat mode:**
+In flat mode, replace the chapter sections with a single `## Body` containing all the reflowed prose.
 
-```markdown
-### Scene 1 — 00:00 to 00:30
+Notes:
 
-![[scene-01.png]]
+- Image embeds use Obsidian's wikilink form `![[image-NN.png]]` since the file is in the same per-note folder. This renders inline in Obsidian and remains a valid relative reference if the entry is moved.
+- Times in the source line are formatted as `MM:SS` for videos under an hour, `HH:MM:SS` otherwise.
+- Images appear inline at their timestamps inside the chapter prose. They do **not** appear in the consolidated `## Commands & Code` section — that section is text-only.
+- Code blocks attributed to a specific timestamp may appear inline in the prose at that point (with a one-line lead-in) **and** are also collected in the `## Commands & Code` section at the bottom. Duplication is intentional: inline gives narrative context, the bottom section is the user's quick-reference index.
 
-<transcript text for this scene, reflowed into paragraphs at sensible breaks; words verbatim>
+### D.5. Write the file
 
-<inline code block here if Phase C.4 attributed any commands to this scene>
-```
-
-**Scene rendering — hierarchical mode:**
-
-```markdown
-### <chapter_title>
-
-#### Scene 1 — 00:00 to 00:30
-
-![[scene-01.png]]
-
-<transcript ...>
-
-#### Scene 2 — 00:30 to 01:15
-
-![[scene-02.png]]
-
-<transcript ...>
-
-### <next chapter_title>
-
-#### Scene 3 — ...
-```
-
-Notes on scene rendering:
-
-- Image embed uses Obsidian's wikilink form `![[scene-NN.png]]` since the file is in the same per-note folder. This renders inline in Obsidian and remains a valid relative reference if the entry is moved.
-- Transcript reflow into paragraphs is allowed (sentences shouldn't be cut mid-clause). **Do not change words.**
-- Times are formatted as `MM:SS` for videos under an hour, `HH:MM:SS` otherwise.
-- Inline code blocks for commands attributed to a scene appear after the transcript paragraph that introduces them. The same code blocks also appear in the consolidated `## Commands & Code` section at the bottom — duplication is intentional, the bottom section is the user's quick-reference index.
-
-### D.6. Write the file
-
-Write `<entry_dir>/index.md`. Verify the file is non-empty and contains valid YAML frontmatter (parse-check it after writing — if YAML fails, you have a quoting bug to fix before declaring success).
+Write `<entry_dir>/index.md`. After writing, verify the file is non-empty and that the YAML frontmatter parses cleanly (if YAML fails, you have a quoting bug in `source_description` or elsewhere — fix it before declaring success). The block-scalar `|` form on `source_description` handles most cases, but watch for unescaped backticks or trailing whitespace in the description text.
 
 Print a clear success message with the absolute path to `index.md` so the user knows where to open it.
 
-### D.7. Failure-mode degradations (Phase 1 scope)
+### D.6. Failure-mode degradations (Phase 1 scope)
 
-Apply the failure-mode rules from the bottom of this document:
-
-- Re-running on existing entry without `--rerun`: print message, exit (D.2)
-- Very short video (≤ 3 min): force flat structure regardless of chapter_markers (D.4)
-- Live stream / unavailable / no transcript: handled in Phase A; Phase D is unreachable in those cases
+- Re-running on existing entry without `--rerun`: print message, exit (D.2).
+- Very short video (≤ 3 min) or no `chapter_markers`: force flat structure (D.4.a).
+- Live stream / unavailable / no transcript: handled in Phase A; Phase D is unreachable in those cases.
 
 ---
 
@@ -400,7 +489,11 @@ Apply the failure-mode rules from the bottom of this document:
 
 The skill's job is to deliver "here is what this video said and showed, structured and searchable" — not to weave the content into the user's mental model. That weaving is downstream, in the vault root where the user (and you, in other tasks) builds permanent notes on top of these literature notes.
 
-Concretely: do not reframe content for any particular use case (worldbuilding, debugging, learning), do not add interpretive headers, do not editorialize the presenter's claims. Capture what was said and shown. The user reads the entry to remember what the video communicated, then synthesizes elsewhere.
+Concretely: do not reframe content for any particular use case (worldbuilding, debugging, learning), do not add interpretive headers, do not editorialize the presenter's claims. Capture what was said and shown.
+
+The agent's voice should not blend with the presenter's voice. The synthesizer-generated TL;DR and takeaways describe the video's claims — they should attribute claims to the video implicitly through the document's framing (an entry in `sources/videos/` is by definition a record of what the source said) rather than asserting claims as undisputed facts.
+
+The soft-correct policy (Phase C.7) is the one place the skill modifies words. It applies *only* to obvious auto-caption mis-transcriptions, never to paraphrasing or "improving" delivery. Every correction is logged in `transcript_corrections` for auditability.
 
 ---
 
@@ -415,9 +508,6 @@ Concretely: do not reframe content for any particular use case (worldbuilding, d
 
 - **No transcript available** (no captions, foreign language) → error early with a clear message; stop
 - **Video unavailable** (private, members-only, age-restricted, geo-blocked) → error early; stop
-- **Live streams** → refuse for now (no fixed endpoint to bisect over)
-- **Very short videos** (≤ 3 minutes) → skip Phase A bisection refinement; transcript-aligned sampling alone is sufficient
-
----
-
-*All four phases (A — sampling, B — consolidation + frontmatter, C — structured extraction, D — output writing) are now covered by this SKILL.md. End-to-end validation against the grain-haul test video is the next step (see beads issue ih2.10).*
+- **Live streams** → refuse for now (no fixed endpoint to sample over)
+- **Very short videos** (≤ 3 min) → flat-mode rendering, no chapter sections
+- **Video has chapter markers but they don't cover the full duration** → render the gap-time transcript under an `## Uncategorized` section at the end (chaptered mode only)
