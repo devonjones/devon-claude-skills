@@ -39,7 +39,9 @@ def extract_one(video_path: Path, timestamp: float, output_path: Path) -> Frame:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg failed at t={timestamp}: {result.stderr.strip()}")
+        raise RuntimeError(
+            f"ffmpeg failed (code {result.returncode}) at t={timestamp}: {result.stderr.strip()}"
+        )
     return Frame(timestamp=timestamp, path=output_path)
 
 
@@ -85,7 +87,7 @@ def main() -> int:
 
     try:
         frames = extract_frames(args.video, args.timestamp, args.output_dir)
-    except RuntimeError as exc:
+    except (RuntimeError, OSError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
 

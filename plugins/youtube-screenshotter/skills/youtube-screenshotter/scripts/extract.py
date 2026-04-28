@@ -48,14 +48,19 @@ def extract(url: str, timestamps: list[float], output_dir: Path) -> dict:
     frames_dir = output_dir / "frames"
     frames = extract_frames(result.video_path, timestamps, frames_dir)
 
-    entries = [
-        {
+    # Distinct timestamps can collide on the millisecond-rounded filename
+    # (e.g. 1.0 and 1.0001 both → t00001000.png), so cache by path to
+    # avoid recomputing the pHash on the same file.
+    phash_cache: dict[Path, str] = {}
+    entries = []
+    for f in frames:
+        if f.path not in phash_cache:
+            phash_cache[f.path] = str(phash_compute(f.path))
+        entries.append({
             "timestamp": f.timestamp,
             "frame_path": str(f.path),
-            "phash": str(phash_compute(f.path)),
-        }
-        for f in frames
-    ]
+            "phash": phash_cache[f.path],
+        })
 
     return {
         "video_path": str(result.video_path),
