@@ -85,9 +85,9 @@ Save the metadata block; Phase B reads `description`, `chapter_markers`, `source
 
 Build a sorted unique list from:
 
-- Each transcript snippet boundary
+- **A coarse stride across the duration.** Default to one sample every ~30 seconds, snapped to the nearest transcript snippet boundary. Auto-caption snippets are typically 1–3 seconds apart, so sampling every snippet would produce hundreds of frames per hour — too dense for the classification pass to be tractable. The 30s stride gives ~120 candidates per hour; bisection in A.5 fills in any informational frames the stride missed.
 - Each chapter marker start (from metadata)
-- **`t = 0.5` — always include this.** The video's opening frame (logo, title card, opening shot) is commonly distinct and load-bearing; the transcript-boundary heuristic alone won't catch it because most transcripts start at `t=0.04` or similar, which rounds away.
+- **`t = 0.5` — always include this.** The video's opening frame (logo, title card, opening shot) is commonly distinct and load-bearing; the coarse stride alone won't catch it.
 - Any silence gap > 10 seconds between consecutive snippets — anchor a sample at the gap midpoint
 
 ### A.3. Extract initial frames
@@ -389,9 +389,17 @@ The body is one continuous prose flow per chapter, with images embedded inline a
   - `metadata.chapter_markers` is empty or null
 - **Chaptered** otherwise — one `## <chapter title>` section per entry in `chapter_markers`, in source order.
 
-#### D.4.b. Per-chapter (or whole-video, in flat mode) prose composition
+#### D.4.b. Snap chapter boundaries to sentence ends
 
-For each chapter's `[start_time, end_time)` span (or the full `[0, duration)` in flat mode):
+Before concatenating per-chapter, **adjust each non-final chapter's `end_time` to the nearest sentence-terminator-ending snippet within ±15 seconds** of the metadata boundary. Chapter markers in YouTube metadata are timed to visual transitions, not sentence ends — using them strictly produces "...the political map draws itself. Chapter / two." mid-clause splits. The next chapter's `start_time` then equals the previous chapter's snapped `end_time`.
+
+Snapping rule: pick the closest snippet whose text ends with `.`, `!`, or `?` and whose timestamp lies in `[end_time − 5, end_time + 15]`. If no such snippet exists in the window, leave the boundary at `end_time`.
+
+This is also where the spoken "Chapter N." transition lines naturally land: with snapping, "Chapter 3." gets pulled into chapter 2's tail (since the boundary moves to just past it), so chapter 3 starts cleanly with its first content sentence.
+
+#### D.4.c. Per-chapter (or whole-video, in flat mode) prose composition
+
+For each chapter's snapped `[start_time, end_time)` span (or the full `[0, duration)` in flat mode):
 
 1. **Concatenate all transcript snippets** whose timestamp falls inside the span.
 2. **Apply soft-corrects** per Phase C.7 to the concatenated text. Append every correction made here to the `transcript_corrections` frontmatter list.
@@ -482,6 +490,22 @@ Print a clear success message with the absolute path to `index.md` so the user k
 - Re-running on existing entry without `--rerun`: print message, exit (D.2).
 - Very short video (≤ 3 min) or no `chapter_markers`: force flat structure (D.4.a).
 - Live stream / unavailable / no transcript: handled in Phase A; Phase D is unreachable in those cases.
+
+---
+
+## Previewing an entry
+
+Wiki entries use Obsidian's wikilink syntax (`![[image-NN.png]]`) which doesn't render in standard markdown viewers. The `scripts/preview.py` helper renders any entry to HTML and serves the entry directory over HTTP — useful on a headless box where you can't open Obsidian directly.
+
+```
+<youtube-synthesizer scripts dir>/preview.py <entry-dir> [--port 8765] [--bind 0.0.0.0]
+```
+
+Pass either an entry directory (containing `index.md` + `image-NN.png`) or a `.md` file directly. The script writes a sibling `index.html` with wikilinks rewritten to `<img>` tags and YAML frontmatter shown as a collapsible block, then starts an HTTP server. Open `http://<host>:<port>/` in a browser.
+
+Use `--no-serve` to render the HTML and exit without starting the server. Use `--bind 127.0.0.1` to restrict to localhost when working on a shared box.
+
+The script is stdlib-only (no dependencies). It is generic over wiki entries — any future source-type skill that produces this same per-note folder structure can use it too.
 
 ---
 
