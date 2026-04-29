@@ -67,7 +67,7 @@ scripts/motion.py <video> --start S --end E [--fps 4] [-o DIR]
                           [--sprite-out PATH] [--sprite-frames 9] [--sprite-cols 3]
 ```
 
-The primitive is content-agnostic: a talking-head with hand gestures generates motion comparable to a sliding boat. That's fine for the grid layout — a 3×3 of slightly-different gesture poses is visually unambiguous noise the reader can ignore, while a real animation reads as a clear arc. The decision *whether* to sprite a span (vs. pick a single frame, vs. emit a text-only `> [animation: ...]` annotation) lives in the caller — typically `youtube-synthesizer` Phase A.5.
+The primitive is content-agnostic; the decision *whether* to sprite a span (vs. pick a single frame, vs. emit a text-only `> [animation: ...]` annotation) lives in the caller — typically `youtube-synthesizer` Phase A.5.
 
 ### Discover manifest shape
 
