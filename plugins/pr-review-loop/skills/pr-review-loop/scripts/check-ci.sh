@@ -23,6 +23,12 @@ WAIT_MODE=false
 TIMEOUT=600
 POLL_INTERVAL=20
 
+# Grace window before concluding "no CI configured" via the check-suites API.
+# GitHub Actions and most third-party CI providers register a check-suite for
+# the HEAD commit within seconds of a push; if zero suites exist after this
+# window, no CI is configured for this commit and there's nothing to wait for.
+NO_CI_GRACE_S=20
+
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -164,6 +170,38 @@ while [[ $ELAPSED -lt $TIMEOUT ]]; do
 
     case "$status" in
         no_checks)
+            # If no check-runs have appeared after the grace window, look at
+            # the check-suites API. A real CI suite either has produced runs
+            # (latest_check_runs_count > 0) or is actively progressing
+            # (status == in_progress). Suites that stay queued without runs,
+            # or that complete fast with zero runs (e.g. Renovate on a
+            # non-dependency change), are idle integrations that will never
+            # report back — there's nothing to wait on. On transient API
+            # failures, default to 1 (keep waiting) and warn; false-exiting
+            # on a network blip would let a real failing CI go unnoticed.
+            #
+            # Re-resolve HEAD SHA every iteration so a force-push mid-wait
+            # checks the new commit's suites, not the stale ones. Use
+            # --paginate so busy repos with > 30 suites don't get truncated.
+            if [[ $ELAPSED -ge $NO_CI_GRACE_S && -n "$REPO" ]]; then
+                HEAD_SHA=$(gh pr view "$PR_NUMBER" $REPO_FLAG --json headRefOid --jq .headRefOid 2>/dev/null) || HEAD_SHA=""
+                if [[ -n "$HEAD_SHA" ]]; then
+                    active_suites=$(gh api --paginate "repos/${REPO}/commits/${HEAD_SHA}/check-suites" 2>/dev/null \
+                        | jq -s '
+                            [.[].check_suites[]?
+                             | select(.latest_check_runs_count > 0
+                                      or .status == "in_progress")
+                            ] | length
+                        ' 2>/dev/null) || {
+                        echo "warning: check-suites API call failed; assuming CI is active and continuing to poll" >&2
+                        active_suites=1
+                    }
+                    if [[ "$active_suites" -eq 0 ]]; then
+                        echo "No active CI for commit ${HEAD_SHA:0:7} (no check-suites running after ${ELAPSED}s) — exiting"
+                        exit 0
+                    fi
+                fi
+            fi
             echo "No CI checks found yet (${ELAPSED}s elapsed)"
             ;;
         passing:*)
