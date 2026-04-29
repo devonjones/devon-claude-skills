@@ -385,7 +385,7 @@ If `<vault>` was supplied at invocation:
 
 If `<vault>` was *not* supplied:
 
-1. Recall the user's last picked vault from memory (search for a memory keyed under "youtube-synthesizer last vault" or similar). If found, ask the user to confirm — *"last run wrote to `<recalled vault>`; same vault for this entry?"* — and use that on a yes.
+1. Recall the user's last picked vault from memory (search for a memory keyed under `youtube-synthesizer-last-vault` or similar — repo memory keys use hyphenated kebab-case, no spaces). If found, ask the user to confirm — *"last run wrote to `<recalled vault>`; same vault for this entry?"* — and use that on a yes.
 2. If no recall (or the user said no), `ls ~/ObsidianVaults/` and present the list. Ask the user to pick one.
 3. If `~/ObsidianVaults/` doesn't exist or is empty, ask the user for an absolute vault path.
 

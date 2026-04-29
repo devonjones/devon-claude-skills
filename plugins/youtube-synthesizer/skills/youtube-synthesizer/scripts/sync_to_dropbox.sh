@@ -128,7 +128,7 @@ if ! rclone lsd "$VAULT_REMOTE" >/dev/null 2>&1; then
     echo "  This usually means you mistyped the vault name. Local vault is:" >&2
     echo "    $EXPECTED_PREFIX/$VAULT_NAME/" >&2
     echo "  If this really is a brand-new vault you've never synced before, bootstrap it manually:" >&2
-    echo "    rclone mkdir $VAULT_REMOTE" >&2
+    echo "    rclone mkdir '$VAULT_REMOTE'" >&2
     echo "  and then re-run the sync." >&2
     exit 1
 fi
