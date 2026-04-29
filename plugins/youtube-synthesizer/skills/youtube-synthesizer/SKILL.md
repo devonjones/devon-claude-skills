@@ -26,10 +26,12 @@ If `<URL>` is missing, ask the user before starting work — do not guess. `<vau
 
 ## Output
 
-A single Obsidian literature note at `<vault>/sources/videos/<ingested-date>-<sanitized-title>/` containing:
+A single Obsidian literature note at `<vault>/sources/videos/<sanitized-channel>/<ingested-date>-<sanitized-title>/` containing:
 
-- `index.md` — frontmatter + body (TL;DR, key takeaways, chapter-level prose with inline images, references, commands & code)
+- `<sanitized-title>.md` — frontmatter + body (TL;DR, key takeaways, chapter-level prose with inline images, references, commands & code). Same `<sanitized-title>` as the parent directory's title segment, without the date prefix (the directory carries the date already).
 - `image-NN.png` siblings — one per kept informational frame, in source order
+
+Grouping by channel keeps a creator's videos together — opening `<vault>/sources/videos/the-grainbound/` shows every Grainbound entry side-by-side.
 
 ---
 
@@ -393,13 +395,16 @@ After the user picks, save the chosen vault to memory so the next run can recall
 
 #### D.1.b. Compose the entry directory
 
-Given the resolved `<vault>` and `metadata.source_title`:
+Given the resolved `<vault>`, `metadata.channel`, and `metadata.source_title`:
 
 1. **Sanitize the title:** lowercase → strip anything not in `[a-z0-9 ]` (apostrophes vanish — produces `thats` not `that-s`; quotes, colons, em-dashes, ampersands all disappear) → collapse whitespace runs into single hyphens → trim leading/trailing hyphens → truncate at 80 characters.
-2. Today's date in `YYYY-MM-DD` format (this is `ingested_date`).
-3. Compose the entry directory: `<vault>/sources/videos/<ingested_date>-<sanitized_title>/`
+2. **Sanitize the channel name** with the same rule applied to `metadata.channel` (e.g. `"The Grainbound"` → `the-grainbound`).
+3. Today's date in `YYYY-MM-DD` format (this is `ingested_date`).
+4. Compose the entry directory: `<vault>/sources/videos/<sanitized_channel>/<ingested_date>-<sanitized_title>/`
 
-Example: `~/ObsidianVaults/worldbuilding/sources/videos/2026-04-27-the-ox-thats-breaking-your-fantasy-map/`
+Example: `~/ObsidianVaults/Worldbuilding/sources/videos/the-grainbound/2026-04-27-the-ox-thats-breaking-your-fantasy-map/`
+
+The channel directory is created on-demand if it doesn't exist yet locally; the same convention must already exist on Dropbox before sync (see Phase D.6.a — `sync_to_dropbox.sh` refuses if the channel dir on the remote isn't there, so a typo'd channel name can't silently create a new dir on Dropbox).
 
 ### D.2. Skip-or-overwrite check
 
@@ -521,9 +526,11 @@ Notes:
 
 ### D.5. Write the file
 
-Write `<entry_dir>/index.md`. After writing, verify the file is non-empty and that the YAML frontmatter parses cleanly (if YAML fails, you have a quoting bug in `source_description` or elsewhere — fix it before declaring success). The block-scalar `|` form on `source_description` handles most cases, but watch for unescaped backticks or trailing whitespace in the description text.
+Write `<entry_dir>/<sanitized-title>.md`, where `<sanitized-title>` is the same sanitization applied to `metadata.source_title` as in D.1.b but **without** the date prefix (the directory carries the date already). For *"The Ox That's Breaking Your Fantasy Map"* in dir `2026-04-29-the-ox-thats-breaking-your-fantasy-map/`, the file is `the-ox-thats-breaking-your-fantasy-map.md`.
 
-Print a clear success message with the absolute path to `index.md` so the user knows where to open it.
+After writing, verify the file is non-empty and that the YAML frontmatter parses cleanly (if YAML fails, you have a quoting bug in `source_description` or elsewhere — fix it before declaring success). The block-scalar `|` form on `source_description` handles most cases, but watch for unescaped backticks or trailing whitespace in the description text.
+
+Print a clear success message with the absolute path to the .md file so the user knows where to open it.
 
 ### D.6. Optional Dropbox sync via rclone
 
@@ -578,7 +585,7 @@ Wiki entries use Obsidian's wikilink syntax (`![[image-NN.png]]`) which doesn't 
 <youtube-synthesizer scripts dir>/preview.py <entry-dir> [--port 8765] [--bind 0.0.0.0]
 ```
 
-Pass either an entry directory (containing `index.md` + `image-NN.png`) or a `.md` file directly. The script writes a sibling `index.html` with wikilinks rewritten to `<img>` tags and YAML frontmatter shown as a collapsible block, then starts an HTTP server. Open `http://<host>:<port>/` in a browser.
+Pass either an entry directory (containing exactly one `*.md` file plus `image-NN.png` siblings) or a `.md` file directly. The script writes a sibling `index.html` (kept under that name so the HTTP server's default route works) with wikilinks rewritten to `<img>` tags and YAML frontmatter shown as a collapsible block, then starts an HTTP server. Open `http://<host>:<port>/` in a browser.
 
 Use `--no-serve` to render the HTML and exit without starting the server. Use `--bind 127.0.0.1` to restrict to localhost when working on a shared box.
 

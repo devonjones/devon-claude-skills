@@ -3,17 +3,19 @@
 
 The synthesizer writes Obsidian-flavored markdown (wikilink image embeds
 `![[image-NN.png]]`) which standard markdown viewers don't render. This
-script generates an index.html beside index.md with wikilinks rewritten to
-<img> tags, YAML frontmatter shown as a collapsible block, and basic
-markdown rendering (headings, paragraphs, bold/italic, lists, links). It
-then serves the entry directory over HTTP so the rendered page and its
-sibling image-NN.png assets are reachable from a browser.
+script generates an `index.html` beside the entry's .md file (kept under
+that name so the HTTP server's default route works) with wikilinks
+rewritten to <img> tags, YAML frontmatter shown as a collapsible block,
+and basic markdown rendering (headings, paragraphs, bold/italic, lists,
+links). It then serves the entry directory over HTTP so the rendered
+page and its sibling image-NN.png assets are reachable from a browser.
 
 Usage:
     preview.py <entry-dir-or-md-file> [--port PORT] [--bind ADDR]
 
-If given a directory, expects an index.md inside it. If given a .md file,
-serves that file's parent directory.
+If given a directory, expects exactly one `*.md` file inside (the entry's
+title-named markdown). If given a .md file, serves that file's parent
+directory.
 
 Default port: 8765. Default bind: 0.0.0.0 (so a headless box is reachable
 from another machine on the LAN).
@@ -219,7 +221,7 @@ def main() -> int:
     p.add_argument(
         "target",
         type=Path,
-        help="Path to a wiki entry directory (containing index.md) or to a .md file directly.",
+        help="Path to a wiki entry directory (containing exactly one *.md file) or to a .md file directly.",
     )
     p.add_argument("--port", type=int, default=8765, help="Port to bind (default 8765).")
     p.add_argument(
@@ -239,17 +241,24 @@ def main() -> int:
         return 1
 
     if args.target.is_dir():
-        md_path = args.target / "index.md"
+        md_files = sorted(args.target.glob("*.md"))
+        if len(md_files) == 0:
+            print(f"error: no .md file found in {args.target}", file=sys.stderr)
+            return 1
+        if len(md_files) > 1:
+            names = ", ".join(p.name for p in md_files)
+            print(f"error: expected exactly one .md file in {args.target}, found {len(md_files)}: {names}", file=sys.stderr)
+            return 1
+        md_path = md_files[0]
         directory = args.target
     elif args.target.suffix == ".md":
         md_path = args.target
         directory = args.target.parent
+        if not md_path.exists():
+            print(f"error: no markdown file found at {md_path}", file=sys.stderr)
+            return 1
     else:
         print(f"error: {args.target} is neither a directory nor a .md file", file=sys.stderr)
-        return 1
-
-    if not md_path.exists():
-        print(f"error: no markdown file found at {md_path}", file=sys.stderr)
         return 1
 
     out = render_html(md_path)
