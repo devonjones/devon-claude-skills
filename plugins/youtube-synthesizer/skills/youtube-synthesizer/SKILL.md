@@ -153,11 +153,28 @@ This catches the case where the same world-map appears at chapter 1's opening **
 
 When a near-duplicate is detected, **keep the earlier frame** (it's the establisher) and drop the later one.
 
-### A.7. Emit the final keep-list
+### A.7. Whole-list audit pass
+
+Re-read every frame in the keep-list **as a single batch** and ask, for each one, "is this image actually useful in the entry?" This is a separate pass from per-frame classification (A.4) — its purpose is to catch drift errors and curate the set as a whole.
+
+Why this is a separate step: per-frame classification works in batches of 10–20 and depends on the agent's mental tracking of "what was at timestamp X." With long videos and multiple batches, that tracking drifts. Frames that the agent labeled `diagram` in the moment can turn out to be talking-head poses or transition shots when re-examined alongside the rest of the kept set.
+
+For each frame in the keep-list, decide:
+
+- **Keep** — the image communicates something specific (a concept, a build-up state, a map overlay, a piece of code). The entry is better with it than without it.
+- **Drop** — the image is talking-head, a transition cartoon with no figures or labels, an empty title-card overlay, or visually redundant with another kept frame.
+
+Be willing to drop frames you classified as keep-kinds in A.4. The audit is the last guardrail against accumulated drift.
+
+When dropping, prefer dropping later frames in a build-up sequence over earlier ones (the earlier frame usually carries the concept; later ones are progressive states that may or may not add new information). For redundant maps, keep the one with the richest overlay.
+
+Re-read in small batches if the full set won't fit (image data is large; reading 30+ frames at once can exceed request-size limits). Track the kept indices and emit the final list once every frame has been audited.
+
+### A.8. Emit the final keep-list
 
 Output a sorted list of `(timestamp, frame_path, kind)` triples. This is the input to Phases C and D.
 
-The expected size depends entirely on the video's information density. A 1hr lecture-with-slides might produce 30–50 kept frames; a 20-minute video that's 80% talking-head might produce 4–6. There is no target count — the value-filter rule sets the bar.
+The expected size depends entirely on the video's information density. A 1hr lecture-with-slides might produce 30–50 kept frames; a 20-minute video that's 80% talking-head might produce 4–6. There is no target count — the value-filter rule plus the audit pass set the bar.
 
 ---
 
