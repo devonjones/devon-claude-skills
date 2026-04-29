@@ -103,17 +103,18 @@ Pass the timestamp list from `discover.py`'s `candidates` array. The video file 
 
 ### A.4. Classify every frame by kind
 
-For each candidate frame, do the visual judgment yourself:
+**Delegate this to sub-agents — do not load the frames into your own context.** A 100+ candidate video produces ~50–150 MB of PNG data; loading it inline blows the main agent's context window for no benefit (you only need the classifications back, not the pixels). Use the Agent tool (`subagent_type: general-purpose`) with batches of 10–20 frames per agent.
 
-1. Read the frame image (use the Read tool on `frame_path`)
-2. Read the transcript text spoken in a small window around the frame's timestamp (e.g. ±5 seconds)
-3. Pick exactly one of the kinds from the value-filter principle above
-4. Apply the kind:
-   - **drop-kinds** (`talking-head`, `blank`, `title-card`, `pull-quote-card`) → mark dropped, move on
-   - **conditional `map-overview`** → drop unless intro establisher or transcript discusses this region
-   - **keep-kinds** → record `(timestamp, frame_path, kind)` in the keep-list
+For each batch, the sub-agent's job is:
 
-Process frames in batches per turn (typically 10–20 frames per batch) rather than one at a time. Use a single Read sequence to load each batch's frames, then classify them all in your reasoning before emitting the next batch's reads.
+1. Read each frame image in the batch (Read tool on `frame_path`)
+2. Read the transcript text spoken in a small window around each frame's timestamp (e.g. ±5 seconds — the main agent should pass the relevant transcript snippet to the sub-agent in the prompt so the sub-agent doesn't have to re-derive it)
+3. Pick exactly one kind per frame from the value-filter principle above
+4. Return a JSON array `[{timestamp, frame_path, kind, note}, ...]` covering every frame in the batch — drop-kinds tagged with kind=`drop` plus a brief `drop_reason`, keep-kinds with their kind tag and a one-line `note` describing what the frame shows
+
+The main agent then collates the per-batch JSON into the running keep-list without ever reading the frames itself.
+
+The sub-agent prompt should inline the kind taxonomy and the value-filter principle (the sub-agent has no memory of the SKILL.md). Keep batches at ≤ 20 frames so each agent stays inside the 32 MB request-size limit on its own image reads.
 
 **Use the discover.py `source` and `run_duration` hints.** They're informational signals, not classification rules:
 
@@ -155,20 +156,20 @@ When a near-duplicate is detected, **keep the earlier frame** (it's the establis
 
 ### A.7. Whole-list audit pass
 
-Re-read every frame in the keep-list **as a single batch** and ask, for each one, "is this image actually useful in the entry?" This is a separate pass from per-frame classification (A.4) — its purpose is to catch drift errors and curate the set as a whole.
+Re-read every frame in the keep-list as a curated set and ask, for each one, "is this image actually useful in the entry?" This is a separate pass from per-frame classification (A.4) — its purpose is to catch drift errors and curate the set as a whole.
 
-Why this is a separate step: per-frame classification works in batches of 10–20 and depends on the agent's mental tracking of "what was at timestamp X." With long videos and multiple batches, that tracking drifts. Frames that the agent labeled `diagram` in the moment can turn out to be talking-head poses or transition shots when re-examined alongside the rest of the kept set.
+Why this is a separate step: per-frame classification works in per-batch sub-agents that each see only their own 10–20 frames. None of them sees the keep-list as a whole, so redundancy and accumulated drift are invisible at A.4. Frames that one batch's sub-agent labeled `diagram` can turn out to be talking-head poses or visually redundant with another batch's keepers when the kept set is re-examined together.
 
-For each frame in the keep-list, decide:
+**Delegate this to a single audit sub-agent** (Agent tool, `subagent_type: general-purpose`). The main agent passes the audit-agent the full keep-list (timestamp + frame_path + kind + note for every entry) and asks it to re-read the frames and return a JSON `[{timestamp, decision: "keep"|"drop", reason}, ...]`. The audit-agent reads the frames in its own context — the main agent never loads them. If the keep-list is large enough that even one sub-agent can't fit all the frames in 32 MB, partition by chapter or by index range and run several audit-agents in parallel.
+
+For each frame, the audit-agent decides:
 
 - **Keep** — the image communicates something specific (a concept, a build-up state, a map overlay, a piece of code). The entry is better with it than without it.
 - **Drop** — the image is talking-head, a transition cartoon with no figures or labels, an empty title-card overlay, or visually redundant with another kept frame.
 
-Be willing to drop frames you classified as keep-kinds in A.4. The audit is the last guardrail against accumulated drift.
+The audit-agent is told it is allowed to drop frames previously classified as keep-kinds — the audit's purpose is precisely to catch that drift. When dropping, prefer dropping later frames in a build-up sequence over earlier ones (the earlier frame usually carries the concept). For redundant maps, keep the one with the richest overlay.
 
-When dropping, prefer dropping later frames in a build-up sequence over earlier ones (the earlier frame usually carries the concept; later ones are progressive states that may or may not add new information). For redundant maps, keep the one with the richest overlay.
-
-Re-read in small batches if the full set won't fit (image data is large; reading 30+ frames at once can exceed request-size limits). Track the kept indices and emit the final list once every frame has been audited.
+The main agent then applies the audit-agent's decisions to produce the final keep-list.
 
 ### A.8. Emit the final keep-list
 
