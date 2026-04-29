@@ -115,6 +115,24 @@ if ! rclone listremotes 2>/dev/null | grep -qx "dropbox:"; then
     exit 1
 fi
 
+# Sanity check that the destination vault already exists on Dropbox. This
+# catches the most common dangerous failure mode: a typo'd vault name
+# (~/ObsidianVaults/woldbuilding/...) that would otherwise create a brand-new
+# dir on Dropbox and silently orphan the entry away from the user's actual
+# vault. Vault creation is intentionally a manual gesture — the script will
+# never auto-create a vault dir, even with a flag, because an auto-create
+# path could be triggered by mistake.
+VAULT_REMOTE="dropbox:ObsidianVaults/$VAULT_NAME/"
+if ! rclone lsd "$VAULT_REMOTE" >/dev/null 2>&1; then
+    echo "Error: vault dir does not exist on Dropbox: $VAULT_REMOTE" >&2
+    echo "  This usually means you mistyped the vault name. Local vault is:" >&2
+    echo "    $EXPECTED_PREFIX/$VAULT_NAME/" >&2
+    echo "  If this really is a brand-new vault you've never synced before, bootstrap it manually:" >&2
+    echo "    rclone mkdir $VAULT_REMOTE" >&2
+    echo "  and then re-run the sync." >&2
+    exit 1
+fi
+
 echo "Syncing entry to Dropbox:"
 echo "  source: $ENTRY_DIR/"
 echo "  target: $TARGET"

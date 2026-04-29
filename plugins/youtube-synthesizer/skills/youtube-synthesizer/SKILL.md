@@ -545,6 +545,7 @@ The script enforces the convention in code:
 
 - Source must resolve under `~/ObsidianVaults/<vault>/sources/videos/<entry-dir>/` with exactly that path shape; anything else is rejected before rclone runs.
 - Target is *computed* by the script as `dropbox:ObsidianVaults/<vault>/sources/videos/<entry-dir>/`; the agent does not get to specify it. Targets at the Dropbox root, the `ObsidianVaults/` parent, the vault root, the `sources/` dir, or the `videos/` dir are explicitly refused.
+- The destination vault dir (`dropbox:ObsidianVaults/<vault>/`) must already exist on Dropbox before the sync runs, verified via `rclone lsd`. This catches the typo case where a misspelled vault name (`woldbuilding` instead of `worldbuilding`) would otherwise silently create a new dir on Dropbox and orphan the entry. Vault creation is intentionally a manual gesture: if the user really is bootstrapping a new vault, the error message tells them to run `rclone mkdir dropbox:ObsidianVaults/<vault>/` once, then re-try the sync.
 - Missing rclone or unconfigured `dropbox:` remote → the script reports the issue and exits non-zero without invoking rclone.
 
 The agent **must not** invoke `rclone` directly anywhere in this skill — there is no situation where calling rclone outside this script is correct. Users with a different vault layout or remote name should run rclone manually outside the skill rather than try to subvert the script.
