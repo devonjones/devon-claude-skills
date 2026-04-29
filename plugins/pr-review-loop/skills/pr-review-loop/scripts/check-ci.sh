@@ -175,24 +175,15 @@ while [[ $ELAPSED -lt $TIMEOUT ]]; do
     case "$status" in
         no_checks)
             # If no check-runs have appeared after the grace window, look at
-            # the check-suites API directly. A "real" CI suite has either
-            # produced check-runs already or moved past `queued` into
-            # `in_progress` / `completed`. Suites that stay queued with zero
-            # runs are idle integrations (e.g. Codecov on a no-coverage push,
-            # Renovate on a non-dependency change) that will never report
-            # back. If every suite is in that state after the grace window,
-            # there's nothing to wait for.
+            # the check-suites API. A real CI suite either has produced runs
+            # (latest_check_runs_count > 0) or is actively progressing
+            # (status == in_progress). Suites that stay queued without runs,
+            # or that complete fast with zero runs (e.g. Renovate on a
+            # non-dependency change), are idle integrations that will never
+            # report back — there's nothing to wait on. On transient API
+            # failures, default to 1 (keep waiting) and warn; false-exiting
+            # on a network blip would let a real failing CI go unnoticed.
             if [[ $ELAPSED -ge $NO_CI_GRACE_S && -n "$HEAD_SHA" && -n "$REPO" ]]; then
-                # A real CI suite either has produced check-runs already
-                # (latest_check_runs_count > 0) or is actively progressing
-                # (status == in_progress). Suites that stay queued without
-                # runs, or that complete fast with zero runs (e.g. Renovate
-                # finding nothing to update), are idle integrations — there's
-                # nothing to wait on.
-                #
-                # On transient API failures, default to 1 (keep waiting) and
-                # warn — false-exiting on a network blip would let a real
-                # failing CI go unnoticed, which is worse than waiting.
                 active_suites=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/check-suites" --jq '
                     [.check_suites[]?
                      | select(.latest_check_runs_count > 0
