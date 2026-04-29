@@ -1,6 +1,6 @@
 ---
 name: youtube-synthesizer
-description: Turn a YouTube video into a faithful-capture literature note in an Obsidian vault. Use when the user wants to ingest a video (explainer, howto, lecture) into their personal source notes corpus. Combines transcript + load-bearing visual frames + structured extraction.
+description: Turn a YouTube video into a faithful-capture literature note in an Obsidian vault, with optional Dropbox sync via rclone. Use when the user wants to ingest a video (explainer, howto, lecture) into their personal source notes corpus. Combines transcript + load-bearing visual frames + structured extraction. Auto-discovers vaults under ~/ObsidianVaults/ and offers to push the new entry to dropbox: after writing.
 ---
 
 # YouTube Synthesizer
@@ -14,14 +14,15 @@ You — the agent running this skill — do the visual judgment inline as you fo
 Required inputs from the user:
 
 - **`<URL>`** — YouTube video URL or 11-character video ID
-- **`<vault>`** — absolute path to the target Obsidian vault. The skill writes to `<vault>/sources/videos/<ingested-date>-<sanitized-title>/`.
 
 Optional:
 
+- **`<vault>`** — absolute path to the target Obsidian vault, **or** a vault name relative to `~/ObsidianVaults/`. The skill writes to `<vault>/sources/videos/<ingested-date>-<sanitized-title>/`. If omitted, see Phase D.1 for the discovery flow.
 - **`--rerun`** — overwrite an existing entry at the target path. Without this flag, the skill refuses to overwrite (Phase D.2).
 - **`--why <reason>`** — populate the `why_ingested` frontmatter field. If omitted, leave it as an empty string; the user can fill it in after.
+- **`--no-sync`** — skip the post-write Dropbox sync prompt (Phase D.6). Otherwise the skill asks after a successful write whether to push the new entry to `dropbox:ObsidianVaults/<vault-name>/sources/videos/<entry-dir>/`.
 
-If any required input is missing, ask the user before starting work — do not guess the vault path.
+If `<URL>` is missing, ask the user before starting work — do not guess. `<vault>` resolution is described in Phase D.1; do not guess that either.
 
 ## Output
 
@@ -373,13 +374,32 @@ Assemble everything from Phases B and C, plus the keep-list from Phase A, into t
 
 ### D.1. Resolve the entry path
 
-Given the user-supplied vault path `<vault>` and `metadata.source_title`:
+#### D.1.a. Resolve `<vault>` if not supplied
+
+The convention is that the user keeps Obsidian vaults under `~/ObsidianVaults/<vault-name>/`. The vault that hosts this entry depends on the video's topic, which the user picks per-run.
+
+If `<vault>` was supplied at invocation:
+
+- If it's an absolute path, use it directly.
+- If it's a bare name (no `/`), resolve to `~/ObsidianVaults/<name>/`.
+
+If `<vault>` was *not* supplied:
+
+1. Recall the user's last picked vault from memory (search for a memory keyed under "youtube-synthesizer last vault" or similar). If found, ask the user to confirm — *"last run wrote to `<recalled vault>`; same vault for this entry?"* — and use that on a yes.
+2. If no recall (or the user said no), `ls ~/ObsidianVaults/` and present the list. Ask the user to pick one.
+3. If `~/ObsidianVaults/` doesn't exist or is empty, ask the user for an absolute vault path.
+
+After the user picks, save the chosen vault to memory so the next run can recall and confirm rather than re-prompt.
+
+#### D.1.b. Compose the entry directory
+
+Given the resolved `<vault>` and `metadata.source_title`:
 
 1. **Sanitize the title:** lowercase → strip anything not in `[a-z0-9 ]` (apostrophes vanish — produces `thats` not `that-s`; quotes, colons, em-dashes, ampersands all disappear) → collapse whitespace runs into single hyphens → trim leading/trailing hyphens → truncate at 80 characters.
 2. Today's date in `YYYY-MM-DD` format (this is `ingested_date`).
 3. Compose the entry directory: `<vault>/sources/videos/<ingested_date>-<sanitized_title>/`
 
-Example: `~/Obsidian/worldbuilding/sources/videos/2026-04-27-the-ox-thats-breaking-your-fantasy-map/`
+Example: `~/ObsidianVaults/worldbuilding/sources/videos/2026-04-27-the-ox-thats-breaking-your-fantasy-map/`
 
 ### D.2. Skip-or-overwrite check
 
@@ -505,11 +525,36 @@ Write `<entry_dir>/index.md`. After writing, verify the file is non-empty and th
 
 Print a clear success message with the absolute path to `index.md` so the user knows where to open it.
 
-### D.6. Failure-mode degradations (current scope)
+### D.6. Optional Dropbox sync via rclone
+
+After D.5 writes the entry successfully, ask the user whether to push the new entry directory to Dropbox. The convention is:
+
+- **Source:** `<vault>/sources/videos/<entry-dir>/`
+- **Target:** `dropbox:ObsidianVaults/<vault-name>/sources/videos/<entry-dir>/`
+
+`<vault-name>` is the basename of the resolved `<vault>` (e.g. `worldbuilding` if the vault is `~/ObsidianVaults/worldbuilding/`). Sync only the new entry's directory, not the whole `sources/videos/` tree — that avoids long syncs and side-effects on entries the user might be editing locally.
+
+**Skip this entire phase if `--no-sync` was passed at invocation.**
+
+Otherwise:
+
+1. Print the planned source and target paths.
+2. Ask: *"Sync this entry to Dropbox now?"*
+3. On yes:
+   ```
+   rclone sync <vault>/sources/videos/<entry-dir>/ dropbox:ObsidianVaults/<vault-name>/sources/videos/<entry-dir>/
+   ```
+   Run blocking; report success or the rclone error message.
+4. On no, print *"Skipped sync. Run later with: rclone sync <source> <target>"* so the user has the exact command if they change their mind.
+
+The remote name (`dropbox:`) and the target prefix (`ObsidianVaults/`) are conventions documented here. Users with a different rclone setup should override either by editing this section's defaults locally or by running rclone manually after the skill exits.
+
+### D.7. Failure-mode degradations (current scope)
 
 - Re-running on existing entry without `--rerun`: print message, exit (D.2).
 - Very short video (≤ 3 min) or no `chapter_markers`: force flat structure (D.4.a).
 - Live stream / unavailable / no transcript: handled in Phase A; Phase D is unreachable in those cases.
+- rclone not installed or `dropbox:` remote not configured: report the rclone error verbatim, leave the local entry intact, and suggest the user install/configure rclone or re-run with `--no-sync`.
 
 ---
 
@@ -546,7 +591,8 @@ The soft-correct policy (Phase C.7) is the one place the skill modifies words. I
 - `youtube-transcript` skill installed
 - `youtube-screenshotter` skill installed (transitively requires `uv` and `ffmpeg`)
 - Network access to YouTube
-- A target Obsidian vault path (writable) — used by Phase D
+- A target Obsidian vault path (writable) — used by Phase D. Convention: `~/ObsidianVaults/<vault-name>/`.
+- `rclone` (optional, only if using Phase D.6 Dropbox sync) with a `dropbox:` remote configured. Install via the system package manager or `https://rclone.org/install/`. Configure with `rclone config` and pick "Dropbox" — the remote name `dropbox` is what the skill expects by default. Skip this dep entirely if you always invoke with `--no-sync`.
 
 ## Failure modes
 
