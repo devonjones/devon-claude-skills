@@ -1,6 +1,6 @@
 ---
 name: youtube-screenshotter
-description: Download a YouTube video and extract frames at specified timestamps with perceptual hashes; also discovers candidate timestamps via ffmpeg scene-detect + per-second pHash run-grouping. Use when capturing specific moments from a video as PNG images, or when a downstream skill (e.g. youtube-synthesizer) needs a high-recall list of where things change in the video. Mechanical only — no LLM calls.
+description: Download a YouTube video and extract frames at specified timestamps with perceptual hashes; also discovers candidate timestamps via ffmpeg scene-detect + per-second pHash run-grouping; analyses optical flow over a sub-range and composes a sprite strip showing a motion arc. Use when capturing specific moments from a video as PNG images, or when a downstream skill (e.g. youtube-synthesizer) needs a high-recall list of where things change in the video. Mechanical only — no LLM calls.
 ---
 
 # YouTube Screenshotter
@@ -59,6 +59,15 @@ scripts/extract.py "<URL_OR_VIDEO_ID>" -t 1 -t 30 -t 500 -o ./out
 - Unions both signals, dedups within 1s.
 
 The two signals complement each other: scene-detect catches sharp cuts (including 1–2s content stretches that the run-duration filter would drop) but misses slow fade-ins; pHash run-grouping catches every sustained content stretch ≥ `--min-run` seconds (including fade-in diagrams).
+
+`scripts/motion.py` is a third entrypoint for the case discover.py can't catch on its own — a small object moving across an otherwise-static background, where the global pHash stays within threshold and run-grouping merges the whole animation into one start frame. Given a sub-range, it densely re-samples (default 4 fps), computes Farneback optical flow per consecutive pair, picks the largest moving connected component, and scores each frame by `area * centeredness * edge_penalty`. With `--sprite-out PATH`, it also re-extracts N evenly-spaced timestamps across the motion-active span at full source resolution and composites a Brady-Bunch grid — 9 frames in a 3×3 layout by default, so a reader can take in the whole motion arc at a glance.
+
+```bash
+scripts/motion.py <video> --start S --end E [--fps 4] [-o DIR]
+                          [--sprite-out PATH] [--sprite-frames 9] [--sprite-cols 3]
+```
+
+The primitive is content-agnostic; the decision *whether* to sprite a span (vs. pick a single frame, vs. emit a text-only `> [animation: ...]` annotation) lives in the caller — typically `youtube-synthesizer` Phase A.5.
 
 ### Discover manifest shape
 
