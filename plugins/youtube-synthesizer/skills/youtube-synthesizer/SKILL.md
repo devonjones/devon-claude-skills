@@ -103,7 +103,7 @@ Pass the timestamp list from `discover.py`'s `candidates` array. The video file 
 
 ### A.4. Classify every frame by kind
 
-**Delegate this to sub-agents — do not load the frames into your own context.** A 100+ candidate video produces ~50–150 MB of PNG data; loading it inline blows the main agent's context window for no benefit (you only need the classifications back, not the pixels). Use the Agent tool (`subagent_type: general-purpose`) with batches of 10–20 frames per agent.
+**Delegate this to sub-agents — do not load the frames into your own context.** A 100+ candidate video produces ~50–150 MB of PNG data; loading it inline blows the main agent's context window for no benefit (you only need the classifications back, not the pixels). Use the Agent tool (`subagent_type: general-purpose`) with batches of 10 frames per agent.
 
 For each batch, the sub-agent's job is:
 
@@ -114,7 +114,7 @@ For each batch, the sub-agent's job is:
 
 The main agent then collates the per-batch JSON into the running keep-list without ever reading the frames itself.
 
-The sub-agent prompt should inline the kind taxonomy and the value-filter principle (the sub-agent has no memory of the SKILL.md). Keep batches at ≤ 20 frames so each agent stays inside the 32 MB request-size limit on its own image reads.
+The sub-agent prompt should inline the kind taxonomy and the value-filter principle (the sub-agent has no memory of the SKILL.md). Keep batches at ≤ 10 frames so each agent stays inside the 32 MB request-size limit on its own image reads (frames at 1280×720 PNG run ~0.5–1.5 MB each, so 20 reads can blow the limit on dense content).
 
 **Use the discover.py `source` and `run_duration` hints.** They're informational signals, not classification rules:
 
@@ -149,6 +149,8 @@ For each consecutive pair `(K_i, K_{i+1})` in the keep-list:
 Walk the entire keep-list (not just adjacent pairs) and drop any frame whose pHash is within Hamming ≤ 12 of an earlier-kept frame.
 
 This catches the case where the same world-map appears at chapter 1's opening **and** at chapter 3's opening — visually identical but separated by minutes.
+
+**Exclude `animated-build-step` frames from this pass.** A.5 deliberately keeps multiple frames of a single build-up sequence; their pHashes are similar by design, and re-pruning them here would undo A.5's work.
 
 When a near-duplicate is detected, **keep the earlier frame** (it's the establisher) and drop the later one.
 

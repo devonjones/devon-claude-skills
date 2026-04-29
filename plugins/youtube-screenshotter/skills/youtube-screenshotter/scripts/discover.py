@@ -101,6 +101,10 @@ def extract_thumbnails(video_path: Path, out_dir: Path) -> list[tuple[float, Pat
     320×180 JPEG (~quality 5 / mid range) so the directory stays small.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Clear stale thumbnails so a shorter video after a longer one doesn't
+    # inherit out-of-range frames via glob.
+    for stale in out_dir.glob("thumb_*.jpg"):
+        stale.unlink()
     pattern = str(out_dir / "thumb_%05d.jpg")
     cmd = [
         "ffmpeg",
@@ -198,9 +202,14 @@ def union_candidates(
     deduped: list[dict] = []
     for c in raw:
         if deduped and c["timestamp"] - deduped[-1]["timestamp"] <= DEDUP_PROXIMITY:
-            # Prefer phash_run entries (they carry run_duration metadata).
-            if c["source"] == "phash_run" and deduped[-1]["source"] == "scene_detect":
-                deduped[-1] = c
+            # Keep the precise scene_detect timestamp (it pinpoints the cut)
+            # and merge in the phash_run's run_duration metadata when present.
+            prev = deduped[-1]
+            if c["source"] == "phash_run" and prev["source"] == "scene_detect":
+                prev["run_duration"] = c["run_duration"]
+            elif c["source"] == "scene_detect" and prev["source"] == "phash_run":
+                prev["timestamp"] = c["timestamp"]
+                prev["source"] = "scene_detect"
             continue
         deduped.append(c)
     return deduped
