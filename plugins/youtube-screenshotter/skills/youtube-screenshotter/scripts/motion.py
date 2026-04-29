@@ -55,7 +55,9 @@ DEFAULT_FPS = 4
 DEFAULT_FLOW_THRESHOLD = 1.0
 DEFAULT_MIN_AREA = 200  # pixels at the working resolution
 DEFAULT_PROGRESSIVE_MIN_SAMPLES = 3
-DEFAULT_SPRITE_FRAMES = 4
+DEFAULT_SPRITE_FRAMES = 9    # Brady-Bunch 3x3 by default
+DEFAULT_SPRITE_COLS = 3
+DEFAULT_SPRITE_MAX_WIDTH = 1920  # final composite cap; cells scaled to fit
 
 
 @dataclass
@@ -275,23 +277,37 @@ def _sprite_pick(samples: list[Sample], min_area: int, n_frames: int) -> list[fl
     return [round(start_t + i * step, 3) for i in range(n_frames)]
 
 
-def compose_sprite_strip(frame_paths: list[Path], out_path: Path) -> None:
-    """Composite an ordered list of full-res frames into a horizontal strip PNG.
+def compose_sprite_grid(
+    frame_paths: list[Path],
+    out_path: Path,
+    *,
+    cols: int = DEFAULT_SPRITE_COLS,
+    max_width: int = DEFAULT_SPRITE_MAX_WIDTH,
+) -> None:
+    """Composite frames into a Brady-Bunch grid (rows × cols), reading order.
 
-    All frames are pasted at their original resolution; the output width is the
-    sum of their widths and the height is the max of their heights (frames are
-    top-aligned). Mismatched heights are padded with black.
+    Each cell is scaled so the total grid width is ≤ `max_width`; the cell
+    height is derived from the source frame's aspect ratio. Frames are
+    pasted in time order, left-to-right then top-to-bottom. If the frame
+    count isn't a perfect multiple of `cols`, the trailing cells in the last
+    row are left black.
     """
     if not frame_paths:
         raise ValueError("no frames to compose")
     images = [Image.open(p).convert("RGB") for p in frame_paths]
-    total_w = sum(img.width for img in images)
-    max_h = max(img.height for img in images)
-    sprite = Image.new("RGB", (total_w, max_h), color=(0, 0, 0))
-    x = 0
-    for img in images:
-        sprite.paste(img, (x, 0))
-        x += img.width
+    rows = (len(images) + cols - 1) // cols
+    src_w, src_h = images[0].size
+    cell_w = max_width // cols
+    # Preserve source aspect ratio in cells.
+    cell_h = round(cell_w * src_h / src_w)
+    total_w = cell_w * cols
+    total_h = cell_h * rows
+    sprite = Image.new("RGB", (total_w, total_h), color=(0, 0, 0))
+    for i, img in enumerate(images):
+        scaled = img.resize((cell_w, cell_h), Image.LANCZOS)
+        col = i % cols
+        row = i // cols
+        sprite.paste(scaled, (col * cell_w, row * cell_h))
     sprite.save(out_path, format="PNG", optimize=True)
 
 
@@ -316,8 +332,10 @@ def main() -> int:
     p.add_argument("--flow-threshold", type=float, default=DEFAULT_FLOW_THRESHOLD, help=f"per-pixel flow magnitude threshold (default {DEFAULT_FLOW_THRESHOLD})")
     p.add_argument("--min-area", type=int, default=DEFAULT_MIN_AREA, help=f"min connected-component area in pixels (default {DEFAULT_MIN_AREA})")
     p.add_argument("--progressive-min-samples", type=int, default=DEFAULT_PROGRESSIVE_MIN_SAMPLES, help=f"min consecutive moving samples to call it progressive motion (default {DEFAULT_PROGRESSIVE_MIN_SAMPLES})")
-    p.add_argument("--sprite-out", type=Path, default=None, help="if set, write a horizontal sprite-strip PNG of N evenly-spaced frames across the motion-active span")
-    p.add_argument("--sprite-frames", type=int, default=DEFAULT_SPRITE_FRAMES, help=f"number of frames in the sprite strip (default {DEFAULT_SPRITE_FRAMES})")
+    p.add_argument("--sprite-out", type=Path, default=None, help="if set, write a Brady-Bunch grid PNG of N evenly-spaced frames across the motion-active span")
+    p.add_argument("--sprite-frames", type=int, default=DEFAULT_SPRITE_FRAMES, help=f"number of frames in the sprite grid (default {DEFAULT_SPRITE_FRAMES} for a 3x3 layout)")
+    p.add_argument("--sprite-cols", type=int, default=DEFAULT_SPRITE_COLS, help=f"grid columns; rows derived from N/cols (default {DEFAULT_SPRITE_COLS})")
+    p.add_argument("--sprite-max-width", type=int, default=DEFAULT_SPRITE_MAX_WIDTH, help=f"max output width in pixels; cells scaled to fit (default {DEFAULT_SPRITE_MAX_WIDTH})")
     args = p.parse_args()
 
     if not args.video.is_file():
@@ -348,9 +366,19 @@ def main() -> int:
                     # Recompute under the requested frame count.
                     timestamps = _resample_sprite_timestamps(timestamps, args.sprite_frames)
                 full_res = _extract_full_res(args.video, timestamps, sprite_dir)
-                compose_sprite_strip([f.path for f in full_res], args.sprite_out)
+                compose_sprite_grid(
+                    [f.path for f in full_res],
+                    args.sprite_out,
+                    cols=args.sprite_cols,
+                    max_width=args.sprite_max_width,
+                )
                 manifest["sprite_path"] = str(args.sprite_out)
                 manifest["sprite_timestamps"] = timestamps
+                manifest["sprite_layout"] = {
+                    "cols": args.sprite_cols,
+                    "rows": (len(timestamps) + args.sprite_cols - 1) // args.sprite_cols,
+                    "frames": len(timestamps),
+                }
 
     except (RuntimeError, OSError, ValueError, subprocess.CalledProcessError) as exc:
         print(f"error: {exc}", file=sys.stderr)
