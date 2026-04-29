@@ -89,7 +89,7 @@ Save the metadata block; Phase B reads `description`, `chapter_markers`, `source
 <youtube-screenshotter scripts dir>/discover.py "<URL>" -o <work_dir>
 ```
 
-Returns a manifest with two source signals (`scene_detect` and `phash_runs`) and a unioned `candidates` list. The screenshotter does the mechanical discovery work — running ffmpeg scene-detect for sharp cuts and per-second pHash run-grouping for sustained content — so Phase A doesn't need to guess timestamps. Typical output for an 18-minute video is 60–140 candidates, depending on visual density.
+Returns a manifest with two source signals (`scene_detect` and `phash_runs`) and a unioned `candidates` list. Typical output for an 18-minute video is 60–140 candidates, depending on visual density.
 
 The candidate list is high-recall: every sustained content stretch ≥ 3 seconds plus every sharp cut shows up. Most candidates will be drop-kinds (talking-head, title-cards) — the agent's job is to filter them down to the informational subset in A.4.
 
@@ -144,13 +144,11 @@ For each consecutive pair `(K_i, K_{i+1})` in the keep-list:
 
 **Re-extract intermediate seconds inside the sequence.** Sample every 2 seconds between `K_i.timestamp` and `K_{i+1}.timestamp` via `extract.py`, classify each, and keep all build-up steps in the keep-list. Re-tag the original frames as `animated-build-step` if appropriate.
 
-This replaces the previous "when you see one build-step frame, sample densely" rule — discover.py's per-second pHash runs already exposes the build-up at the candidate stage; this step just re-extracts the intermediate seconds at full res.
-
 ### A.6. Cross-time pHash dedup
 
 Walk the entire keep-list (not just adjacent pairs) and drop any frame whose pHash is within Hamming ≤ 12 of an earlier-kept frame.
 
-This catches the case where the same world-map appears at chapter 1's opening **and** at chapter 3's opening — visually identical but separated by minutes. The Phase 1.5 `≤ 5` strict-adjacent rule missed it; the Phase 1.6 `≤ 12` whole-list rule catches it.
+This catches the case where the same world-map appears at chapter 1's opening **and** at chapter 3's opening — visually identical but separated by minutes.
 
 When a near-duplicate is detected, **keep the earlier frame** (it's the establisher) and drop the later one.
 

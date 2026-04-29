@@ -73,7 +73,7 @@ def scene_detect(video_path: Path, threshold: float) -> list[float]:
         "-f", "null",
         "-",
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
     # showinfo emits to stderr at default loglevel; pts_time:N.NNN is the field.
     return [float(m) for m in re.findall(r"pts_time:([0-9.]+)", proc.stderr)]
 
@@ -129,19 +129,21 @@ def group_runs(
     """
     runs: list[Run] = []
     current: Run | None = None
+    current_h = None
 
     for t, path in thumbnails:
-        h = str(phash_compute(path))
+        h = phash_compute(path)
         if current is None:
-            current = Run(start_t=t, end_t=t, phash=h, representative=path)
+            current = Run(start_t=t, end_t=t, phash=str(h), representative=path)
+            current_h = h
             continue
-        # Compare via integer XOR popcount on the hex hashes.
-        dist = bin(int(h, 16) ^ int(current.phash, 16)).count("1")
+        dist = h - current_h
         if dist <= threshold:
             current.end_t = t
         else:
             runs.append(current)
-            current = Run(start_t=t, end_t=t, phash=h, representative=path)
+            current = Run(start_t=t, end_t=t, phash=str(h), representative=path)
+            current_h = h
 
     if current is not None:
         runs.append(current)
@@ -223,7 +225,7 @@ def discover(
 
     return {
         "video_path": str(video_path),
-        "duration_seconds": int(metadata.duration_seconds) if metadata else None,
+        "duration_seconds": metadata.duration_seconds if metadata else None,
         "thresholds": {
             "scene": scene_threshold,
             "phash": phash_threshold,

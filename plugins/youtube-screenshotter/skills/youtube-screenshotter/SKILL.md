@@ -58,7 +58,7 @@ scripts/extract.py "<URL_OR_VIDEO_ID>" -t 1 -t 30 -t 500 -o ./out
 - Filters runs to ≥ `--min-run` seconds (default 3).
 - Unions both signals, dedups within 1s.
 
-The two signals complement each other: scene-detect catches sharp cuts (including 1–2s content stretches that the run-duration filter would drop) but misses slow fade-ins; pHash run-grouping catches every sustained content stretch ≥ `--min-run` seconds (including fade-in diagrams). Together: high-recall discovery.
+The two signals complement each other: scene-detect catches sharp cuts (including 1–2s content stretches that the run-duration filter would drop) but misses slow fade-ins; pHash run-grouping catches every sustained content stretch ≥ `--min-run` seconds (including fade-in diagrams).
 
 ### Discover manifest shape
 
