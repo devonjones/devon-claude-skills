@@ -527,7 +527,32 @@ Print a clear success message with the absolute path to `index.md` so the user k
 
 ### D.6. Optional Dropbox sync via rclone
 
-After D.5 writes the entry successfully, ask the user whether to push the new entry directory to Dropbox. The convention is:
+After D.5 writes the entry successfully, ask the user whether to push the new entry directory to Dropbox.
+
+#### D.6.a. Safety rails — read before running anything
+
+`rclone sync` is **destructive**: it deletes anything in the target that isn't in the source. A wrong target path can wipe arbitrary amounts of the user's Dropbox. The skill must enforce the following rules **even if the user explicitly asks for a broader sync** — if the user wants a broader sync, refuse and tell them to run rclone manually outside the skill.
+
+**NEVER sync to any of these targets:**
+
+- `dropbox:` — the Dropbox root. Would replace the user's entire Dropbox with one entry directory.
+- `dropbox:ObsidianVaults/` — the vault-parent dir. Would wipe every vault except the one being synced into.
+- `dropbox:ObsidianVaults/<vault-name>/` — the vault root. Would wipe every note, attachment, and config in the vault except the one entry.
+- `dropbox:ObsidianVaults/<vault-name>/sources/` — would wipe every source-type (articles, PDFs, podcasts) except videos.
+- `dropbox:ObsidianVaults/<vault-name>/sources/videos/` — would wipe every video entry except this one.
+- Any path that does not end with the same `<entry-dir>` basename as the source.
+
+The **only** acceptable target is the per-entry directory: `dropbox:ObsidianVaults/<vault-name>/sources/videos/<entry-dir>/`.
+
+**Pre-flight sanity check before invoking rclone:**
+
+1. Compute `entry_dir = basename(<source-path>)` (the date-prefixed sanitized title from D.1.b).
+2. Compute `target_dir = basename(<target-path>)` (after stripping any trailing slash).
+3. Refuse to run unless `entry_dir == target_dir` *and* the target starts with `dropbox:ObsidianVaults/`. If either check fails, abort with a clear message naming what was wrong; do not run rclone.
+
+#### D.6.b. The flow
+
+The convention is:
 
 - **Source:** `<vault>/sources/videos/<entry-dir>/`
 - **Target:** `dropbox:ObsidianVaults/<vault-name>/sources/videos/<entry-dir>/`
@@ -539,15 +564,16 @@ After D.5 writes the entry successfully, ask the user whether to push the new en
 Otherwise:
 
 1. Print the planned source and target paths.
-2. Ask: *"Sync this entry to Dropbox now?"*
-3. On yes:
+2. Run the D.6.a pre-flight sanity check. If it fails, abort the sync (the local entry write already succeeded; the user can re-run rclone manually).
+3. Ask: *"Sync this entry to Dropbox now?"*
+4. On yes:
    ```
    rclone sync <vault>/sources/videos/<entry-dir>/ dropbox:ObsidianVaults/<vault-name>/sources/videos/<entry-dir>/
    ```
    Run blocking; report success or the rclone error message.
-4. On no, print *"Skipped sync. Run later with: rclone sync <source> <target>"* so the user has the exact command if they change their mind.
+5. On no, print *"Skipped sync. Run later with: rclone sync <source> <target>"* so the user has the exact command if they change their mind.
 
-The remote name (`dropbox:`) and the target prefix (`ObsidianVaults/`) are conventions documented here. Users with a different rclone setup should override either by editing this section's defaults locally or by running rclone manually after the skill exits.
+The remote name (`dropbox:`) and the target prefix (`ObsidianVaults/`) are conventions documented here. Users with a different rclone setup should run rclone manually after the skill exits — the safety rails in D.6.a are tuned to this exact convention and intentionally don't have an escape hatch.
 
 ### D.7. Failure-mode degradations (current scope)
 
