@@ -183,13 +183,25 @@ while [[ $ELAPSED -lt $TIMEOUT ]]; do
             # back. If every suite is in that state after the grace window,
             # there's nothing to wait for.
             if [[ $ELAPSED -ge $NO_CI_GRACE_S && -n "$HEAD_SHA" && -n "$REPO" ]]; then
+                # A real CI suite either has produced check-runs already
+                # (latest_check_runs_count > 0) or is actively progressing
+                # (status == in_progress). Suites that stay queued without
+                # runs, or that complete fast with zero runs (e.g. Renovate
+                # finding nothing to update), are idle integrations — there's
+                # nothing to wait on.
+                #
+                # On transient API failures, default to 1 (keep waiting) and
+                # warn — false-exiting on a network blip would let a real
+                # failing CI go unnoticed, which is worse than waiting.
                 active_suites=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/check-suites" --jq '
                     [.check_suites[]?
                      | select(.latest_check_runs_count > 0
-                              or .status == "in_progress"
-                              or .status == "completed")
+                              or .status == "in_progress")
                     ] | length
-                ' 2>/dev/null || echo "0")
+                ' 2>/dev/null) || {
+                    echo "warning: check-suites API call failed; assuming CI is active and continuing to poll" >&2
+                    active_suites=1
+                }
                 if [[ "$active_suites" -eq 0 ]]; then
                     echo "No active CI for commit ${HEAD_SHA:0:7} (no check-suites running after ${ELAPSED}s) — exiting"
                     exit 0
