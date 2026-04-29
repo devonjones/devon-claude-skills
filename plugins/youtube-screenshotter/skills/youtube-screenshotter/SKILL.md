@@ -1,6 +1,6 @@
 ---
 name: youtube-screenshotter
-description: Download a YouTube video and extract frames at specified timestamps with perceptual hashes; also discovers candidate timestamps via ffmpeg scene-detect + per-second pHash run-grouping. Use when capturing specific moments from a video as PNG images, or when a downstream skill (e.g. youtube-synthesizer) needs a high-recall list of where things change in the video. Mechanical only — no LLM calls.
+description: Download a YouTube video and extract frames at specified timestamps with perceptual hashes; also discovers candidate timestamps via ffmpeg scene-detect + per-second pHash run-grouping; analyses optical flow over a sub-range and composes a sprite strip showing a motion arc. Use when capturing specific moments from a video as PNG images, or when a downstream skill (e.g. youtube-synthesizer) needs a high-recall list of where things change in the video. Mechanical only — no LLM calls.
 ---
 
 # YouTube Screenshotter
@@ -59,6 +59,15 @@ scripts/extract.py "<URL_OR_VIDEO_ID>" -t 1 -t 30 -t 500 -o ./out
 - Unions both signals, dedups within 1s.
 
 The two signals complement each other: scene-detect catches sharp cuts (including 1–2s content stretches that the run-duration filter would drop) but misses slow fade-ins; pHash run-grouping catches every sustained content stretch ≥ `--min-run` seconds (including fade-in diagrams).
+
+`scripts/motion.py` is a third entrypoint for the case discover.py can't catch on its own — a small object moving across an otherwise-static background, where the global pHash stays within threshold and run-grouping merges the whole animation into one start frame. Given a sub-range, it densely re-samples (default 4 fps), computes Farneback optical flow per consecutive pair, picks the largest moving connected component, and scores each frame by `area * centeredness * edge_penalty`. With `--sprite-out PATH`, it also re-extracts N evenly-spaced timestamps across the motion-active span at full source resolution and composites a horizontal sprite strip — useful for animations whose meaning lives in the *arc*, not in any single frame.
+
+```bash
+scripts/motion.py <video> --start S --end E [--fps 4] [-o DIR]
+                          [--sprite-out PATH] [--sprite-frames 4]
+```
+
+The primitive is content-agnostic: a talking-head with hand gestures generates motion comparable to a sliding boat. The decision *whether* a motion-active span is worth sprite-sheeting (vs. a single frame, vs. an `--allow-no-screenshot` text annotation) lives in the caller — typically `youtube-synthesizer` Phase A.5, where the keep-kind has already been confirmed via vision.
 
 ### Discover manifest shape
 
