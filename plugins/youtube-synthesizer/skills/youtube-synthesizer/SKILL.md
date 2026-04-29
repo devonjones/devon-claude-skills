@@ -154,9 +154,7 @@ When a near-duplicate is detected, **keep the earlier frame** (it's the establis
 
 ### A.7. Whole-list audit pass
 
-Re-read every frame in the keep-list as a curated set and ask, for each one, "is this image actually useful in the entry?" This is a separate pass from per-frame classification (A.4) — its purpose is to catch drift errors and curate the set as a whole.
-
-Why this is a separate step: per-frame classification works in per-batch sub-agents that each see only their own 10–20 frames. None of them sees the keep-list as a whole, so redundancy and accumulated drift are invisible at A.4. Frames that one batch's sub-agent labeled `diagram` can turn out to be talking-head poses or visually redundant with another batch's keepers when the kept set is re-examined together.
+Re-read every frame in the keep-list as a curated set and ask, for each one, "is this image actually useful in the entry?" This is a separate pass from per-frame classification (A.4): the per-batch sub-agents in A.4 each see only their own 10–20 frames, so cross-batch redundancy and accumulated drift are invisible there.
 
 **Delegate this to a single audit sub-agent** (Agent tool, `subagent_type: general-purpose`). The main agent passes the audit-agent the full keep-list (timestamp + frame_path + kind + note for every entry) and asks it to re-read the frames and return a JSON `[{timestamp, decision: "keep"|"drop", reason}, ...]`. The audit-agent reads the frames in its own context — the main agent never loads them. If the keep-list is large enough that even one sub-agent can't fit all the frames in 32 MB, partition by chapter or by index range and run several audit-agents in parallel.
 
