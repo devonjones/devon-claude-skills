@@ -23,6 +23,12 @@ WAIT_MODE=false
 TIMEOUT=600
 POLL_INTERVAL=20
 
+# Grace window before concluding "no CI configured" via the check-suites API.
+# GitHub Actions and most third-party CI providers register a check-suite for
+# the HEAD commit within seconds of a push; if zero suites exist after this
+# window, no CI is configured for this commit and there's nothing to wait for.
+NO_CI_GRACE_S=20
+
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -155,6 +161,10 @@ echo ""
 
 ELAPSED=0
 
+# Resolve the PR HEAD SHA once so we can probe the check-suites API for the
+# specific commit being checked. Without it we fall back to plain polling.
+HEAD_SHA=$(gh pr view "$PR_NUMBER" $REPO_FLAG --json headRefOid --jq .headRefOid 2>/dev/null) || HEAD_SHA=""
+
 # Brief initial wait - CI takes a moment to register new checks after push
 sleep 5
 ELAPSED=5
@@ -164,6 +174,27 @@ while [[ $ELAPSED -lt $TIMEOUT ]]; do
 
     case "$status" in
         no_checks)
+            # If no check-runs have appeared after the grace window, look at
+            # the check-suites API directly. A "real" CI suite has either
+            # produced check-runs already or moved past `queued` into
+            # `in_progress` / `completed`. Suites that stay queued with zero
+            # runs are idle integrations (e.g. Codecov on a no-coverage push,
+            # Renovate on a non-dependency change) that will never report
+            # back. If every suite is in that state after the grace window,
+            # there's nothing to wait for.
+            if [[ $ELAPSED -ge $NO_CI_GRACE_S && -n "$HEAD_SHA" && -n "$REPO" ]]; then
+                active_suites=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/check-suites" --jq '
+                    [.check_suites[]?
+                     | select(.latest_check_runs_count > 0
+                              or .status == "in_progress"
+                              or .status == "completed")
+                    ] | length
+                ' 2>/dev/null || echo "0")
+                if [[ "$active_suites" -eq 0 ]]; then
+                    echo "No active CI for commit ${HEAD_SHA:0:7} (no check-suites running after ${ELAPSED}s) — exiting"
+                    exit 0
+                fi
+            fi
             echo "No CI checks found yet (${ELAPSED}s elapsed)"
             ;;
         passing:*)
