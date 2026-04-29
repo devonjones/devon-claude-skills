@@ -1,21 +1,27 @@
 ---
 name: youtube-screenshotter
-description: Download a YouTube video and extract frames at specified timestamps with perceptual hashes. Use when capturing specific moments from a video as PNG images, or when a downstream skill (e.g. youtube-synthesizer) needs frames + pHashes for diffing. Mechanical only — no LLM calls, no scene detection.
+description: Download a YouTube video and extract frames at specified timestamps with perceptual hashes; also discovers candidate timestamps via ffmpeg scene-detect + per-second pHash run-grouping. Use when capturing specific moments from a video as PNG images, or when a downstream skill (e.g. youtube-synthesizer) needs a high-recall list of where things change in the video. Mechanical only — no LLM calls.
 ---
 
 # YouTube Screenshotter
 
-Mechanical primitives for video frame extraction. Downloads a YouTube video at 720p via `yt-dlp`, extracts PNG frames at requested timestamps via `ffmpeg`, and computes perceptual hashes (pHash) for each frame. Emits a single manifest JSON.
+Mechanical primitives for video analysis. Downloads a YouTube video at 720p via `yt-dlp`, extracts PNG frames at requested timestamps via `ffmpeg`, computes perceptual hashes (pHash) per frame, and discovers candidate timestamps from the video itself using ffmpeg primitives. Emits JSON manifests.
 
-This skill is deliberately narrow: it does not pick timestamps, does not classify visual differences, and makes no LLM calls. The caller decides what to sample and what to do with the output. See `youtube-synthesizer` for the smart bisection + judgment loop that drives this skill.
+This skill is deliberately narrow: it does not classify content kinds and makes no LLM calls. The caller decides what to do with the discovered candidates and extracted frames. See `youtube-synthesizer` for the smart kind-classification loop that drives this skill.
 
 ## Usage
 
 ```bash
+# Discover candidate timestamps (ffmpeg scene-detect + per-second pHash runs)
+scripts/discover.py "<URL_OR_VIDEO_ID>" -o ./out
+
+# Extract frames at specific timestamps
 scripts/extract.py "<URL_OR_VIDEO_ID>" -t 1 -t 30 -t 500 -o ./out
 ```
 
-Output is a JSON manifest printed to stdout. The output dir holds the cached video file (`<video_id>.mp4`) and a `frames/` subdir of `t<ms>.png` extracted frames. Repeated calls with the same URL skip the download; repeated timestamps hit the per-frame cache.
+`extract.py` output is a JSON manifest printed to stdout. The output dir holds the cached video file (`<video_id>.mp4`) and a `frames/` subdir of `t<ms>.png` extracted frames. Repeated calls with the same URL skip the download; repeated timestamps hit the per-frame cache.
+
+`discover.py` returns a manifest with two source signals (`scene_detect` and `phash_runs`) plus a unioned `candidates` list. Typical pipeline: `discover.py` → pick candidates from the manifest → `extract.py -t <ts1> -t <ts2> ...` → classify the extracted frames.
 
 ## Manifest shape
 
@@ -44,6 +50,36 @@ Output is a JSON manifest printed to stdout. The output dir holds the cached vid
 - `scripts/video.py <url> [-o DIR] [--no-download]` — yt-dlp wrapper for download + metadata. `--no-download` for cheap metadata-only probes.
 - `scripts/frames.py <video> -t <ts> [-t <ts> ...] [-o DIR]` — ffmpeg frame extraction.
 - `scripts/phash.py compute <image>` / `scripts/phash.py compare <a> <b>` — perceptual-hash compute + Hamming-distance pair classifier (`same` / `ambiguous` / `different` bands).
+
+`scripts/discover.py` is a separate entrypoint that produces a candidate-timestamp manifest:
+
+- Runs `ffmpeg select='gt(scene,N)'` over the video for sharp-cut transitions (configurable via `--threshold-scene`, default 0.2).
+- Runs `ffmpeg fps=1,scale=320:180` for a single-pass per-second thumbnail set, then computes pHash per thumbnail and groups consecutive thumbnails into runs by Hamming distance ≤ `--threshold-phash` (default 12 — merges talking-head microexpressions into single runs).
+- Filters runs to ≥ `--min-run` seconds (default 3).
+- Unions both signals, dedups within 1s.
+
+The two signals complement each other: scene-detect catches sharp cuts (including 1–2s content stretches that the run-duration filter would drop) but misses slow fade-ins; pHash run-grouping catches every sustained content stretch ≥ `--min-run` seconds (including fade-in diagrams). Together: high-recall discovery.
+
+### Discover manifest shape
+
+```json
+{
+  "video_path": "...", "duration_seconds": 1119,
+  "thresholds": {"scene": 0.2, "phash": 12, "min_run": 3.0},
+  "sources": {
+    "scene_detect": [4.8, 6.9, 18.6, ...],
+    "phash_runs": [
+      {"start_t": 88.0, "end_t": 90.0, "duration": 3.0, "phash": "..."},
+      ...
+    ]
+  },
+  "candidates": [
+    {"timestamp": 4.8,  "source": "scene_detect", "run_duration": null},
+    {"timestamp": 88.0, "source": "phash_run",    "run_duration": 3.0},
+    ...
+  ]
+}
+```
 
 ## pHash interpretation
 
