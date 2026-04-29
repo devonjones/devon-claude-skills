@@ -51,10 +51,14 @@ For each candidate frame, classify as exactly one of:
 - `title-card` — text-only on illustrated background, where the text duplicates the transcript ("THE OXEN PARADOX," "CHAPTER 3," "THREE DAY RULE")
 - `pull-quote-card` — emphasized restatement of what the presenter just said, with no additional information
 
+**Conditional (keep only when informational):**
+
+- `map-overview` — establishing shot of geography with no annotations or overlays. **Drop unless** the surrounding transcript prose specifically discusses "this region" or "this part of the map," **or** it is the very first map shown (intro establisher). Most repeat-views of the same world map are noise.
+
 **Keep (embed at the frame's timestamp):**
 
 - `diagram` — abstract illustration explaining a concept (stick-figures, flowcharts, conceptual visuals)
-- `map` — geographic or topological layout (in-world maps, real-world geography, network diagrams)
+- `map-with-overlay` — map plus drawn-in markers (red dots, dashed lines, labels, route arrows, radius circles, etc.). The overlays carry the information.
 - `chart` — data visualization (bar/line/pie/scatter, tables, math plots)
 - `code` — source code, terminal output, command lines, config files
 - `ui` — software interface, dashboard, application screenshot
@@ -62,7 +66,7 @@ For each candidate frame, classify as exactly one of:
 - `animated-build-step` — one frame of a multi-step animated diagram where each step adds information; **keep all of them**, do not collapse to the terminal frame
 - `hybrid-with-info-overlay` — talking-head with a substantive overlay (chart, code, callout) that adds information beyond what the words convey
 
-When uncertain between drop-kinds and keep-kinds, prefer keep. Wasting one frame downstream is cheap; missing a real informational moment is expensive. When uncertain between two keep-kinds, pick the closer match — the kind tag is informational metadata only and does not change rendering in Phase D.
+When uncertain between drop-kinds and keep-kinds, prefer keep. Wasting one frame downstream is cheap; missing a real informational moment is expensive. When uncertain between two keep-kinds, pick the closer match — the kind tag is informational metadata only and does not change rendering in Phase D. When uncertain between `map-overview` and `map-with-overlay`, default to `map-with-overlay` (keep) — visible overlays the agent missed are still informational.
 
 ---
 
@@ -79,81 +83,97 @@ If the video has no transcript, error with a clear message and stop. **Do not fa
 
 Save the metadata block; Phase B reads `description`, `chapter_markers`, `source_published_date`, etc. from it.
 
-### A.2. Decide initial sample timestamps
+### A.2. Discover candidate timestamps
 
-Build a sorted unique list from:
+```
+<youtube-screenshotter scripts dir>/discover.py "<URL>" -o <work_dir>
+```
 
-- **A coarse stride across the duration.** Default to one sample every ~30 seconds, snapped to the nearest transcript snippet boundary. Auto-caption snippets are typically 1–3 seconds apart, so sampling every snippet would produce hundreds of frames per hour — too dense for the classification pass to be tractable. The 30s stride gives ~120 candidates per hour; bisection in A.5 fills in any informational frames the stride missed.
-- Each chapter marker start (from metadata)
-- **`t = 0.5` — always include this.** The video's opening frame (logo, title card, opening shot) is commonly distinct and load-bearing; the coarse stride alone won't catch it.
-- Any silence gap > 10 seconds between consecutive snippets — anchor a sample at the gap midpoint
+Returns a manifest with two source signals (`scene_detect` and `phash_runs`) and a unioned `candidates` list. Typical output for an 18-minute video is 60–140 candidates, depending on visual density.
 
-### A.3. Extract initial frames
+The candidate list is high-recall: every sustained content stretch ≥ 3 seconds plus every sharp cut shows up. Most candidates will be drop-kinds (talking-head, title-cards) — the agent's job is to filter them down to the informational subset in A.4.
+
+### A.3. Extract candidate frames at full resolution
 
 ```
 <youtube-screenshotter scripts dir>/extract.py "<URL>" -t <ts1> -t <ts2> ... -o <work_dir>
 ```
 
-Returns a manifest with `(timestamp, frame_path, phash)` per requested timestamp. The video downloads once to `<work_dir>/<video_id>.mp4`; subsequent calls hit the cache.
+Pass the timestamp list from `discover.py`'s `candidates` array. The video file is already cached (discover downloaded it); only the per-timestamp PNG extraction happens here.
 
 ### A.4. Classify every frame by kind
 
-For each candidate frame, do the visual judgment yourself:
+**Delegate this to sub-agents — do not load the frames into your own context.** A 100+ candidate video produces ~50–150 MB of PNG data; loading it inline blows the main agent's context window for no benefit (you only need the classifications back, not the pixels). Use the Agent tool (`subagent_type: general-purpose`) with batches of 10 frames per agent.
 
-1. Read the frame image (use the Read tool on `frame_path`)
-2. Read the transcript text spoken in a small window around the frame's timestamp (e.g. ±5 seconds)
-3. Pick exactly one of the eleven kinds from the value-filter principle above
-4. If the kind is in the **drop** set, mark the frame dropped and move on. If in the **keep** set, record `(timestamp, frame_path, kind)` in the keep-list.
+For each batch, the sub-agent's job is:
 
-Process frames in batches per turn (typically 10–20 frames per batch) rather than one at a time. Use a single Read sequence to load each batch's frames, then classify them all in your reasoning before emitting the next batch's reads.
+1. Read each frame image in the batch (Read tool on `frame_path`)
+2. Read the transcript text spoken in a small window around each frame's timestamp (e.g. ±5 seconds — the main agent should pass the relevant transcript snippet to the sub-agent in the prompt so the sub-agent doesn't have to re-derive it)
+3. Pick exactly one kind per frame from the value-filter principle above
+4. Return a JSON array `[{timestamp, frame_path, kind, note}, ...]` covering every frame in the batch — drop-kinds tagged with kind=`drop` plus a brief `drop_reason`, keep-kinds with their kind tag and a one-line `note` describing what the frame shows
+
+The main agent then collates the per-batch JSON into the running keep-list without ever reading the frames itself.
+
+The sub-agent prompt should inline the kind taxonomy and the value-filter principle (the sub-agent has no memory of the SKILL.md). Keep batches at ≤ 10 frames so each agent stays inside the 32 MB request-size limit on its own image reads (frames at 1280×720 PNG run ~0.5–1.5 MB each, so 20 reads can blow the limit on dense content).
+
+**Use the discover.py `source` and `run_duration` hints.** They're informational signals, not classification rules:
+
+- `source: phash_run` with `run_duration ≥ 5s` → likely sustained content; if the transcript at that timestamp doesn't explain a visual, often a sustained talking-head pose (drop).
+- `source: phash_run` with `run_duration` 3–5s + transcript hint of visual content ("as you can see," "here's") → likely a real diagram.
+- `source: scene_detect` with no `run_duration` → sharp cut; could be diagram, transition, or pose change.
 
 **Use transcript context.** The intended visual content is often signaled by the words around it:
 
-- "As you can see," "let me show you," "here's the diagram" → expect a `diagram`/`chart`/`map`/`ui`/`code` frame
+- "As you can see," "let me show you," "here's the diagram" → expect a `diagram`/`chart`/`map-with-overlay`/`ui`/`code` frame
 - "And now we add," "next we get," "step three" → expect `animated-build-step`
 - Continuing to discuss the same conceptual point with no visual cues → likely `talking-head` (drop)
 
 When a frame is genuinely ambiguous between a keep-kind and `talking-head`, prefer keep.
 
-### A.5. Bisect gaps between consecutive keepers
+### A.5. Build-up sequence detection
 
-After the initial classification pass, walk the keep-list in time order. For each consecutive pair `(K_i, K_{i+1})`:
+After the per-frame classification, walk the keep-list in time order. Detect animated build-ups by adjacent same-kind frames whose pHashes are similar-but-distinct:
 
-- If `K_{i+1}.timestamp - K_i.timestamp > 15` seconds **and** the intervening transcript suggests visual content (the speaker says "as you can see," "let me show you," "here's the diagram," "and over here," etc.), schedule a midpoint sample.
-- Re-call `extract.py` with the new timestamps (cached video file makes this fast).
-- Classify the new frames by the same kind taxonomy. Drop-kinds → ignore; keep-kinds → insert into the keep-list and recurse on the new gaps.
+For each consecutive pair `(K_i, K_{i+1})` in the keep-list:
 
-Bisect when there's a **gap** that might contain a missed informational frame in a talking-head-dominated stretch, not when consecutive frames look different.
+- If both are the same keep-kind (e.g. both `diagram` or both `map-with-overlay`)
+- AND their pHashes have Hamming distance in the range 10–25 (visually related but not identical)
+- AND `K_{i+1}.timestamp - K_i.timestamp ≤ 10` seconds
 
-Stop bisecting a window when any of:
+…then this is an animated build-up sequence. The presenter is layering information onto the same canvas (e.g. wheat → wheat+sheep → wheat+sheep+wool, or a map gaining radii circles).
 
-- Window < 5 seconds
-- Midpoint frame classified as a drop-kind (no informational content found)
-- The bisection has run twice in this window and produced no keepers
+**Re-extract intermediate seconds inside the sequence.** Sample every 2 seconds between `K_i.timestamp` and `K_{i+1}.timestamp` via `extract.py`, classify each, and keep all build-up steps in the keep-list. Re-tag the original frames as `animated-build-step` if appropriate.
 
-### A.6. Densely sample animated-build-step runs
+### A.6. Cross-time pHash dedup
 
-When you classify a frame as `animated-build-step`, the video is in the middle of an animated diagram, equation, or build-up where each step adds information. Sample more densely inside this window: every 2–3 seconds, starting from the build-step frame's timestamp, until the kind transitions to something else (`diagram`/`talking-head`/`title-card`/etc.) or until the next chapter marker.
+Walk the entire keep-list (not just adjacent pairs) and drop any frame whose pHash is within Hamming ≤ 12 of an earlier-kept frame.
 
-**Keep every animated-build-step frame.** Do not collapse to the terminal frame; intermediate steps are the point of the build-up. The result is multiple consecutive entries in the keep-list at close timestamps, which Phase D will render as a sequence of inline images.
+This catches the case where the same world-map appears at chapter 1's opening **and** at chapter 3's opening — visually identical but separated by minutes.
 
-### A.7. Dedup near-identical keepers via pHash
+**Exclude `animated-build-step` frames from this pass.** A.5 deliberately keeps multiple frames of a single build-up sequence; their pHashes are similar by design, and re-pruning them here would undo A.5's work.
 
-After bisection and dense sampling, walk the keep-list one more time. For each consecutive pair `(K_i, K_{i+1})`, compare their pHashes via:
+When a near-duplicate is detected, **keep the earlier frame** (it's the establisher) and drop the later one.
 
-```
-<youtube-screenshotter scripts dir>/phash.py compare <K_i.frame_path> <K_{i+1}.frame_path>
-```
+### A.7. Whole-list audit pass
 
-If `hamming ≤ 5` (the `same` verdict), the two frames are visually near-identical — drop `K_{i+1}` from the keep-list.
+Re-read every frame in the keep-list as a curated set and ask, for each one, "is this image actually useful in the entry?" This is a separate pass from per-frame classification (A.4): the per-batch sub-agents in A.4 each see only their own 10–20 frames, so cross-batch redundancy and accumulated drift are invisible there.
 
-This catches cases where dense sampling produced redundant captures (e.g. a long-held diagram caught at multiple boundaries). pHash's role here is as a cheap deduplication check applied after kind-classification, not as a sampling-decision signal.
+**Delegate this to a single audit sub-agent** (Agent tool, `subagent_type: general-purpose`). The main agent passes the audit-agent the full keep-list (timestamp + frame_path + kind + note for every entry) and asks it to re-read the frames and return a JSON `[{timestamp, decision: "keep"|"drop", reason}, ...]`. The audit-agent reads the frames in its own context — the main agent never loads them. If the keep-list is large enough that even one sub-agent can't fit all the frames in 32 MB, partition by chapter or by index range and run several audit-agents in parallel.
+
+For each frame, the audit-agent decides:
+
+- **Keep** — the image communicates something specific (a concept, a build-up state, a map overlay, a piece of code). The entry is better with it than without it.
+- **Drop** — the image is talking-head, a transition cartoon with no figures or labels, an empty title-card overlay, or visually redundant with another kept frame.
+
+The audit-agent is told it is allowed to drop frames previously classified as keep-kinds — the audit's purpose is precisely to catch that drift. When dropping, prefer dropping later frames in a build-up sequence over earlier ones (the earlier frame usually carries the concept). For redundant maps, keep the one with the richest overlay.
+
+The main agent then applies the audit-agent's decisions to produce the final keep-list.
 
 ### A.8. Emit the final keep-list
 
 Output a sorted list of `(timestamp, frame_path, kind)` triples. This is the input to Phases C and D.
 
-The expected size depends entirely on the video's information density. A 1hr lecture-with-slides might produce 30–50 kept frames; a 20-minute video that's 80% talking-head might produce 4–6. There is no target count — the value-filter rule sets the bar.
+The expected size depends entirely on the video's information density. A 1hr lecture-with-slides might produce 30–50 kept frames; a 20-minute video that's 80% talking-head might produce 4–6. There is no target count — the value-filter rule plus the audit pass set the bar.
 
 ---
 
