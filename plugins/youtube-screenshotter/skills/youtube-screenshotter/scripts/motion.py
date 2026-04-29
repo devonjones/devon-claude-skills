@@ -357,6 +357,24 @@ def _sprite_pick(samples: list[Sample], min_area: int, n_frames: int) -> list[fl
     return [round(start_t + i * step, 3) for i in range(n_frames)]
 
 
+def pick_grid_shape(n_frames: int, preferred_cols: int = DEFAULT_SPRITE_COLS) -> tuple[int, int]:
+    """Choose (cols, rows) for an n-frame grid. Square-ish so a 4-step
+    build-up reads as 2x2 rather than a lopsided 3x2-with-one-empty-cell.
+    Falls back to `preferred_cols` once n exceeds `preferred_cols^2`.
+    """
+    if n_frames <= 1:
+        return (1, 1)
+    if n_frames <= 4:
+        return (2, 2)
+    if n_frames <= 6:
+        return (3, 2)
+    if n_frames <= preferred_cols * preferred_cols:
+        return (preferred_cols, preferred_cols)
+    cols = preferred_cols
+    rows = (n_frames + cols - 1) // cols
+    return (cols, rows)
+
+
 def compose_sprite_grid(
     frame_paths: list[Path],
     out_path: Path,
