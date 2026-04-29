@@ -59,6 +59,22 @@ DEDUP_PROXIMITY = 1.0  # seconds — entries within this window are deduped
 # --- ffmpeg discovery primitives -----------------------------------------
 
 
+def probe_duration(video_path: Path) -> float | None:
+    """Return the video's duration in seconds via ffprobe, or None on failure."""
+    cmd = [
+        "ffprobe",
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(video_path),
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return float(proc.stdout.strip())
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+        return None
+
+
 def scene_detect(video_path: Path, threshold: float) -> list[float]:
     """Return ffmpeg scene-change timestamps in seconds."""
     cmd = [
@@ -209,11 +225,11 @@ def discover(
     target_path = Path(target)
     if target_path.exists() and target_path.is_file():
         video_path = target_path
-        metadata = None
+        duration = probe_duration(target_path)
     else:
         result = download(target, work_dir, skip_download=False)
         video_path = result.video_path
-        metadata = result.metadata
+        duration = result.metadata.duration_seconds if result.metadata else None
 
     if video_path is None:
         raise RuntimeError(f"no video file resolved for {target!r}")
@@ -225,7 +241,7 @@ def discover(
 
     return {
         "video_path": str(video_path),
-        "duration_seconds": metadata.duration_seconds if metadata else None,
+        "duration_seconds": duration,
         "thresholds": {
             "scene": scene_threshold,
             "phash": phash_threshold,
