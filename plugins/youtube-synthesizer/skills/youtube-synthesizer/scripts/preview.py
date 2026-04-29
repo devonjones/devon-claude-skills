@@ -185,7 +185,15 @@ def render_html(md_path: Path) -> Path:
 </body></html>
 """
 
-    out_path = md_path.with_suffix(".html")
+    # Always write `index.html` regardless of the source .md filename, so the
+    # HTTP server's default route (GET /) finds the rendered page. Clear any
+    # stale .html files from prior runs first — a previous `<title>.html`
+    # could otherwise sit alongside the new index.html and confuse anyone
+    # browsing the directory listing.
+    out_dir = md_path.parent
+    for stale in out_dir.glob("*.html"):
+        stale.unlink()
+    out_path = out_dir / "index.html"
     out_path.write_text(doc, encoding="utf-8")
     return out_path
 
@@ -241,15 +249,31 @@ def main() -> int:
         return 1
 
     if args.target.is_dir():
+        # Synthesizer convention: dir name is `<YYYY-MM-DD>-<sanitized-title>`
+        # and the .md is `<sanitized-title>.md`. Strip the leading date prefix
+        # from the dir name to get the expected stem, and prefer that .md if
+        # it exists. Falls back to "any single .md" so directories that
+        # don't follow the convention (or that the user has hand-curated
+        # before opening) still work.
         md_files = sorted(args.target.glob("*.md"))
         if len(md_files) == 0:
             print(f"error: no .md file found in {args.target}", file=sys.stderr)
             return 1
-        if len(md_files) > 1:
+        expected_stem = re.sub(r"^\d{4}-\d{2}-\d{2}-", "", args.target.name)
+        preferred = args.target / f"{expected_stem}.md"
+        if preferred.exists():
+            md_path = preferred
+        elif len(md_files) == 1:
+            md_path = md_files[0]
+        else:
             names = ", ".join(p.name for p in md_files)
-            print(f"error: expected exactly one .md file in {args.target}, found {len(md_files)}: {names}", file=sys.stderr)
+            print(
+                f"error: multiple .md files in {args.target} ({names}) "
+                f"and none matches the expected stem '{expected_stem}.md'. "
+                "Pass the .md file directly to disambiguate.",
+                file=sys.stderr,
+            )
             return 1
-        md_path = md_files[0]
         directory = args.target
     elif args.target.suffix == ".md":
         md_path = args.target
