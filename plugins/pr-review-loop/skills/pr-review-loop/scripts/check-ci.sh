@@ -161,10 +161,6 @@ echo ""
 
 ELAPSED=0
 
-# Resolve the PR HEAD SHA once so we can probe the check-suites API for the
-# specific commit being checked. Without it we fall back to plain polling.
-HEAD_SHA=$(gh pr view "$PR_NUMBER" $REPO_FLAG --json headRefOid --jq .headRefOid 2>/dev/null) || HEAD_SHA=""
-
 # Brief initial wait - CI takes a moment to register new checks after push
 sleep 5
 ELAPSED=5
@@ -183,19 +179,27 @@ while [[ $ELAPSED -lt $TIMEOUT ]]; do
             # report back — there's nothing to wait on. On transient API
             # failures, default to 1 (keep waiting) and warn; false-exiting
             # on a network blip would let a real failing CI go unnoticed.
-            if [[ $ELAPSED -ge $NO_CI_GRACE_S && -n "$HEAD_SHA" && -n "$REPO" ]]; then
-                active_suites=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/check-suites" --jq '
-                    [.check_suites[]?
-                     | select(.latest_check_runs_count > 0
-                              or .status == "in_progress")
-                    ] | length
-                ' 2>/dev/null) || {
-                    echo "warning: check-suites API call failed; assuming CI is active and continuing to poll" >&2
-                    active_suites=1
-                }
-                if [[ "$active_suites" -eq 0 ]]; then
-                    echo "No active CI for commit ${HEAD_SHA:0:7} (no check-suites running after ${ELAPSED}s) — exiting"
-                    exit 0
+            #
+            # Re-resolve HEAD SHA every iteration so a force-push mid-wait
+            # checks the new commit's suites, not the stale ones. Use
+            # --paginate so busy repos with > 30 suites don't get truncated.
+            if [[ $ELAPSED -ge $NO_CI_GRACE_S && -n "$REPO" ]]; then
+                HEAD_SHA=$(gh pr view "$PR_NUMBER" $REPO_FLAG --json headRefOid --jq .headRefOid 2>/dev/null) || HEAD_SHA=""
+                if [[ -n "$HEAD_SHA" ]]; then
+                    active_suites=$(gh api --paginate "repos/${REPO}/commits/${HEAD_SHA}/check-suites" 2>/dev/null \
+                        | jq -s '
+                            [.[].check_suites[]?
+                             | select(.latest_check_runs_count > 0
+                                      or .status == "in_progress")
+                            ] | length
+                        ' 2>/dev/null) || {
+                        echo "warning: check-suites API call failed; assuming CI is active and continuing to poll" >&2
+                        active_suites=1
+                    }
+                    if [[ "$active_suites" -eq 0 ]]; then
+                        echo "No active CI for commit ${HEAD_SHA:0:7} (no check-suites running after ${ELAPSED}s) — exiting"
+                        exit 0
+                    fi
                 fi
             fi
             echo "No CI checks found yet (${ELAPSED}s elapsed)"
