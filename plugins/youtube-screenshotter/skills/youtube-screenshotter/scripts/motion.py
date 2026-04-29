@@ -260,17 +260,97 @@ def analyse_range(
             out_dir.rmdir()
 
 
-def _sprite_pick(samples: list[Sample], min_area: int, n_frames: int) -> list[float]:
-    """Pick N evenly-spaced timestamps across the motion-active range.
+SPIKE_RATIO = 3.0  # leading sample is a static-reveal spike if its area > SPIKE_RATIO × the next sample's
+CUT_RATIO = 1.5    # trailing sample is a scene-cut spike if its area > CUT_RATIO × the predecessor's
+CLUSTER_GAP_SAMPLES = 4  # consecutive quiet samples that split one cluster from the next
 
-    Definition of motion-active: from the first sample with motion_area >=
-    min_area to the last such sample. If fewer than 2 active samples exist,
-    return an empty list (the caller will skip sprite composition).
+
+def _is_static_reveal_spike(active: list[Sample]) -> bool:
+    """A leading sample is a one-frame fade-in spike (e.g., a diagram appearing
+    in place) when its motion_area dwarfs the immediately following samples.
+    Picking this frame as the first sprite cell wastes a slot on near-empty
+    canvas — the diagram has finished rendering by the very next sample.
     """
-    active = [s for s in samples if s.motion_area >= min_area]
     if len(active) < 2:
+        return False
+    a0 = active[0].motion_area
+    next_areas = [s.motion_area for s in active[1:4]]
+    if not next_areas:
+        return False
+    median_next = sorted(next_areas)[len(next_areas) // 2]
+    return median_next > 0 and a0 > SPIKE_RATIO * median_next
+
+
+def _is_trailing_cut_spike(active: list[Sample]) -> bool:
+    """A trailing sample is a scene-cut spike when its motion_area noticeably
+    exceeds the rolling median of the recent samples. A natural animation
+    end decays smoothly; a hard cut to a new scene shows up as one big-flow
+    frame because every pixel between the last surplus-lord sample and the
+    first presenter sample is different. Picking that frame as the last
+    sprite cell renders the start of the next scene, not the animation we
+    wanted.
+
+    Compare against a rolling median (last 5 samples excluding the trailing
+    one) rather than the immediate predecessor — single-frame jitter in
+    busy animations can momentarily double the per-frame area without being
+    a cut, so the median smooths that out.
+    """
+    if len(active) < 6:
+        return False
+    window = sorted(s.motion_area for s in active[-6:-1])
+    median = window[len(window) // 2]
+    return median > 0 and active[-1].motion_area > CUT_RATIO * median
+
+
+def _split_clusters(samples: list[Sample], min_area: int, gap: int) -> list[list[Sample]]:
+    """Group motion-active samples into clusters separated by `gap` or more
+    consecutive quiet samples (motion_area < min_area). A cluster is the
+    natural unit of one animation; a downstream scene break (e.g. cut to a
+    new chapter title card) shows up as a quiet gap and gets split off.
+    """
+    clusters: list[list[Sample]] = []
+    current: list[Sample] = []
+    quiet_run = 0
+    for s in samples:
+        if s.motion_area >= min_area:
+            if current and quiet_run >= gap:
+                clusters.append(current)
+                current = []
+            current.append(s)
+            quiet_run = 0
+        else:
+            quiet_run += 1
+    if current:
+        clusters.append(current)
+    return clusters
+
+
+def _sprite_pick(samples: list[Sample], min_area: int, n_frames: int) -> list[float]:
+    """Pick N evenly-spaced timestamps across the largest motion cluster.
+
+    A cluster is one continuous animation; quiet gaps split clusters so a
+    scene break in the supplied range doesn't bleed into the sprite grid.
+    Within the chosen cluster, a leading static-reveal spike (one big sample
+    followed by sustained smaller ones — e.g., a diagram fading in) is
+    dropped so the first sprite cell isn't near-empty canvas.
+
+    If no cluster has ≥ 2 samples after spike trim, return an empty list
+    (the caller skips sprite composition).
+    """
+    clusters = _split_clusters(samples, min_area, CLUSTER_GAP_SAMPLES)
+    if not clusters:
         return []
-    start_t, end_t = active[0].timestamp, active[-1].timestamp
+    # Pick the largest cluster — multi-cluster spans (rare but possible) get
+    # only their dominant animation; the caller can re-invoke per cluster if
+    # they want grids for the others.
+    cluster = max(clusters, key=len)
+    if _is_static_reveal_spike(cluster):
+        cluster = cluster[1:]
+    if _is_trailing_cut_spike(cluster):
+        cluster = cluster[:-1]
+    if len(cluster) < 2:
+        return []
+    start_t, end_t = cluster[0].timestamp, cluster[-1].timestamp
     if n_frames < 2 or end_t <= start_t:
         return [round(start_t, 3)]
     step = (end_t - start_t) / (n_frames - 1)
