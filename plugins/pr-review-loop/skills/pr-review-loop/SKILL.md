@@ -916,7 +916,9 @@ When detected, the script suggests:
 | `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post line comment with agent signature |
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |
 | `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |
-| `discover-agents.sh <PR>` | Discover agent reviewers with hierarchical scoping |
+| `discover-agents.sh <PR>` | Discover + merge agent reviewers (defaults + user agents per C+E); emits `configuration` block with `stale_pin` |
+| `_load_defaults.sh` | Internal helper: load native default subagents from `plugins/pr-review-loop/agents/` |
+| `_parse_configuration.sh <AGENT-REVIEWERS.md>` | Internal helper: parse the `# Configuration` JSON block; validates required `reason` in `overlap_acknowledged` |
 
 ## Permission Setup
 
