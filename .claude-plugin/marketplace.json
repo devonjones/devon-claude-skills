@@ -1,9 +1,7 @@
 {
   "name": "devon-claude-skills",
+  "description": "Devon's Claude Code skills - PR automation and image generation",
   "version": "1.0.0",
-  "metadata": {
-    "description": "Devon's Claude Code skills - PR automation and image generation"
-  },
   "owner": {
     "name": "Devon Jones"
   },
