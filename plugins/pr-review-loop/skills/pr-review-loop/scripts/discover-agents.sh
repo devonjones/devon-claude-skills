@@ -1,44 +1,77 @@
 #!/usr/bin/env bash
-# Discover AGENT-REVIEWERS.md files for all changed files in a PR.
+# Discover AGENT-REVIEWERS.md files for all changed files in a PR, merge
+# with shipped default specialist reviewers, and report configuration state.
+#
 # Walks up from each changed file's directory to repo root, collecting
 # agent definitions with hierarchical scoping (lower directories override).
+# Loads default specialist reviewers from plugins/pr-review-loop/agents/.
+# Parses the root AGENT-REVIEWERS.md's # Configuration section (if present)
+# for `defaults_version_checked`, `disabled`, and `overlap_acknowledged`.
+#
+# Agent merge rules (C+E semantics):
+#   - All defaults spawn by default
+#   - User agents with the same name as a default REPLACE the default (override)
+#   - Defaults in the `disabled` list do NOT spawn
+#   - Defaults NOT overridden or disabled still spawn (additive)
+#   - User agents with no matching default name simply add to the list
+#
+# Output JSON shape:
+# {
+#   "agents": [{name, scope, source, instructions, model?, color?, kind, changed_files}, ...],
+#     # kind: "default" | "user" | "user-override"
+#   "context": [{section, scope, source, content}, ...],
+#   "configuration": {
+#     "defaults_version_checked": "1.2.0" | null,
+#     "current_plugin_version": "1.2.0",
+#     "stale_pin": true | false,
+#     "disabled_defaults": ["pr-test-analyzer", ...],
+#     "overlaps_acknowledged": {"my_pci_auditor": {overlaps_with, reason}, ...},
+#     "spawned_count": 7,
+#     "default_count": 6,
+#     "override_count": 1,
+#     "user_count": 1,
+#     "overridden_default_names": ["code-reviewer"]
+#   }
+# }
 #
 # Usage: discover-agents.sh <pr-number>
-#
-# Output: JSON array of agents with name, scope, instructions, and source file.
-# Also outputs context sections (non-Agents H1 sections) per scope.
-#
-# Example output:
-# {
-#   "agents": [
-#     {"name": "security-reviewer", "scope": "/", "source": "/AGENT-REVIEWERS.md", "instructions": "..."},
-#     {"name": "sql-injection-reviewer", "scope": "/services/api/", "source": "/services/api/AGENT-REVIEWERS.md", "instructions": "..."}
-#   ],
-#   "context": [
-#     {"scope": "/", "section": "Guidelines", "content": "..."},
-#     {"scope": "/services/api/", "section": "Guidelines", "content": "..."}
-#   ]
-# }
 
 set -euo pipefail
 
 PR_NUMBER="${1:?Usage: discover-agents.sh <pr-number>}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Plugin version comes from the plugin's own .claude-plugin/plugin.json
+PLUGIN_JSON="$SCRIPT_DIR/../../../.claude-plugin/plugin.json"
+if [[ -f "$PLUGIN_JSON" ]]; then
+    CURRENT_PLUGIN_VERSION="$(jq -r '.version // ""' "$PLUGIN_JSON")"
+else
+    CURRENT_PLUGIN_VERSION=""
+fi
 
 # Get changed files in the PR. Let gh errors propagate (set -e) so a missing
 # gh, unauthenticated user, or bad PR number fails loudly instead of silently
 # returning an empty agent list.
-CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --name-only)
-
-if [[ -z "$CHANGED_FILES" ]]; then
-    echo '{"agents":[],"context":[]}'
-    exit 0
+#
+# Test override: PR_REVIEW_LOOP_TEST_CHANGED_FILES lets callers pass a
+# newline-separated file list instead of invoking gh. Used by the test suite
+# and for offline development.
+if [[ -n "${PR_REVIEW_LOOP_TEST_CHANGED_FILES+set}" ]]; then
+    CHANGED_FILES="$PR_REVIEW_LOOP_TEST_CHANGED_FILES"
+else
+    CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --name-only)
 fi
+
+# Note: an empty CHANGED_FILES used to early-exit with empty output.
+# After bfd, defaults still spawn even on an empty diff (degenerate PR),
+# so we fall through to the merge step which handles empty files fine.
 
 # Collect unique directories containing changed files
 DIRS=()
 while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
     dir="$(dirname "$file")"
     DIRS+=("$dir")
 done <<< "$CHANGED_FILES"
@@ -73,10 +106,8 @@ for dir in "${UNIQUE_DIRS[@]}"; do
     done
 done
 
-if [[ ${#AGENT_FILES[@]} -eq 0 ]]; then
-    echo '{"agents":[],"context":[]}'
-    exit 0
-fi
+# Note: we no longer early-exit here when no AGENT-REVIEWERS.md is found.
+# Defaults still spawn even without any user customization.
 
 # Parse each AGENT-REVIEWERS.md file and extract agents + context sections.
 # Uses awk to split on H1/H2 headings and classify sections.
@@ -153,47 +184,121 @@ parse_agent_file() {
 
 # Collect all parsed sections from all files. Capturing the loop's output
 # with command substitution is O(n) vs repeated string concatenation (O(n²)).
-ALL_SECTIONS=$(
-    for file in "${AGENT_FILES[@]}"; do
-        parse_agent_file "$file"
-    done
-)
-
-if [[ -z "$ALL_SECTIONS" ]]; then
-    echo '{"agents":[],"context":[]}'
-    exit 0
+ALL_SECTIONS=""
+if [[ ${#AGENT_FILES[@]} -gt 0 ]]; then
+    ALL_SECTIONS=$(
+        for file in "${AGENT_FILES[@]}"; do
+            parse_agent_file "$file"
+        done
+    )
 fi
 
-# Merge agents: lower scope (more specific path) wins on name collision.
-# Sort by scope depth (deeper first), then deduplicate by name keeping first.
-# Collect context sections (no dedup needed — all are passed through).
-# Build a JSON array of changed files for scoping
+# Build JSON array of changed files for scoping
 CHANGED_FILES_JSON=$(jq -n --arg files "$CHANGED_FILES" '$files | split("\n") | map(select(. != ""))')
 
-printf '%s\n' "$ALL_SECTIONS" | jq -s --argjson files "$CHANGED_FILES_JSON" '
+# Load defaults from plugins/pr-review-loop/agents/*.md
+DEFAULTS_JSON=$("$SCRIPT_DIR/_load_defaults.sh")
+
+# Parse # Configuration from the ROOT AGENT-REVIEWERS.md only (project-level state).
+# Subdirectory AGENT-REVIEWERS.md files may exist but their configuration is ignored.
+ROOT_AGENT_REVIEWERS="$REPO_ROOT/AGENT-REVIEWERS.md"
+if [[ -f "$ROOT_AGENT_REVIEWERS" ]]; then
+    if ! CONFIGURATION_JSON=$("$SCRIPT_DIR/_parse_configuration.sh" "$ROOT_AGENT_REVIEWERS"); then
+        # Parser exited non-zero (e.g., missing required `reason` field)
+        echo "Error: invalid # Configuration in $ROOT_AGENT_REVIEWERS — see message above" >&2
+        exit 1
+    fi
+else
+    CONFIGURATION_JSON='{}'
+fi
+
+# Warn if subdirectory AGENT-REVIEWERS.md files have a # Configuration section —
+# their configuration is silently ignored, so surface that fact to the user.
+# Compare canonical paths via realpath so `/./` segments don't false-positive.
+ROOT_AGENT_REVIEWERS_CANON="$(realpath "$ROOT_AGENT_REVIEWERS" 2>/dev/null || echo "$ROOT_AGENT_REVIEWERS")"
+for f in "${AGENT_FILES[@]}"; do
+    f_canon="$(realpath "$f" 2>/dev/null || echo "$f")"
+    if [[ "$f_canon" != "$ROOT_AGENT_REVIEWERS_CANON" ]] && grep -q '^# Configuration[[:space:]]*$' "$f"; then
+        echo "Warning: # Configuration section found in $f — ignored (only the root AGENT-REVIEWERS.md's configuration is honored)" >&2
+    fi
+done
+
+# Prepare input for jq:
+#   {sections: [...], defaults: [...], configuration: {...}, current_version: "..."}
+JQ_INPUT=$(jq -n \
+    --argjson sections "$([[ -z "$ALL_SECTIONS" ]] && echo "[]" || (printf '%s\n' "$ALL_SECTIONS" | jq -s '.'))" \
+    --argjson defaults "$DEFAULTS_JSON" \
+    --argjson configuration "$CONFIGURATION_JSON" \
+    --argjson files "$CHANGED_FILES_JSON" \
+    --arg current_version "$CURRENT_PLUGIN_VERSION" \
+    '{sections: $sections, defaults: $defaults, configuration: $configuration, files: $files, current_version: $current_version}'
+)
+
+echo "$JQ_INPUT" | jq '
+    # ---- 1. Parse the existing AGENT-REVIEWERS.md output (sections) ----
+    .sections as $sections |
+    .defaults as $defaults |
+    .configuration as $config |
+    .files as $files |
+    .current_version as $current_version |
+
+    # ---- 2. Resolve user agents from sections (existing hierarchical-scope logic) ----
+    ([$sections[] | select(.type == "agent")] |
+        sort_by(.scope | split("/") | length) | reverse |
+        reduce .[] as $agent (
+            {seen: {}, result: []};
+            if .seen[$agent.name] then .
+            else .seen[$agent.name] = true | .result += [$agent]
+            end
+        ) | .result
+    ) as $user_agents_raw |
+
+    # User agent names (used for same-name override detection)
+    ($user_agents_raw | map(.name)) as $user_agent_names |
+    ($defaults | map(.name)) as $default_agent_names |
+
+    # ---- 3. Determine overrides ----
+    # Defaults that get replaced because user has same-name agent
+    ($user_agent_names | map(. as $n | select($default_agent_names | index($n)))) as $overridden_default_names |
+
+    # Disabled defaults (from configuration)
+    ($config.disabled // []) as $disabled_defaults |
+
+    # ---- 4. Effective defaults: not overridden, not disabled ----
+    ($defaults
+        | map(select(.name as $n | ($overridden_default_names | index($n)) == null))
+        | map(select(.name as $n | ($disabled_defaults | index($n)) == null))
+        | map(. + {kind: "default"})
+        | map(. + {changed_files: (
+            .scope as $s |
+            if $s == "/" then $files
+            else [$files[] | select(startswith($s | ltrimstr("/")))]
+            end
+          )})
+    ) as $effective_defaults |
+
+    # ---- 5. User agents: tagged as override if name matches a default, else plain user ----
+    ($user_agents_raw
+        | map(.name as $n | . + {kind: (if ($default_agent_names | index($n)) != null then "user-override" else "user" end)})
+        | map(.scope as $s | . + {changed_files: (
+            if $s == "/" then $files
+            else [$files[] | select(startswith($s | ltrimstr("/")))]
+            end
+          )})
+        | map({name, scope, source, instructions, kind, changed_files})
+    ) as $user_agents |
+
+    # ---- 6. Final merged agent list ----
+    ($user_agents + $effective_defaults) as $merged_agents |
+
+    # ---- 7. Stale-pin check ----
+    (($config.defaults_version_checked // null) != $current_version) as $stale_pin |
+
+    # ---- 8. Compose output ----
     {
-        agents: (
-            [.[] | select(.type == "agent")] |
-            # Sort by scope depth descending (deeper = more specific = wins)
-            sort_by(.scope | split("/") | length) | reverse |
-            # Deduplicate by name (first occurrence wins = deepest scope)
-            reduce .[] as $agent (
-                {seen: {}, result: []};
-                if .seen[$agent.name] then .
-                else .seen[$agent.name] = true | .result += [$agent]
-                end
-            ) | .result |
-            map({name, scope, source, instructions,
-                changed_files: (
-                    .scope as $s |
-                    if $s == "/" then $files
-                    else [$files[] | select(startswith($s | ltrimstr("/")))]
-                    end
-                )
-            })
-        ),
+        agents: $merged_agents,
         context: (
-            [.[] | select(.type == "context")] |
+            [$sections[] | select(.type == "context")] |
             sort_by(.scope | split("/") | length) | reverse |
             reduce .[] as $ctx (
                 {seen: {}, result: []};
@@ -202,6 +307,18 @@ printf '%s\n' "$ALL_SECTIONS" | jq -s --argjson files "$CHANGED_FILES_JSON" '
                 end
             ) | .result |
             map({section, scope, source, content})
-        )
+        ),
+        configuration: {
+            defaults_version_checked: ($config.defaults_version_checked // null),
+            current_plugin_version: $current_version,
+            stale_pin: $stale_pin,
+            disabled_defaults: $disabled_defaults,
+            overlaps_acknowledged: ($config.overlap_acknowledged // {}),
+            spawned_count: ($merged_agents | length),
+            default_count: ($effective_defaults | length),
+            override_count: ($overridden_default_names | length),
+            user_count: ($user_agents | map(select(.kind == "user")) | length),
+            overridden_default_names: $overridden_default_names
+        }
     }
 '
