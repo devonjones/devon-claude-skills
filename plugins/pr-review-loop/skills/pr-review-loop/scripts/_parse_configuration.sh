@@ -47,7 +47,8 @@ fi
 RAW_JSON="$(awk '
     BEGIN { in_config = 0; in_fence = 0 }
     /^# Configuration[[:space:]]*$/ { in_config = 1; next }
-    /^# / && !/^# Configuration[[:space:]]*$/ { in_config = 0 }
+    # Any other H1 ends the Configuration section.
+    /^# / { in_config = 0 }
     in_config && /^```json[[:space:]]*$/ { in_fence = 1; next }
     in_config && in_fence && /^```[[:space:]]*$/ { in_fence = 0; in_config = 0; exit }
     in_config && in_fence { print }
@@ -58,20 +59,39 @@ if [[ -z "$RAW_JSON" ]]; then
     exit 0
 fi
 
-# Validate JSON shape via jq. If parse fails, surface error + return {} so
-# the loop can proceed (but emit a warning to stderr).
-if ! echo "$RAW_JSON" | jq -e . > /dev/null 2>&1; then
-    echo "Warning: # Configuration section in $FILE contains invalid JSON" >&2
+# Validate JSON shape via jq. If parse fails, capture the actual jq error so
+# the user can see WHERE the malformed JSON is, then fall back to {} so the
+# loop can proceed. Disable `set -e` around the parse so a failure surfaces
+# the diagnostic instead of aborting the script.
+set +e
+JQ_PARSE_ERR="$(echo "$RAW_JSON" | jq -e . 2>&1 > /dev/null)"
+JQ_PARSE_EXIT=$?
+set -e
+if [[ $JQ_PARSE_EXIT -ne 0 ]]; then
+    echo "Warning: # Configuration section in $FILE contains invalid JSON: $JQ_PARSE_ERR" >&2
     echo "{}"
     exit 0
 fi
 
+# Warn on unknown top-level keys. The schema is closed: a typo like
+# "diabled" instead of "disabled" would otherwise be silently dropped.
+# Allowed keys are documented in SKILL.md's "# Configuration" section.
+UNKNOWN_KEYS="$(echo "$RAW_JSON" | jq -r '
+    [keys[] | select(. != "defaults_version_checked" and . != "disabled" and . != "overlap_acknowledged")]
+    | join(", ")
+')"
+if [[ -n "$UNKNOWN_KEYS" ]]; then
+    echo "Warning: # Configuration in $FILE has unknown top-level keys (likely typos): $UNKNOWN_KEYS" >&2
+    echo "Warning:   Allowed keys: defaults_version_checked, disabled, overlap_acknowledged" >&2
+fi
+
 # Validate overlap_acknowledged entries have a non-empty `reason`.
 # bd memory bfd-design-locked: reason is REQUIRED.
+# Treat null, missing, and "" all as invalid.
 INVALID_ENTRIES="$(echo "$RAW_JSON" | jq -r '
     .overlap_acknowledged // {}
     | to_entries
-    | map(select(.value.reason == null or .value.reason == ""))
+    | map(select((.value.reason // "") | length == 0))
     | map(.key)
     | join(", ")
 ')"

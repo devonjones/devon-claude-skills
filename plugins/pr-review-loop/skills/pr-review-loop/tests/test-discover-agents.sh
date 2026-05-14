@@ -36,10 +36,23 @@ FAILED=()
 # Test infrastructure
 # ---------------------------------------------------------------------------
 
+# Track every temp dir / temp file we create so an EXIT trap can clean them
+# up even on unexpected failure (set -e abort, Ctrl-C, mktemp on full disk).
+# Without this, a failed test leaks /tmp/tmp.XXX dirs.
+TEMP_PATHS=()
+cleanup_temp_paths() {
+    local p
+    for p in "${TEMP_PATHS[@]}"; do
+        [[ -n "$p" && -e "$p" ]] && rm -rf -- "$p"
+    done
+}
+trap cleanup_temp_paths EXIT
+
 # Create a temp repo dir, init git, return the absolute path on stdout.
 make_temp_repo() {
     local td
     td="$(mktemp -d)"
+    TEMP_PATHS+=("$td")
     (
         cd "$td"
         git init -q
@@ -61,6 +74,7 @@ run_discover() {
     local stdout_file stderr_file
     stdout_file="$(mktemp)"
     stderr_file="$(mktemp)"
+    TEMP_PATHS+=("$stdout_file" "$stderr_file")
     local exit_code=0
 
     (
@@ -382,6 +396,112 @@ assert_jq "all counts correct" "$t12" '
     (.configuration.override_count == 1) and
     (.configuration.user_count == 1)
 '
+rm -rf "$repo"
+
+echo
+echo "=== Test 13: default in BOTH disabled AND user-override → user-override wins; default filtered ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<EOF
+# Configuration
+
+\`\`\`json
+{
+  "defaults_version_checked": "${PLUGIN_VERSION}",
+  "disabled": ["code-reviewer"]
+}
+\`\`\`
+
+# Agents
+
+## code-reviewer
+
+You are a custom code reviewer overriding the default.
+EOF
+run_discover "$repo" "src/foo.py" t13
+assert_exit "exit 0" "$t13_exit" "0"
+# Expected: code-reviewer present as user-override; NO default code-reviewer; 5 other defaults
+assert_jq "code-reviewer present exactly once" "$t13" '[.agents[] | select(.name == "code-reviewer")] | length == 1'
+assert_jq "the code-reviewer is user-override (not a stray default)" "$t13" '[.agents[] | select(.name == "code-reviewer") | .kind] == ["user-override"]'
+assert_jq "5 other defaults still spawn (6 total agents)" "$t13" '.agents | length == 6'
+assert_jq "disabled_defaults still listed in configuration" "$t13" '.configuration.disabled_defaults == ["code-reviewer"]'
+rm -rf "$repo"
+
+echo
+echo "=== Test 14: overlap_acknowledged with empty reason / null reason → exit 1 ==="
+# Empty string
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+```json
+{
+  "overlap_acknowledged": {
+    "agent_a": {"overlaps_with": "code-reviewer", "reason": ""}
+  }
+}
+```
+EOF
+run_discover "$repo" "src/foo.py" t14a
+assert_exit "exit 1 on empty-string reason" "$t14a_exit" "1"
+assert_stderr_contains "stderr mentions missing reason" "$t14a_err" "missing required 'reason'"
+rm -rf "$repo"
+# Explicit null
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+```json
+{
+  "overlap_acknowledged": {
+    "agent_b": {"overlaps_with": "code-reviewer", "reason": null}
+  }
+}
+```
+EOF
+run_discover "$repo" "src/foo.py" t14b
+assert_exit "exit 1 on null reason" "$t14b_exit" "1"
+assert_stderr_contains "stderr mentions missing reason (null case)" "$t14b_err" "missing required 'reason'"
+rm -rf "$repo"
+
+echo
+echo "=== Test 15: unknown top-level key in # Configuration → warning + still parses ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<EOF
+# Configuration
+
+\`\`\`json
+{
+  "defaults_version_checked": "${PLUGIN_VERSION}",
+  "diabled": ["pr-test-analyzer"]
+}
+\`\`\`
+EOF
+run_discover "$repo" "src/foo.py" t15
+assert_exit "exit 0" "$t15_exit" "0"
+assert_stderr_contains "warning on unknown key" "$t15_err" "unknown top-level keys"
+# The typo means the disabled list is effectively empty (real `disabled` not present)
+assert_jq "disabled_defaults empty (typo not honored)" "$t15" '.configuration.disabled_defaults == []'
+assert_jq "all 6 defaults still spawn" "$t15" '.agents | length == 6'
+rm -rf "$repo"
+
+echo
+echo "=== Test 16: disabled list contains unknown name → warning + still parses ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<EOF
+# Configuration
+
+\`\`\`json
+{
+  "defaults_version_checked": "${PLUGIN_VERSION}",
+  "disabled": ["nonexistent-reviewer", "pr-test-analyzer"]
+}
+\`\`\`
+EOF
+run_discover "$repo" "src/foo.py" t16
+assert_exit "exit 0" "$t16_exit" "0"
+assert_stderr_contains "warning names the unknown disabled name" "$t16_err" "nonexistent-reviewer"
+# pr-test-analyzer is a real name and gets disabled
+assert_jq "pr-test-analyzer still excluded" "$t16" '[.agents[] | .name] | index("pr-test-analyzer") == null'
 rm -rf "$repo"
 
 # ---------------------------------------------------------------------------

@@ -255,8 +255,6 @@ The review loop should **not** override branch protections or bypass repo-define
 
 ### Pre-Loop Setup (do once, before round 1)
 
-Before any review round, perform setup:
-
 1. **Discover and merge agents.** Run `scripts/discover-agents.sh <PR>` once. Its output includes:
    - The full merged agent list (defaults + user agents per C+E semantics)
    - The `configuration` block with `stale_pin`, `defaults_version_checked`, `current_plugin_version`, counts
@@ -644,9 +642,9 @@ Project-level config lives in a `# Configuration` H1 section in the **root** `AG
 
 Fields:
 
-- **`defaults_version_checked`** — plugin version (matches the value in `.claude-plugin/plugin.json`) whose defaults the user has reviewed. The `/pr-review-loop:audit-agents` tool (q2h) bumps this when the user accepts/rejects each recommendation. Same version namespace as the plugin.
+- **`defaults_version_checked`** — plugin version (matches the value in `.claude-plugin/plugin.json`) whose defaults the user has reviewed. The `/pr-review-loop:audit-agents` tool (q2h) bumps this when the user accepts/rejects each recommendation.
 - **`disabled`** — list of default agent names the user does NOT want spawned. Per-name opt-out.
-- **`overlap_acknowledged`** — map from a user agent name to `{ overlaps_with, reason }`. Both agents continue to spawn; this entry just documents intentional duplication so the audit tool doesn't recommend renaming. **`reason` is REQUIRED** — the parser rejects entries without it. Purpose: future readers of `AGENT-REVIEWERS.md` see why both agents are intentionally running, not perceive it as cleanup-eligible cruft.
+- **`overlap_acknowledged`** — map from a user agent name to `{ overlaps_with, reason }`. Both agents continue to spawn; this entry documents intentional duplication so the audit tool doesn't recommend renaming. **`reason` is REQUIRED** — the parser rejects entries without it, so future readers see why both agents are intentionally running.
 
 ### Stale Pin Detection (at loop start)
 

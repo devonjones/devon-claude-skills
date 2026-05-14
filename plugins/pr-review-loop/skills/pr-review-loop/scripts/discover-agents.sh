@@ -43,11 +43,18 @@ PR_NUMBER="${1:?Usage: discover-agents.sh <pr-number>}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
-# Plugin version comes from the plugin's own .claude-plugin/plugin.json
+# Plugin version comes from the plugin's own .claude-plugin/plugin.json.
+# Warn loudly when missing or empty — an empty current_plugin_version
+# corrupts the stale_pin comparison (every pin would either always-mismatch
+# or always-match a falsy value), so the user needs to see this.
 PLUGIN_JSON="$SCRIPT_DIR/../../../.claude-plugin/plugin.json"
 if [[ -f "$PLUGIN_JSON" ]]; then
     CURRENT_PLUGIN_VERSION="$(jq -r '.version // ""' "$PLUGIN_JSON")"
+    if [[ -z "$CURRENT_PLUGIN_VERSION" ]]; then
+        echo "Warning: plugin.json at $PLUGIN_JSON has no version field — stale_pin check will be unreliable" >&2
+    fi
 else
+    echo "Warning: plugin.json not found at $PLUGIN_JSON — stale_pin check will be unreliable" >&2
     CURRENT_PLUGIN_VERSION=""
 fi
 
@@ -196,8 +203,15 @@ fi
 # Build JSON array of changed files for scoping
 CHANGED_FILES_JSON=$(jq -n --arg files "$CHANGED_FILES" '$files | split("\n") | map(select(. != ""))')
 
-# Load defaults from plugins/pr-review-loop/agents/*.md
+# Load defaults from plugins/pr-review-loop/agents/*.md.
+# Warn (don't fail) when zero defaults load — a broken plugin install would
+# leave the user with no specialist reviewers, and silent zero-defaults is
+# exactly the user-visible failure mode this check exists to surface.
 DEFAULTS_JSON=$("$SCRIPT_DIR/_load_defaults.sh")
+DEFAULTS_COUNT=$(echo "$DEFAULTS_JSON" | jq 'length')
+if [[ "$DEFAULTS_COUNT" -eq 0 ]]; then
+    echo "Warning: zero default specialist reviewers loaded — plugin install may be incomplete" >&2
+fi
 
 # Parse # Configuration from the ROOT AGENT-REVIEWERS.md only (project-level state).
 # Subdirectory AGENT-REVIEWERS.md files may exist but their configuration is ignored.
@@ -222,6 +236,24 @@ for f in "${AGENT_FILES[@]}"; do
         echo "Warning: # Configuration section found in $f — ignored (only the root AGENT-REVIEWERS.md's configuration is honored)" >&2
     fi
 done
+
+# Warn on disabled names that don't match any default — likely typos.
+# This mirrors the strict validation we apply to overlap_acknowledged.reason:
+# the configuration schema asks the user to name defaults precisely, and a
+# typo like `disabled: ["pr-test-analyser"]` (British spelling) would
+# silently no-op without this check.
+UNKNOWN_DISABLED=$(jq -n \
+    --argjson defaults "$DEFAULTS_JSON" \
+    --argjson config "$CONFIGURATION_JSON" \
+    -r '
+        ($defaults | map(.name)) as $known
+        | (($config.disabled // []) - $known)
+        | join(", ")
+    ')
+if [[ -n "$UNKNOWN_DISABLED" ]]; then
+    echo "Warning: # Configuration disabled list names that don't match any default reviewer: $UNKNOWN_DISABLED" >&2
+    echo "Warning:   Available defaults: $(echo "$DEFAULTS_JSON" | jq -r 'map(.name) | join(", ")')" >&2
+fi
 
 # Prepare input for jq:
 #   {sections: [...], defaults: [...], configuration: {...}, current_version: "..."}
@@ -265,6 +297,11 @@ echo "$JQ_INPUT" | jq '
     ($config.disabled // []) as $disabled_defaults |
 
     # ---- 4. Effective defaults: not overridden, not disabled ----
+    # Precedence note: if a default appears in BOTH the disabled list AND is
+    # also overridden by a same-name user agent, the user agent still runs
+    # (as user-override). The default itself is filtered out by EITHER rule.
+    # In effect: the user has expressed both opt-out and replacement — both
+    # desires are satisfied.
     ($defaults
         | map(select(.name as $n | ($overridden_default_names | index($n)) == null))
         | map(select(.name as $n | ($disabled_defaults | index($n)) == null))
@@ -278,6 +315,13 @@ echo "$JQ_INPUT" | jq '
     ) as $effective_defaults |
 
     # ---- 5. User agents: tagged as override if name matches a default, else plain user ----
+    # Shape asymmetry note: user agents only carry {name, scope, source,
+    # instructions, kind, changed_files}. Defaults additionally carry
+    # {description, model, color} from their YAML frontmatter (see
+    # _load_defaults.sh). User agents come from AGENT-REVIEWERS.md markdown
+    # H2 sections which have no frontmatter; their `instructions` is the
+    # full body. Consumers (the spawn template in SKILL.md) handle the
+    # absent model field by falling back to the orchestrator default.
     ($user_agents_raw
         | map(.name as $n | . + {kind: (if ($default_agent_names | index($n)) != null then "user-override" else "user" end)})
         | map(.scope as $s | . + {changed_files: (
