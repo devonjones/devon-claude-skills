@@ -502,6 +502,9 @@ assert_exit "exit 0" "$t16_exit" "0"
 assert_stderr_contains "warning names the unknown disabled name" "$t16_err" "nonexistent-reviewer"
 # pr-test-analyzer is a real name and gets disabled
 assert_jq "pr-test-analyzer still excluded" "$t16" '[.agents[] | .name] | index("pr-test-analyzer") == null'
+# disabled_defaults echoes raw user input; disabled_defaults_unknown isolates typos
+assert_jq "disabled_defaults_unknown names the typo" "$t16" '.configuration.disabled_defaults_unknown == ["nonexistent-reviewer"]'
+assert_jq "disabled_defaults_unknown does NOT contain valid names" "$t16" '.configuration.disabled_defaults_unknown | index("pr-test-analyzer") == null'
 rm -rf "$repo"
 
 # ---------------------------------------------------------------------------

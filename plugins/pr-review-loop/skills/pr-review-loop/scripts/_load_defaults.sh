@@ -33,9 +33,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Normalize the default path so the `..` segments don't leak into output.
 # Warn if the agents directory can't be resolved — a broken install would
 # otherwise silently load zero defaults.
-if DEFAULT_AGENTS_DIR="$(cd "$SCRIPT_DIR/../../../agents" 2>/dev/null && pwd)"; then
-    :
-else
+if ! DEFAULT_AGENTS_DIR="$(cd "$SCRIPT_DIR/../../../agents" 2>/dev/null && pwd)"; then
     echo "Warning: default agents dir not found at $SCRIPT_DIR/../../../agents — plugin install may be incomplete" >&2
     DEFAULT_AGENTS_DIR=""
 fi

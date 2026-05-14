@@ -17,14 +17,16 @@
 #
 # Output JSON shape:
 # {
-#   "agents": [{name, scope, source, instructions, model?, color?, kind, changed_files}, ...],
+#   "agents": [{name, scope, source, instructions, description?, model?, color?, kind, changed_files}, ...],
 #     # kind: "default" | "user" | "user-override"
+#     # description, model, color carried only on `default` entries (from frontmatter)
 #   "context": [{section, scope, source, content}, ...],
 #   "configuration": {
 #     "defaults_version_checked": "1.2.0" | null,
 #     "current_plugin_version": "1.2.0",
 #     "stale_pin": true | false,
-#     "disabled_defaults": ["pr-test-analyzer", ...],
+#     "disabled_defaults": ["pr-test-analyzer", ...],   // raw user input; may include unknown names
+#     "disabled_defaults_unknown": [],                  // entries that don't match any default (typos)
 #     "overlaps_acknowledged": {"my_pci_auditor": {overlaps_with, reason}, ...},
 #     "spawned_count": 7,
 #     "default_count": 6,
@@ -204,9 +206,6 @@ fi
 CHANGED_FILES_JSON=$(jq -n --arg files "$CHANGED_FILES" '$files | split("\n") | map(select(. != ""))')
 
 # Load defaults from plugins/pr-review-loop/agents/*.md.
-# Warn (don't fail) when zero defaults load — a broken plugin install would
-# leave the user with no specialist reviewers, and silent zero-defaults is
-# exactly the user-visible failure mode this check exists to surface.
 DEFAULTS_JSON=$("$SCRIPT_DIR/_load_defaults.sh")
 DEFAULTS_COUNT=$(echo "$DEFAULTS_JSON" | jq 'length')
 if [[ "$DEFAULTS_COUNT" -eq 0 ]]; then
@@ -238,10 +237,8 @@ for f in "${AGENT_FILES[@]}"; do
 done
 
 # Warn on disabled names that don't match any default — likely typos.
-# This mirrors the strict validation we apply to overlap_acknowledged.reason:
-# the configuration schema asks the user to name defaults precisely, and a
-# typo like `disabled: ["pr-test-analyser"]` (British spelling) would
-# silently no-op without this check.
+# Without this, e.g. `disabled: ["pr-test-analyser"]` (British spelling)
+# would silently no-op.
 UNKNOWN_DISABLED=$(jq -n \
     --argjson defaults "$DEFAULTS_JSON" \
     --argjson config "$CONFIGURATION_JSON" \
@@ -297,11 +294,9 @@ echo "$JQ_INPUT" | jq '
     ($config.disabled // []) as $disabled_defaults |
 
     # ---- 4. Effective defaults: not overridden, not disabled ----
-    # Precedence note: if a default appears in BOTH the disabled list AND is
+    # Precedence: if a default appears in BOTH the disabled list AND is
     # also overridden by a same-name user agent, the user agent still runs
     # (as user-override). The default itself is filtered out by EITHER rule.
-    # In effect: the user has expressed both opt-out and replacement — both
-    # desires are satisfied.
     ($defaults
         | map(select(.name as $n | ($overridden_default_names | index($n)) == null))
         | map(select(.name as $n | ($disabled_defaults | index($n)) == null))
@@ -357,6 +352,7 @@ echo "$JQ_INPUT" | jq '
             current_plugin_version: $current_version,
             stale_pin: $stale_pin,
             disabled_defaults: $disabled_defaults,
+            disabled_defaults_unknown: ($disabled_defaults - $default_agent_names),
             overlaps_acknowledged: ($config.overlap_acknowledged // {}),
             spawned_count: ($merged_agents | length),
             default_count: ($effective_defaults | length),

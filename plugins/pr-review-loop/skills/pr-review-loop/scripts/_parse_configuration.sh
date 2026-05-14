@@ -61,13 +61,9 @@ fi
 
 # Validate JSON shape via jq. If parse fails, capture the actual jq error so
 # the user can see WHERE the malformed JSON is, then fall back to {} so the
-# loop can proceed. Disable `set -e` around the parse so a failure surfaces
-# the diagnostic instead of aborting the script.
-set +e
-JQ_PARSE_ERR="$(echo "$RAW_JSON" | jq -e . 2>&1 > /dev/null)"
-JQ_PARSE_EXIT=$?
-set -e
-if [[ $JQ_PARSE_EXIT -ne 0 ]]; then
+# loop can proceed. The `if !` form suppresses `set -e` abort so the
+# diagnostic surfaces instead of the script crashing.
+if ! JQ_PARSE_ERR="$(echo "$RAW_JSON" | jq -e . 2>&1 > /dev/null)"; then
     echo "Warning: # Configuration section in $FILE contains invalid JSON: $JQ_PARSE_ERR" >&2
     echo "{}"
     exit 0
