@@ -394,10 +394,9 @@ The function appears to duplicate functionality...
 
 **C2. Check for other bot PR comments (Claude, Cursor, Copilot):**
 
-These bots post single PR comments (not line comments) containing multiple issues:
+These bots post single PR comments (not line comments) containing multiple issues. Use `get-pr-comments.sh` (handles priority detection and author filtering):
 ```bash
-# Find Claude's review comment
-gh pr view <PR> --json comments --jq '.comments[] | select(.author.login == "claude") | {id: .id, body: .body[:500]}'
+scripts/get-pr-comments.sh <PR> --with-ids --author claude
 ```
 
 For each issue in the comment, parse the structured markdown (numbered issues, file:line references) and note it for the BATCH POINT.
@@ -937,7 +936,7 @@ Authentication uses JWT tokens stored in httpOnly cookies.
 
 ### When to Run Agent Reviewers
 
-Agent reviewers run as part of **each review round**, after addressing Gemini and other bot comments.
+Agent reviewers run as **C3** — the last step of the COLLECT phase in each round, after C1 (Gemini) and C2 (other bots), and before any FIX-phase edits.
 
 On the first round (or when new agents are discovered), discover agent reviewers:
 
@@ -1009,7 +1008,7 @@ Task tool:
 
 ### Main Loop Integration
 
-Agent reviewers run during the COLLECT phase (C3), in parallel with C1 (Gemini) and C2 (other bots). All findings — Gemini + other bots + agents — flow into the BATCH POINT before any FIX-phase action.
+Agent reviewers run as C3 — the last step of the COLLECT phase, after C1 (Gemini) and C2 (other bots). Within C3, the individual agent reviewers spawn in parallel. All COLLECT-phase findings — Gemini + other bots + agents — flow into the BATCH POINT before any FIX-phase action.
 
 1. **After agent Tasks return** (in C3), their findings join the C1 + C2 findings at the BATCH POINT. Identify cross-source patterns and plan sweeps before staging any edit.
 
