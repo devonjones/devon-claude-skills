@@ -584,7 +584,37 @@ cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
 EOF
 run_discover "$repo" "src/foo.py" t21
 assert_exit "exit 1 on string skip_for" "$t21_exit" "1"
-assert_stderr_contains "stderr says must be array" "$t21_err" "must be an array of strings"
+assert_stderr_contains "stderr says must be array" "$t21_err" "must be an array"
+rm -rf "$repo"
+
+echo
+echo "=== Test 22a: explicit null for enabled → rejected (regression test for // empty bypass) ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+```json
+{ "independent_validator": { "enabled": null } }
+```
+EOF
+run_discover "$repo" "src/foo.py" t22a
+assert_exit "exit 1 on null enabled (was bypassing via // empty)" "$t22a_exit" "1"
+assert_stderr_contains "stderr says enabled must be boolean" "$t22a_err" "must be a boolean"
+rm -rf "$repo"
+
+echo
+echo "=== Test 22b: explicit null for skip_for → rejected ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+```json
+{ "independent_validator": { "skip_for": null } }
+```
+EOF
+run_discover "$repo" "src/foo.py" t22b
+assert_exit "exit 1 on null skip_for" "$t22b_exit" "1"
+assert_stderr_contains "stderr says must be array" "$t22b_err" "must be an array"
 rm -rf "$repo"
 
 echo

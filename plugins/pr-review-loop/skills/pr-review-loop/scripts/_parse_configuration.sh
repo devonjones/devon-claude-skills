@@ -63,7 +63,7 @@ fi
 # the user can see WHERE the malformed JSON is, then fall back to {} so the
 # loop can proceed. The `if !` form suppresses `set -e` abort so the
 # diagnostic surfaces instead of the script crashing.
-if ! JQ_PARSE_ERR="$(echo "$RAW_JSON" | jq -e . 2>&1 > /dev/null)"; then
+if ! JQ_PARSE_ERR="$(printf '%s\n' "$RAW_JSON" | jq -e . 2>&1 > /dev/null)"; then
     echo "Warning: # Configuration section in $FILE contains invalid JSON: $JQ_PARSE_ERR" >&2
     echo "{}"
     exit 0
@@ -72,7 +72,7 @@ fi
 # Warn on unknown top-level keys. The schema is closed: a typo like
 # "diabled" instead of "disabled" would otherwise be silently dropped.
 # Allowed keys are documented in SKILL.md's "# Configuration" section.
-UNKNOWN_KEYS="$(echo "$RAW_JSON" | jq -r '
+UNKNOWN_KEYS="$(printf '%s\n' "$RAW_JSON" | jq -r '
     [keys[] | select(
         . != "defaults_version_checked"
         and . != "disabled"
@@ -89,7 +89,7 @@ fi
 # Validate overlap_acknowledged entries have a non-empty `reason`.
 # bd memory bfd-design-locked: reason is REQUIRED.
 # Treat null, missing, and "" all as invalid.
-INVALID_ENTRIES="$(echo "$RAW_JSON" | jq -r '
+INVALID_ENTRIES="$(printf '%s\n' "$RAW_JSON" | jq -r '
     .overlap_acknowledged // {}
     | to_entries
     | map(select((.value.reason // "") | length == 0))
@@ -108,15 +108,22 @@ fi
 # Allowed uncertain_action values: post_with_annotation | post_silently | drop
 # Reject when the block is non-object; warn on unknown nested keys (typos
 # like `enabld` would otherwise be silently dropped).
-IV_TYPE="$(echo "$RAW_JSON" | jq -r '
-    .independent_validator // empty | type
+#
+# Use `select(has("X"))` instead of `// empty` to avoid false-as-falsy bug:
+# `.x.y // empty` swallows null AND false, letting an explicit `enabled: false`
+# bypass the boolean type check. has() distinguishes "key absent" from "key
+# present with value false". Also use `printf '%s\n'` instead of `echo` to
+# pipe $RAW_JSON safely (echo can mis-handle backslashes / leading hyphens).
+IV_TYPE="$(printf '%s\n' "$RAW_JSON" | jq -r '
+    if has("independent_validator") then .independent_validator | type else empty end
 ')"
 if [[ -n "$IV_TYPE" && "$IV_TYPE" != "object" ]]; then
     echo "Error: # Configuration .independent_validator in $FILE must be an object (got $IV_TYPE)" >&2
     exit 1
 fi
-IV_UNKNOWN_KEYS="$(echo "$RAW_JSON" | jq -r '
-    [(.independent_validator // {}) | keys[] | select(
+IV_UNKNOWN_KEYS="$(printf '%s\n' "$RAW_JSON" | jq -r '
+    .independent_validator | select(type == "object")
+    | [keys[] | select(
         . != "enabled" and . != "skip_for" and . != "uncertain_action"
     )] | join(", ")
 ')"
@@ -126,19 +133,22 @@ if [[ -n "$IV_UNKNOWN_KEYS" ]]; then
 fi
 
 # Validate enum on uncertain_action when present.
-IV_BAD_ACTION="$(echo "$RAW_JSON" | jq -r '
-    .independent_validator.uncertain_action // empty
+IV_BAD_ACTION="$(printf '%s\n' "$RAW_JSON" | jq -r '
+    .independent_validator | select(type == "object" and has("uncertain_action"))
+    | .uncertain_action
     | select(. != "post_with_annotation" and . != "post_silently" and . != "drop")
+    | tojson
 ')"
 if [[ -n "$IV_BAD_ACTION" ]]; then
-    echo "Error: # Configuration .independent_validator.uncertain_action in $FILE has invalid value '$IV_BAD_ACTION'" >&2
+    echo "Error: # Configuration .independent_validator.uncertain_action in $FILE has invalid value $IV_BAD_ACTION" >&2
     echo "Error:   Allowed values: post_with_annotation, post_silently, drop" >&2
     exit 1
 fi
 
 # Validate enabled is boolean when present.
-IV_BAD_ENABLED="$(echo "$RAW_JSON" | jq -r '
-    .independent_validator.enabled // empty
+IV_BAD_ENABLED="$(printf '%s\n' "$RAW_JSON" | jq -r '
+    .independent_validator | select(type == "object" and has("enabled"))
+    | .enabled
     | select(type != "boolean")
     | tojson
 ')"
@@ -148,15 +158,16 @@ if [[ -n "$IV_BAD_ENABLED" ]]; then
 fi
 
 # Validate skip_for is array of strings when present.
-IV_BAD_SKIP="$(echo "$RAW_JSON" | jq -r '
-    .independent_validator.skip_for // empty
-    | if type != "array" then "<not an array>"
-      elif any(.[]; type != "string") then "<contains non-string entries>"
+IV_BAD_SKIP="$(printf '%s\n' "$RAW_JSON" | jq -r '
+    .independent_validator | select(type == "object" and has("skip_for"))
+    | .skip_for
+    | if type != "array" then "must be an array (got " + (type) + ")"
+      elif any(.[]; type != "string") then "must be an array of strings (got non-string entry)"
       else empty end
 ')"
 if [[ -n "$IV_BAD_SKIP" ]]; then
-    echo "Error: # Configuration .independent_validator.skip_for in $FILE: $IV_BAD_SKIP — must be an array of strings" >&2
+    echo "Error: # Configuration .independent_validator.skip_for in $FILE: $IV_BAD_SKIP" >&2
     exit 1
 fi
 
-echo "$RAW_JSON" | jq -c .
+printf '%s\n' "$RAW_JSON" | jq -c .

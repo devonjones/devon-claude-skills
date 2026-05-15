@@ -681,10 +681,12 @@ Consider running `/pr-review-loop:audit-agents`.
 Once the stale check passes (or `--skip-stale-check` is set), the loop emits a one-line summary of which agents are running and why, before any agent spawns:
 
 ```
-Spawning 7 reviewers: 5 defaults + 1 user override (code-reviewer) + 1 user agent (pci-auditor).
+Spawning 6 reviewers: 4 defaults + 1 user override (code-reviewer) + 1 user agent (pci-auditor).
 Disabled defaults: pr-test-analyzer.
-Validation: enabled (opus validators for 3 bug-class agents, sonnet validators for 4 others).
+Validation: enabled (opus validators for 2 bug-class agents, sonnet validators for 4 others).
 ```
+
+(Math: 6 defaults − 1 disabled (pr-test-analyzer) − 1 overridden (code-reviewer) = 4 default agents spawning; plus the user's `code-reviewer` override and `pci-auditor` user agent = 6 total. Of those 6, 2 are bug-class (silent-failure-hunter, code-simplifier) and 4 are compliance/sonnet, so the validators tier accordingly.)
 
 Goes to the same TodoWrite / pre-round summary surface as other setup state.
 
@@ -697,9 +699,9 @@ Validation: disabled.
 
 ### Independent Validator Pipeline
 
-After every agent reviewer returns its findings — and BEFORE those findings are posted as line comments — the loop runs an independent validator subagent per finding. The validator's job is to verify that the flagged issue is real, working from the diff context alone without seeing who flagged it or how confidently. Findings the validator rejects are dropped before posting.
+After every agent reviewer returns findings and BEFORE those findings are posted, the loop runs an independent validator subagent per finding to verify the issue against the diff context alone. Findings the validator rejects are dropped.
 
-This catches the asymmetric-cost failure mode: a false-positive that gets *applied as a fix* introduces a real regression in once-correct code. Even when agents are 90%+ accurate, the dangerous 10% justifies a verification step.
+This catches the asymmetric-cost failure mode: a false-positive that gets *applied as a fix* introduces a real regression in once-correct code.
 
 **When the validator runs.** Between agent return and finding posting, per round. Per-finding, in parallel via the Task tool.
 
@@ -724,7 +726,7 @@ This catches the asymmetric-cost failure mode: a false-positive that gets *appli
 
 #### Validator model selection
 
-The validator's model **mirrors the flagger's model.** Bug-class agents (silent-failure-hunter, pr-test-analyzer, code-simplifier; future security-reviewer / performance-reviewer via 9ao) flag in opus and get opus validators. Compliance agents (code-reviewer, comment-analyzer, type-design-analyzer) flag in sonnet and get sonnet validators. This avoids the failure mode of blanket-opus validation while keeping the verification step at appropriate strength.
+The validator's model **mirrors the flagger's model.** Bug-class agents (silent-failure-hunter, pr-test-analyzer, code-simplifier; future security-reviewer / performance-reviewer via 9ao) flag in opus and get opus validators. Compliance agents (code-reviewer, comment-analyzer, type-design-analyzer) flag in sonnet and get sonnet validators.
 
 Custom user agents that don't declare a model default to sonnet for both flagging and validation.
 
@@ -783,7 +785,7 @@ In `# Configuration`:
 - `skip_for` (default `[]`) — list of flagger agent names whose findings bypass validation
 - `uncertain_action` (default `"post_with_annotation"`) — `post_with_annotation` | `post_silently` | `drop`
 
-The parser rejects unknown nested keys, non-boolean `enabled`, non-array `skip_for`, and `uncertain_action` outside the enum.
+The parser **rejects** non-boolean `enabled`, non-array `skip_for`, `uncertain_action` outside the enum, or `independent_validator` itself being a non-object (exit 1). It **warns** (without rejecting) on unknown nested keys, so a typo like `enabld` is surfaced but doesn't block the loop.
 
 #### Telemetry
 
