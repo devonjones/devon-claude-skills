@@ -507,6 +507,131 @@ assert_jq "disabled_defaults_unknown names the typo" "$t16" '.configuration.disa
 assert_jq "disabled_defaults_unknown does NOT contain valid names" "$t16" '.configuration.disabled_defaults_unknown | index("pr-test-analyzer") == null'
 rm -rf "$repo"
 
+echo
+echo "=== Test 17: independent_validator defaults populate when no config given ==="
+repo="$(make_temp_repo)"
+run_discover "$repo" "src/foo.py" t17
+assert_exit "exit 0" "$t17_exit" "0"
+assert_jq "enabled defaults true" "$t17" '.configuration.independent_validator.enabled == true'
+assert_jq "skip_for defaults []" "$t17" '.configuration.independent_validator.skip_for == []'
+assert_jq "uncertain_action defaults post_with_annotation" "$t17" '.configuration.independent_validator.uncertain_action == "post_with_annotation"'
+rm -rf "$repo"
+
+echo
+echo "=== Test 18: explicit independent_validator config echoed in output ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<EOF
+# Configuration
+
+\`\`\`json
+{
+  "defaults_version_checked": "${PLUGIN_VERSION}",
+  "independent_validator": {
+    "enabled": false,
+    "skip_for": ["code-simplifier", "comment-analyzer"],
+    "uncertain_action": "drop"
+  }
+}
+\`\`\`
+EOF
+run_discover "$repo" "src/foo.py" t18
+assert_exit "exit 0" "$t18_exit" "0"
+assert_jq "enabled echoes false" "$t18" '.configuration.independent_validator.enabled == false'
+assert_jq "skip_for echoes back" "$t18" '.configuration.independent_validator.skip_for == ["code-simplifier", "comment-analyzer"]'
+assert_jq "uncertain_action echoes drop" "$t18" '.configuration.independent_validator.uncertain_action == "drop"'
+rm -rf "$repo"
+
+echo
+echo "=== Test 19: invalid uncertain_action enum → exit 1 ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+```json
+{ "independent_validator": { "uncertain_action": "ignore" } }
+```
+EOF
+run_discover "$repo" "src/foo.py" t19
+assert_exit "exit 1 on bad uncertain_action" "$t19_exit" "1"
+assert_stderr_contains "stderr names the bad value" "$t19_err" "ignore"
+assert_stderr_contains "stderr lists allowed enum values" "$t19_err" "post_with_annotation"
+rm -rf "$repo"
+
+echo
+echo "=== Test 20: invalid enabled type (string instead of bool) → exit 1 ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+```json
+{ "independent_validator": { "enabled": "yes" } }
+```
+EOF
+run_discover "$repo" "src/foo.py" t20
+assert_exit "exit 1 on string enabled" "$t20_exit" "1"
+assert_stderr_contains "stderr says must be boolean" "$t20_err" "must be a boolean"
+rm -rf "$repo"
+
+echo
+echo "=== Test 21: invalid skip_for type (string instead of array) → exit 1 ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+```json
+{ "independent_validator": { "skip_for": "code-simplifier" } }
+```
+EOF
+run_discover "$repo" "src/foo.py" t21
+assert_exit "exit 1 on string skip_for" "$t21_exit" "1"
+assert_stderr_contains "stderr says must be array" "$t21_err" "must be an array"
+rm -rf "$repo"
+
+echo
+echo "=== Test 22a: explicit null for enabled → rejected (regression test for // empty bypass) ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+```json
+{ "independent_validator": { "enabled": null } }
+```
+EOF
+run_discover "$repo" "src/foo.py" t22a
+assert_exit "exit 1 on null enabled (was bypassing via // empty)" "$t22a_exit" "1"
+assert_stderr_contains "stderr says enabled must be boolean" "$t22a_err" "must be a boolean"
+rm -rf "$repo"
+
+echo
+echo "=== Test 22b: explicit null for skip_for → rejected ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+```json
+{ "independent_validator": { "skip_for": null } }
+```
+EOF
+run_discover "$repo" "src/foo.py" t22b
+assert_exit "exit 1 on null skip_for" "$t22b_exit" "1"
+assert_stderr_contains "stderr says must be array" "$t22b_err" "must be an array"
+rm -rf "$repo"
+
+echo
+echo "=== Test 22: unknown nested key under independent_validator → warning ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+```json
+{ "independent_validator": { "enabld": true } }
+```
+EOF
+run_discover "$repo" "src/foo.py" t22
+assert_exit "exit 0 (warning, not error)" "$t22_exit" "0"
+assert_stderr_contains "warning names the typo" "$t22_err" "enabld"
+rm -rf "$repo"
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

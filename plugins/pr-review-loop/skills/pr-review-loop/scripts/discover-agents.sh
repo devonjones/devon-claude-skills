@@ -28,6 +28,11 @@
 #     "disabled_defaults": ["pr-test-analyzer", ...],   // raw user input; may include unknown names
 #     "disabled_defaults_unknown": [],                  // entries that don't match any default (typos)
 #     "overlaps_acknowledged": {"my_pci_auditor": {overlaps_with, reason}, ...},
+#     "independent_validator": {                         // ydy: per-finding validation step
+#       "enabled": true,                                 // default true; user can disable
+#       "skip_for": ["code-simplifier", ...],            // flagger names that bypass validation
+#       "uncertain_action": "post_with_annotation"       // post_with_annotation | post_silently | drop
+#     },
 #     "spawned_count": 7,
 #     "default_count": 6,
 #     "override_count": 1,
@@ -354,6 +359,19 @@ echo "$JQ_INPUT" | jq '
             disabled_defaults: $disabled_defaults,
             disabled_defaults_unknown: ($disabled_defaults - $default_agent_names),
             overlaps_acknowledged: ($config.overlap_acknowledged // {}),
+            # Resolve independent_validator with defaults filled in. The
+            # orchestrator can rely on all fields being present.
+            # Note: use explicit `has` checks instead of `//` because the //
+            # operator treats false as falsy and would mis-default an
+            # explicit `enabled: false` to true.
+            independent_validator: ($config.independent_validator as $iv | {
+                enabled: (if ($iv | type == "object") and ($iv | has("enabled"))
+                          then $iv.enabled else true end),
+                skip_for: (if ($iv | type == "object") and ($iv | has("skip_for"))
+                           then $iv.skip_for else [] end),
+                uncertain_action: (if ($iv | type == "object") and ($iv | has("uncertain_action"))
+                                   then $iv.uncertain_action else "post_with_annotation" end)
+            }),
             spawned_count: ($merged_agents | length),
             default_count: ($effective_defaults | length),
             override_count: ($overridden_default_names | length),

@@ -232,6 +232,7 @@ Always prepare a summary of what the review loop did and observed:
 - **Beads tickets**: Out-of-scope items captured for follow-up
 - **Branch protection status**: Whether all required checks and approvals are satisfied
 - **Stale defaults pin bypass** (if `--skip-stale-check` was used): note the config and current plugin versions; recommend running `/pr-review-loop:audit-agents`
+- **Validator activity** (if `independent_validator.enabled`): per-flagger acceptance rate (`X of Y findings posted; Z dropped as INVALID; W posted with [validator: uncertain]`). A flagger with persistent low acceptance is a candidate for retirement or prompt refinement.
 
 If repo-specific guidance defines additional merge criteria (attestation requirements, approval types, etc.), include the status of those criteria in the summary as well.
 
@@ -310,7 +311,8 @@ EACH ROUND (all steps before next review trigger):
 5. Run agent reviewers (the merged default + user agent set from pre-loop setup):
    - Spawn non-retired agents as parallel Tasks (defaults always spawn unless overridden or disabled per C+E)
    - Wait for all agents to return
-6. Address agent comments:
+   - **For each finding returned, run the independent validator** (per "Independent Validator Pipeline" section below). VALID findings flow to step 6; INVALID dropped; UNCERTAIN handled per `uncertain_action` config. Skip validation for any flagger named in `independent_validator.skip_for`. Skip validation entirely if `independent_validator.enabled` is false.
+6. Address agent comments (only those that survived validation):
    - Same fix/wontfix/out-of-scope flow as Gemini
    - Track per-agent diminishing returns, retire unproductive agents
 7. Commit and push (NEVER raw git commands) - if ANY fixes were made in this round
@@ -635,6 +637,11 @@ Project-level config lives in a `# Configuration` H1 section in the **root** `AG
       "overlaps_with": "security-reviewer",
       "reason": "PCI-compliance-specific scope; we want both running because the default is general security"
     }
+  },
+  "independent_validator": {
+    "enabled": true,
+    "skip_for": ["code-simplifier"],
+    "uncertain_action": "post_with_annotation"
   }
 }
 ```
@@ -645,6 +652,7 @@ Fields:
 - **`defaults_version_checked`** — plugin version (matches the value in `.claude-plugin/plugin.json`) whose defaults the user has reviewed. The `/pr-review-loop:audit-agents` tool (q2h) bumps this when the user accepts/rejects each recommendation.
 - **`disabled`** — list of default agent names the user does NOT want spawned. Per-name opt-out.
 - **`overlap_acknowledged`** — map from a user agent name to `{ overlaps_with, reason }`. Both agents continue to spawn; this entry documents intentional duplication so the audit tool doesn't recommend renaming. **`reason` is REQUIRED** — the parser rejects entries without it, so future readers see why both agents are intentionally running.
+- **`independent_validator`** — controls the per-finding validation step (see "Independent Validator Pipeline" below). All three nested fields are optional; defaults are `enabled: true`, `skip_for: []`, `uncertain_action: "post_with_annotation"`.
 
 ### Stale Pin Detection (at loop start)
 
@@ -673,11 +681,118 @@ Consider running `/pr-review-loop:audit-agents`.
 Once the stale check passes (or `--skip-stale-check` is set), the loop emits a one-line summary of which agents are running and why, before any agent spawns:
 
 ```
-Spawning 7 reviewers: 5 defaults + 1 user override (code-reviewer) + 1 user agent (pci-auditor).
+Spawning 6 reviewers: 4 defaults + 1 user override (code-reviewer) + 1 user agent (pci-auditor).
 Disabled defaults: pr-test-analyzer.
+Validation: enabled (opus validators for 2 bug-class agents, sonnet validators for 4 others).
 ```
 
+(Math: 6 defaults − 1 disabled (pr-test-analyzer) − 1 overridden (code-reviewer) = 4 default agents spawning; plus the user's `code-reviewer` override and `pci-auditor` user agent = 6 total. Of those 6, 2 are bug-class (silent-failure-hunter, code-simplifier) and 4 are compliance/sonnet, so the validators tier accordingly.)
+
 Goes to the same TodoWrite / pre-round summary surface as other setup state.
+
+When validation is disabled or partially skipped, the third line reflects that:
+
+```
+Validation: enabled (skip_for: code-simplifier).
+Validation: disabled.
+```
+
+### Independent Validator Pipeline
+
+After every agent reviewer returns findings and BEFORE those findings are posted, the loop runs an independent validator subagent per finding to verify the issue against the diff context alone. Findings the validator rejects are dropped.
+
+This catches the asymmetric-cost failure mode: a false-positive that gets *applied as a fix* introduces a real regression in once-correct code.
+
+**When the validator runs.** Between agent return and finding posting, per round. Per-finding, in parallel via the Task tool.
+
+**What the validator receives.**
+- The finding text (severity, location, issue body)
+- The relevant PR diff context (touched file or referenced lines)
+
+**What the validator does NOT receive.**
+- The flagging agent's name
+- The flagger's confidence rating
+- Any meta-context that would let the validator rationalize the finding
+
+**Validator output.** Structured: `VERDICT: VALID | INVALID | UNCERTAIN` with a one-line `REASON:`.
+
+**Filter behavior.**
+- **VALID** → post the finding through the normal flow (`post-line-comment.sh` / pending-review batching)
+- **INVALID** → drop silently from this round's posted findings; record in telemetry
+- **UNCERTAIN** → behavior depends on `# Configuration .independent_validator.uncertain_action`:
+  - `post_with_annotation` (default) — post with a `[validator: uncertain]` annotation
+  - `post_silently` — post normally
+  - `drop` — drop like INVALID
+
+#### Validator model selection
+
+The validator's model **mirrors the flagger's model.** Bug-class agents (silent-failure-hunter, pr-test-analyzer, code-simplifier; future security-reviewer / performance-reviewer via 9ao) flag in opus and get opus validators. Compliance agents (code-reviewer, comment-analyzer, type-design-analyzer) flag in sonnet and get sonnet validators.
+
+Custom user agents that don't declare a model default to sonnet for both flagging and validation.
+
+#### Validator Task prompt template
+
+```yaml
+Task tool:
+  subagent_type: general-purpose
+  model: <flagger.model or "sonnet">
+  description: validate <flagger-category> finding on <file>:<line>
+  prompt: |
+    You are an independent validator for a code review finding.
+    Your only job is to verify the finding against the actual code.
+    You do NOT know which agent flagged this, and you do NOT know
+    their confidence rating. Look at the code; decide if the issue
+    is real.
+
+    ## Finding
+
+    Severity: <finding.severity>
+    Location: <file>:<line>
+    Issue: <finding.body>
+
+    ## Diff context
+
+    <PR diff for the touched file, or just the touched range>
+
+    ## Your output
+
+    Output exactly two lines:
+
+      VERDICT: VALID | INVALID | UNCERTAIN
+      REASON: <one-line rationale, plain text, no markdown>
+
+    Use VALID when you can verify the issue exists in the code as
+    described. Use INVALID when the code as written does not have
+    the claimed problem. Use UNCERTAIN when you cannot verify
+    either way from the diff context alone.
+```
+
+#### Configuration
+
+In `# Configuration`:
+
+```json
+{
+  "independent_validator": {
+    "enabled": true,
+    "skip_for": ["code-simplifier"],
+    "uncertain_action": "post_with_annotation"
+  }
+}
+```
+
+- `enabled` (default `true`) — toggle validation on/off
+- `skip_for` (default `[]`) — list of flagger agent names whose findings bypass validation
+- `uncertain_action` (default `"post_with_annotation"`) — `post_with_annotation` | `post_silently` | `drop`
+
+The parser **rejects** non-boolean `enabled`, non-array `skip_for`, `uncertain_action` outside the enum, or `independent_validator` itself being a non-object (exit 1). It **warns** (without rejecting) on unknown nested keys, so a typo like `enabld` is surfaced but doesn't block the loop.
+
+#### Telemetry
+
+Each finding's validator outcome is logged to `.beads/pr-review-loop/findings/<pr>-<round>.jsonl` (per the gx4 telemetry framework when it lands). Aggregated at end-of-round and end-of-loop:
+- Per-flagger validation acceptance rate (helps identify reviewers that emit many false positives)
+- Per-validator-model count (visualises the cost split across opus/sonnet validators)
+- Total findings dropped or annotated by the validator
 
 ### AGENT-REVIEWERS.md Format
 
