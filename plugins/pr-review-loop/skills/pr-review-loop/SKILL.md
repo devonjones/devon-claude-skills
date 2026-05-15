@@ -231,6 +231,7 @@ Always prepare a summary of what the review loop did and observed:
 - **Self-contradictions**: Any detected during the loop and how they were resolved
 - **Beads tickets**: Out-of-scope items captured for follow-up
 - **Branch protection status**: Whether all required checks and approvals are satisfied
+- **Stale defaults pin bypass** (if `--skip-stale-check` was used): note the config and current plugin versions; recommend running `/pr-review-loop:audit-agents`
 
 If repo-specific guidance defines additional merge criteria (attestation requirements, approval types, etc.), include the status of those criteria in the summary as well.
 
@@ -251,6 +252,19 @@ The review loop should **not** override branch protections or bypass repo-define
    - PR comments (Claude): use `gh pr comment` with consolidated response
 4. **ALWAYS use `--wait` flag** when checking for comments - this ensures proper 5-minute polling
 5. **PR creation automatically triggers Gemini review** - use `get-review-comments.sh --wait` to wait for the first review
+
+### Pre-Loop Setup (do once, before round 1)
+
+1. **Discover and merge agents.** Run `scripts/discover-agents.sh <PR>` once. Its output includes:
+   - The full merged agent list (defaults + user agents per C+E semantics)
+   - The `configuration` block with `stale_pin`, `defaults_version_checked`, `current_plugin_version`, counts
+2. **Check the stale pin.** If `configuration.stale_pin` is `true` AND `--skip-stale-check` was not passed:
+   - Emit the stale-pin message (see "Stale Pin Detection" above) with current and pinned versions
+   - **Exit non-zero.** Do NOT proceed to round 1.
+3. **Emit the spawning summary.** Once cleared to proceed, log a one-line summary of which agents will run (see "Spawning Summary" above).
+4. **Track --skip-stale-check usage.** If the bypass flag was used, remember to include the bypass note in the final merge-readiness summary.
+
+After setup, proceed to The Loop.
 
 ### The Loop
 
@@ -293,8 +307,8 @@ EACH ROUND (all steps before next review trigger):
    - Parse the structured markdown to extract individual issues
 4. Address other bot comments:
    - Reply using `reply-to-comment.sh <PR> <comment-id> "response"` (handles PR comments)
-5. Run agent reviewers (if AGENT-REVIEWERS.md exists and agents not retired):
-   - Spawn non-retired agents as parallel Tasks
+5. Run agent reviewers (the merged default + user agent set from pre-loop setup):
+   - Spawn non-retired agents as parallel Tasks (defaults always spawn unless overridden or disabled per C+E)
    - Wait for all agents to return
 6. Address agent comments:
    - Same fix/wontfix/out-of-scope flow as Gemini
@@ -573,9 +587,97 @@ When using Claude fallback:
 
 4. **Continue the normal review loop** - address comments using `reply-to-comment.sh`
 
-## Agent Reviewers (Custom Focused Reviews)
+## Agent Reviewers (Default + Custom Focused Reviews)
 
-Run custom agent reviewers defined in `AGENT-REVIEWERS.md` files as part of each review round.
+The skill ships **6 default specialist reviewer agents** that spawn automatically. Users can author additional agents — or override / disable defaults — via `AGENT-REVIEWERS.md`.
+
+### Default Specialist Reviewers
+
+Located in `plugins/pr-review-loop/agents/`. Each is a native subagent with frontmatter (`name`, `description`, `model`, `color`) plus our standard focus/check/flag/skip/suggest template, with touch-it-you-own-it scope rules baked in:
+
+| Default | Model | Focus |
+|---------|-------|-------|
+| `code-reviewer` | sonnet | CLAUDE.md compliance + significant bugs; confidence ≥80; quote-the-rule forcing function |
+| `silent-failure-hunter` | opus | Empty / broad catches, optional-chain swallowing, fallback masking |
+| `pr-test-analyzer` | opus | Behavioral coverage gaps, criticality 1-10 |
+| `comment-analyzer` | sonnet | Factual accuracy, comment rot, value-free comments |
+| `type-design-analyzer` | sonnet | Encapsulation, invariant expression / usefulness / enforcement (4 axes 1-10) |
+| `code-simplifier` | opus | Genuine complexity / nested ternaries / dead code; behavior-preserving |
+
+Defaults always spawn unless explicitly overridden or disabled (see "Override and Configuration Semantics" below).
+
+### Override and Configuration Semantics (C+E)
+
+User-authored agents in `AGENT-REVIEWERS.md` compose with defaults via these rules:
+
+| User repo state | What spawns |
+|-----------------|-------------|
+| No `AGENT-REVIEWERS.md` | All 6 defaults |
+| `AGENT-REVIEWERS.md` with no `# Agents` section | All 6 defaults + the user's `# Guidelines` / `# Context` apply |
+| `AGENT-REVIEWERS.md` with new custom agents under `# Agents` | All 6 defaults + user's custom agents (additive) |
+| User agent has the **same name** as a default (`## code-reviewer`) | User's version replaces that default; the other 5 still spawn |
+| User has `# Configuration` with `disabled: ["pr-test-analyzer"]` | 5 defaults spawn (pr-test-analyzer skipped) |
+| Hierarchical scoping (subtree-specific overrides) | Per-subdirectory rules apply as before; defaults always live at scope `/` |
+
+### `# Configuration` Section
+
+Project-level config lives in a `# Configuration` H1 section in the **root** `AGENT-REVIEWERS.md`. The section contains a fenced JSON block. Subdirectory `AGENT-REVIEWERS.md` configurations are warned about and ignored.
+
+````markdown
+# Configuration
+
+```json
+{
+  "defaults_version_checked": "1.2.0",
+  "disabled": ["pr-test-analyzer"],
+  "overlap_acknowledged": {
+    "my_pci_auditor": {
+      "overlaps_with": "security-reviewer",
+      "reason": "PCI-compliance-specific scope; we want both running because the default is general security"
+    }
+  }
+}
+```
+````
+
+Fields:
+
+- **`defaults_version_checked`** — plugin version (matches the value in `.claude-plugin/plugin.json`) whose defaults the user has reviewed. The `/pr-review-loop:audit-agents` tool (q2h) bumps this when the user accepts/rejects each recommendation.
+- **`disabled`** — list of default agent names the user does NOT want spawned. Per-name opt-out.
+- **`overlap_acknowledged`** — map from a user agent name to `{ overlaps_with, reason }`. Both agents continue to spawn; this entry documents intentional duplication so the audit tool doesn't recommend renaming. **`reason` is REQUIRED** — the parser rejects entries without it, so future readers see why both agents are intentionally running.
+
+### Stale Pin Detection (at loop start)
+
+Before round 1, the loop checks `defaults_version_checked` against the installed plugin version. The check is deterministic — a pure version-string compare, no LLM inference.
+
+If the pin is missing or stale:
+
+```
+⚠️  AGENT-REVIEWERS.md was last audited against pr-review-loop v1.2.5.
+    Installed version: v1.3.0
+    Run `/pr-review-loop:audit-agents` to review changes, or
+    pass `--skip-stale-check` to proceed with current configuration.
+```
+
+The loop **exits non-zero** on stale pin. The user must either run the audit tool (which bumps the pin) or re-invoke the loop with `--skip-stale-check`.
+
+When `--skip-stale-check` is used, the merge-readiness summary at end-of-loop includes a bypass note so it isn't silently forgotten:
+
+```
+Note: ran with stale defaults pin (config v1.2.5, plugin v1.3.0).
+Consider running `/pr-review-loop:audit-agents`.
+```
+
+### Spawning Summary
+
+Once the stale check passes (or `--skip-stale-check` is set), the loop emits a one-line summary of which agents are running and why, before any agent spawns:
+
+```
+Spawning 7 reviewers: 5 defaults + 1 user override (code-reviewer) + 1 user agent (pci-auditor).
+Disabled defaults: pr-test-analyzer.
+```
+
+Goes to the same TodoWrite / pre-round summary surface as other setup state.
 
 ### AGENT-REVIEWERS.md Format
 
@@ -668,23 +770,23 @@ Spawn non-retired agents **in parallel** at step 4 of each round. Track per-agen
 
 ### Spawning Agent Reviewers
 
-For each agent discovered (after merging and scoping), spawn a Task:
+For each agent in the merged list from `discover-agents.sh` (defaults + user agents per C+E), spawn a Task. Use the agent's declared `model` field if present; otherwise default to `sonnet`. The `instructions` field is the agent body — same shape for defaults (from `plugins/pr-review-loop/agents/*.md`) and user agents (from `AGENT-REVIEWERS.md`).
 
 ```yaml
 Task tool:
   subagent_type: general-purpose
-  model: sonnet
+  model: <agent.model or "sonnet">
   description: <agent-name> review for PR #<PR>
   prompt: |
     You are the "<agent-name>" code reviewer for PR #<PR>.
 
-    Your focus: <instructions from AGENT-REVIEWERS.md>
+    Your focus: <agent.instructions>
 
-    **Your scope: <scope-path>/**
+    **Your scope: <agent.scope>**
     You should ONLY review changes to the files listed below. Ignore all other files.
 
     **Changed files in your scope:**
-    <changed_files list from discover-agents.sh output>
+    <agent.changed_files from discover-agents.sh output>
 
     ## Your workflow:
 
@@ -812,7 +914,9 @@ When detected, the script suggests:
 | `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post line comment with agent signature |
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |
 | `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |
-| `discover-agents.sh <PR>` | Discover agent reviewers with hierarchical scoping |
+| `discover-agents.sh <PR>` | Discover + merge agent reviewers (defaults + user agents per C+E); emits `configuration` block with `stale_pin` |
+| `_load_defaults.sh` | Internal helper: load native default subagents from `plugins/pr-review-loop/agents/` |
+| `_parse_configuration.sh <AGENT-REVIEWERS.md>` | Internal helper: parse the `# Configuration` JSON block; validates required `reason` in `overlap_acknowledged` |
 
 ## Permission Setup
 
