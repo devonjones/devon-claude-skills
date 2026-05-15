@@ -61,7 +61,7 @@ AGENT-REVIEWERS.md) will silently fail to spawn — they require the Task tool, 
 only available in the main conversation.
 
 **What to do instead:** Execute the review loop steps directly in the main conversation.
-This allows you to spawn agent reviewer Tasks in parallel (step 5 of each round) while
+This allows you to spawn agent reviewer Tasks in parallel (C3 of each round) while
 keeping Gemini/bot comment handling inline.
 
 Individual agent reviewers (leaf-level Tasks that don't need to spawn further Tasks)
@@ -170,7 +170,7 @@ When Gemini (or any reviewer) raises a finding, ask: **is this finding symptomat
 **Do not fix comments one-at-a-time.** After collecting all comments for a round (Gemini + other bots + agents), list them together before editing any file:
 
 1. Identify patterns across comments (same issue type, multiple files or lines) — plan one sweep fix, not N individual fixes.
-2. For each planned fix, re-read the new text through each active agent's lens *before* staging: would clarity-reviewer flag this phrasing? Would dependency-reviewer flag an added tool? Revise until the fix itself wouldn't draw a new comment.
+2. For each planned fix, re-read the new text through each active agent's lens *before* staging: would code-reviewer flag this phrasing? Would comment-analyzer flag a stale assertion? Revise until the fix itself wouldn't draw a new comment.
 3. Commit once per round, not once per comment. Note deliberate trade-offs in the commit message body so reviewers see the reasoning rather than re-flagging it.
 
 ### Indicators of a Broader Pattern
@@ -190,7 +190,7 @@ A finding is likely isolated when:
 
 If a reviewer flags an issue on content **not modified in recent pushes**, their initial review pass was incomplete:
 
-1. **Widen the sweep to the full original PR diff** — not just recently-changed files. If the reviewer missed this pattern on first pass, similar issues may exist elsewhere in the original diff.
+1. **Widen the sweep to the full original PR diff** — not just recently-changed files.
 2. **Consider an explicit full-diff review trigger**: push-triggered auto-reviews anchor on recently-changed files. Posting an explicit `/gemini review` comment (or `trigger-review.sh <PR> --wait`) prompts a review of the full PR diff and can surface remaining issues sooner.
 
 ### When a Finding Looks Like a Pattern
@@ -200,7 +200,7 @@ Before replying to the reviewer or making the fix:
 1. **Sweep all changed files** (and closely related files) for the same pattern using grep or a targeted search.
 2. **Fix all occurrences in one commit** rather than one per reviewer round. Multiple rounds for the same pattern means this step was skipped.
 3. **Decide whether to re-run a targeted agent-reviewer**:
-   - Re-run if: the pattern was something the agent was supposed to catch (e.g., clarity-reviewer for naming/style, dependency-reviewer for new tool usage) AND enough new lines were added or changed that a targeted re-run adds coverage
+   - Re-run if: the pattern was something the agent was supposed to catch (e.g., code-reviewer for guideline violations, silent-failure-hunter for error handling) AND enough new lines were added or changed that a targeted re-run adds coverage
    - Skip re-run if: the agent already ran and addressed this area, and the fix is narrow enough that no new review surface was introduced
 
 ### Examples
@@ -360,7 +360,7 @@ EACH ROUND — three phases, in order:
   Otherwise → apply ONE MORE LOOP Rule (see Stopping Heuristics).
 ```
 
-**Phase order is mandatory.** Complete all COLLECT steps (C1, C2, C3) before beginning any FIX step (F1–F7). The BATCH POINT between them is what makes Pattern Analysis (`Sweep Before Fixing`) work — you can't sweep for patterns one comment at a time, only after everything's collected.
+**Phase order is mandatory.** Complete all COLLECT steps (C1, C2, C3) before beginning any FIX step (F1–F7). The BATCH POINT between them is what makes Pattern Analysis (`Sweep Before Fixing`) work.
 
 **For full step-by-step details with commands and example outputs, see the "Step-by-step (Each Round)" section below.** The diagram above is the authoritative execution order.
 
@@ -372,7 +372,9 @@ AND this was the "final verification" round:
 
 ### Step-by-step (Each Round)
 
-**1. Check for unresolved Gemini line comments (ALWAYS use --wait for first check after PR creation or push):**
+**Do NOT reply to anything during the COLLECT phase (C1–C3) — all replies happen in the FIX phase (F1–F3).**
+
+**C1. Check for unresolved Gemini line comments (ALWAYS use --wait for first check after PR creation or push):**
 ```bash
 scripts/summarize-reviews.sh <PR>
 scripts/get-review-comments.sh <PR> --with-ids --wait
@@ -390,8 +392,6 @@ The function appears to duplicate functionality...
 
 **Use the Node ID (PRRC_...) when replying to comments.** The Node ID is required for `reply-to-comment.sh` to properly attach your reply to the review thread.
 
-(The first numbered step above is `C1`. Do NOT reply to anything in the COLLECT phase — replies happen in F1.)
-
 **C2. Check for other bot PR comments (Claude, Cursor, Copilot):**
 
 These bots post single PR comments (not line comments) containing multiple issues:
@@ -400,20 +400,20 @@ These bots post single PR comments (not line comments) containing multiple issue
 gh pr view <PR> --json comments --jq '.comments[] | select(.author.login == "claude") | {id: .id, body: .body[:500]}'
 ```
 
-For each issue in the comment, parse the structured markdown (numbered issues, file:line references) and note it for the BATCH POINT. Do NOT reply yet — that happens in F2.
+For each issue in the comment, parse the structured markdown (numbered issues, file:line references) and note it for the BATCH POINT.
 
 **C3. Run agent reviewers (the merged default + user agent set from pre-loop setup):**
 
 - Spawn non-retired agents as parallel Tasks (defaults always spawn unless overridden or disabled per C+E)
 - Wait for all agents to return
-- **For each finding returned, run the independent validator** (per "Independent Validator Pipeline" section). VALID findings flow to the BATCH POINT below; INVALID dropped; UNCERTAIN handled per `uncertain_action` config. Skip validation for any flagger named in `independent_validator.skip_for`. Skip validation entirely if `independent_validator.enabled` is false.
+- **For each finding returned, run the independent validator** (per "Independent Validator Pipeline" section). VALID findings flow to the BATCH POINT below; INVALID dropped; UNCERTAIN handled per `independent_validator.uncertain_action`. Skip validation for any flagger named in `independent_validator.skip_for`. Skip validation entirely if `independent_validator.enabled` is false.
 
 #### BATCH POINT (required before FIX Phase)
 
 Apply **"Batch Before Acting"** (see Pattern Analysis section above):
 - List all C1 + C2 + C3 comments as a single set
 - Identify cross-source patterns (same issue type across multiple comments or files) — plan sweeps, not individual fixes
-- For each planned fix, re-read the new text through each active agent's lens before staging: would clarity-reviewer flag this? Would dependency-reviewer flag an added tool? Revise until the fix itself wouldn't draw a new comment
+- For each planned fix, re-read the new text through each active agent's lens before staging: would code-reviewer flag this? Would comment-analyzer flag a stale assertion? Revise until the fix itself wouldn't draw a new comment
 - Record deliberate trade-offs for the commit message body (so reviewers see reasoning and don't re-flag the concern)
 
 #### FIX Phase (apply the batched plan)
@@ -449,9 +449,15 @@ gh pr comment <PR> --body "## Response to Claude Review
 
 **F4. Commit and push (ALWAYS use the script, NEVER raw git) — ONCE per round, if any fixes were made:**
 ```bash
-scripts/commit-and-push.sh "fix: description"
+scripts/commit-and-push.sh "$(cat <<'EOF'
+fix: address review comments
+
+Trade-offs from BATCH POINT:
+- [reasoning for choice X — pre-empts re-flag from agent Y]
+EOF
+)"
 ```
-This script runs pre-commit, commits with proper footer, and pushes. Include deliberate trade-offs in the commit body (from BATCH POINT).
+This script runs pre-commit, commits with proper footer, and pushes. Include deliberate trade-offs in the commit body so reviewers see reasoning rather than re-flagging the concern.
 
 **F5. Wait for CI checks and fix failures (if any):**
 ```bash
@@ -462,7 +468,7 @@ scripts/check-ci.sh <PR> --wait
 ```bash
 scripts/trigger-review.sh <PR> --wait
 ```
-The `--wait` flag polls until new comments appear. Do NOT use sleep or manual polling.
+The `--wait` flag polls every 30s for up to 5 minutes waiting for new comments. Do NOT use sleep or manual polling.
 
 **F7. Inspect F6's output BEFORE applying exit conditions.** If F6 returned new comments, start the next COLLECT PHASE. Otherwise apply the ONE MORE LOOP Rule (see Stopping Heuristics).
 
@@ -941,7 +947,7 @@ scripts/discover-agents.sh <PR>
 
 Each agent's `changed_files` list contains only the PR's changed files within that agent's scope. Pass this list to the agent.
 
-Spawn non-retired agents **in parallel** at step 4 of each round. Track per-agent state to avoid re-running retired agents.
+Spawn non-retired agents **in parallel** at C3 of each round. Track per-agent state to avoid re-running retired agents.
 
 ### Spawning Agent Reviewers
 
@@ -1003,19 +1009,18 @@ Task tool:
 
 ### Main Loop Integration
 
-Agent reviewers are part of each round, running after Gemini and other bot comments are addressed:
+Agent reviewers run during the COLLECT phase (C3), in parallel with C1 (Gemini) and C2 (other bots). All findings — Gemini + other bots + agents — flow into the BATCH POINT before any FIX-phase action.
 
-1. **After agent Tasks return**, address agent comments using the same flow as Gemini:
+1. **After agent Tasks return** (in C3), their findings join the C1 + C2 findings at the BATCH POINT. Identify cross-source patterns and plan sweeps before staging any edit.
+
+2. **In F3, address agent comments** using the same flow as Gemini:
    - Fix → reply "Fixed - ..."
    - Won't fix (bad) → reply "Won't fix - ..."
    - Out of scope (good) → create beads ticket if available, reply "Out of scope - tracked in BD-XXX"
 
-2. **Update per-agent tracking** based on results (productive / final-verification / retired)
+3. **Update per-agent tracking** based on results (productive / final-verification / retired)
 
-3. **After all comments in the round are addressed** (Gemini + other bots + agents):
-   - Commit and push if any fixes: `scripts/commit-and-push.sh "fix: address review comments"`
-   - Trigger next review: `scripts/trigger-review.sh <PR> --wait`
-   - Start the next round
+4. **In F4–F6**, commit + push the batched fixes once, wait for CI, and trigger the next review.
 
 ### Diminishing Returns for Agent Reviewers
 
