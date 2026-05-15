@@ -2,7 +2,7 @@
 
 ```json
 {
-  "defaults_version_checked": "1.2.0",
+  "defaults_version_checked": "1.3.0",
   "overlap_acknowledged": {
     "shell-script-reviewer": {
       "overlaps_with": "code-reviewer",
