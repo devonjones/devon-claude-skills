@@ -73,12 +73,17 @@ fi
 # "diabled" instead of "disabled" would otherwise be silently dropped.
 # Allowed keys are documented in SKILL.md's "# Configuration" section.
 UNKNOWN_KEYS="$(echo "$RAW_JSON" | jq -r '
-    [keys[] | select(. != "defaults_version_checked" and . != "disabled" and . != "overlap_acknowledged")]
+    [keys[] | select(
+        . != "defaults_version_checked"
+        and . != "disabled"
+        and . != "overlap_acknowledged"
+        and . != "independent_validator"
+    )]
     | join(", ")
 ')"
 if [[ -n "$UNKNOWN_KEYS" ]]; then
     echo "Warning: # Configuration in $FILE has unknown top-level keys (likely typos): $UNKNOWN_KEYS" >&2
-    echo "Warning:   Allowed keys: defaults_version_checked, disabled, overlap_acknowledged" >&2
+    echo "Warning:   Allowed keys: defaults_version_checked, disabled, overlap_acknowledged, independent_validator" >&2
 fi
 
 # Validate overlap_acknowledged entries have a non-empty `reason`.
@@ -94,6 +99,63 @@ INVALID_ENTRIES="$(echo "$RAW_JSON" | jq -r '
 
 if [[ -n "$INVALID_ENTRIES" ]]; then
     echo "Error: overlap_acknowledged entries missing required 'reason' field in $FILE: $INVALID_ENTRIES" >&2
+    exit 1
+fi
+
+# Validate independent_validator block (per bd memory ydy-design-locked).
+# Allowed shape:
+#   { enabled: bool, skip_for: [str], uncertain_action: enum }
+# Allowed uncertain_action values: post_with_annotation | post_silently | drop
+# Reject when the block is non-object; warn on unknown nested keys (typos
+# like `enabld` would otherwise be silently dropped).
+IV_TYPE="$(echo "$RAW_JSON" | jq -r '
+    .independent_validator // empty | type
+')"
+if [[ -n "$IV_TYPE" && "$IV_TYPE" != "object" ]]; then
+    echo "Error: # Configuration .independent_validator in $FILE must be an object (got $IV_TYPE)" >&2
+    exit 1
+fi
+IV_UNKNOWN_KEYS="$(echo "$RAW_JSON" | jq -r '
+    [(.independent_validator // {}) | keys[] | select(
+        . != "enabled" and . != "skip_for" and . != "uncertain_action"
+    )] | join(", ")
+')"
+if [[ -n "$IV_UNKNOWN_KEYS" ]]; then
+    echo "Warning: # Configuration .independent_validator in $FILE has unknown nested keys (likely typos): $IV_UNKNOWN_KEYS" >&2
+    echo "Warning:   Allowed nested keys: enabled, skip_for, uncertain_action" >&2
+fi
+
+# Validate enum on uncertain_action when present.
+IV_BAD_ACTION="$(echo "$RAW_JSON" | jq -r '
+    .independent_validator.uncertain_action // empty
+    | select(. != "post_with_annotation" and . != "post_silently" and . != "drop")
+')"
+if [[ -n "$IV_BAD_ACTION" ]]; then
+    echo "Error: # Configuration .independent_validator.uncertain_action in $FILE has invalid value '$IV_BAD_ACTION'" >&2
+    echo "Error:   Allowed values: post_with_annotation, post_silently, drop" >&2
+    exit 1
+fi
+
+# Validate enabled is boolean when present.
+IV_BAD_ENABLED="$(echo "$RAW_JSON" | jq -r '
+    .independent_validator.enabled // empty
+    | select(type != "boolean")
+    | tojson
+')"
+if [[ -n "$IV_BAD_ENABLED" ]]; then
+    echo "Error: # Configuration .independent_validator.enabled in $FILE must be a boolean (got $IV_BAD_ENABLED)" >&2
+    exit 1
+fi
+
+# Validate skip_for is array of strings when present.
+IV_BAD_SKIP="$(echo "$RAW_JSON" | jq -r '
+    .independent_validator.skip_for // empty
+    | if type != "array" then "<not an array>"
+      elif any(.[]; type != "string") then "<contains non-string entries>"
+      else empty end
+')"
+if [[ -n "$IV_BAD_SKIP" ]]; then
+    echo "Error: # Configuration .independent_validator.skip_for in $FILE: $IV_BAD_SKIP — must be an array of strings" >&2
     exit 1
 fi
 
