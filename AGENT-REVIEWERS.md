@@ -1,3 +1,21 @@
+# Configuration
+
+```json
+{
+  "defaults_version_checked": "1.2.0",
+  "overlap_acknowledged": {
+    "shell-script-reviewer": {
+      "overlaps_with": "code-reviewer",
+      "reason": "shell-script-reviewer enforces our root # Guidelines for bash scripts (set -euo pipefail, stderr for errors). code-reviewer would quote those same guidelines as rule violations. Both run because shell-script-reviewer adds bash-specific triage (modified-vs-newly-added scripts get different severity) that code-reviewer lacks."
+    },
+    "dependency-reviewer": {
+      "overlaps_with": "code-reviewer",
+      "reason": "dependency-reviewer catches new external tools missing install instructions; code-reviewer would flag the same via # Guidelines 'New dependencies require installation instructions in SKILL.md'. Both run because dependency-reviewer is the targeted check (always fires) while code-reviewer is the catch-all that requires confidence >=80."
+    }
+  }
+}
+```
+
 # Guidelines
 
 This is a Claude Code skills marketplace repository. When reviewing PRs:
