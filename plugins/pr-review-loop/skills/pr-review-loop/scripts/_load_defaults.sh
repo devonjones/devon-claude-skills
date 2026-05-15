@@ -81,7 +81,7 @@ parse_default() {
 
     awk -v source="$rel_path" -v warn_target="/dev/stderr" '
     function json_escape(s) {
-        gsub(/\\/, "\\\\", s)
+        gsub(/\\/, "&&", s)
         gsub(/"/, "\\\"", s)
         gsub(/\n/, "\\n", s)
         gsub(/\r/, "\\r", s)
