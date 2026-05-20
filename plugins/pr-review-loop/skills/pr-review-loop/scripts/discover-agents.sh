@@ -38,7 +38,16 @@
 #     "override_count": 1,
 #     "user_count": 1,
 #     "overridden_default_names": ["code-reviewer"]
-#   }
+#   },
+#   "language_detection": null                          // 98b: present only when no
+#     # OR                                              // AGENT-REVIEWERS.md exists. Drives
+#     # {                                               // the install-template offer in
+#     #   "matched": [                                  // pre-loop setup.
+#     #     {"language": "golang", "subtree": "backend", "template": "golang.md"},
+#     #     {"language": "python", "subtree": "frontend", "template": "python.md"}
+#     #   ],
+#     #   "same_directory_polyglot": false              // true iff two matches share subtree
+#     # }
 # }
 #
 # Usage: discover-agents.sh <pr-number>
@@ -230,6 +239,38 @@ else
     CONFIGURATION_JSON='{}'
 fi
 
+# 98b: language detection. Only fires when NO AGENT-REVIEWERS.md exists
+# (neither at root nor discovered via the changed-file walk-up). When the
+# repo already has config, the user has clearly opted into manual setup
+# and we don't interrupt with template suggestions.
+#
+# Empty PRs (no changed files) skip the walk entirely, so we also need
+# the explicit root-file check to avoid a false trigger when root config
+# exists but PR has no files.
+LANGUAGE_DETECTION_JSON='null'
+if [[ ${#AGENT_FILES[@]} -eq 0 ]] && [[ ! -f "$ROOT_AGENT_REVIEWERS" ]]; then
+    if [[ -x "$SCRIPT_DIR/detect-language.sh" ]]; then
+        # Capture stdout; let stderr flow through so the user sees any errors.
+        # Detect script is deterministic and shouldn't fail on a readable repo,
+        # but if it does, fall back to null rather than crashing the loop.
+        if RAW_DETECT=$("$SCRIPT_DIR/detect-language.sh" --repo-root "$REPO_ROOT" 2>/dev/null); then
+            # Transform: add template field per entry; compute same_directory_polyglot flag.
+            LANGUAGE_DETECTION_JSON=$(jq -n --argjson matches "$RAW_DETECT" '
+                {
+                    matched: ($matches | map(. + {template: (.language + ".md")})),
+                    same_directory_polyglot: (
+                        # True iff two matches share a subtree with different languages
+                        ($matches
+                            | group_by(.subtree)
+                            | map(select(length > 1 and ([.[].language] | unique | length > 1)))
+                            | length) > 0
+                    )
+                }
+            ')
+        fi
+    fi
+fi
+
 # Warn if subdirectory AGENT-REVIEWERS.md files have a # Configuration section —
 # their configuration is silently ignored, so surface that fact to the user.
 # Compare canonical paths via realpath so `/./` segments don't false-positive.
@@ -258,14 +299,16 @@ if [[ -n "$UNKNOWN_DISABLED" ]]; then
 fi
 
 # Prepare input for jq:
-#   {sections: [...], defaults: [...], configuration: {...}, current_version: "..."}
+#   {sections: [...], defaults: [...], configuration: {...}, current_version: "...",
+#    language_detection: null | {...}}
 JQ_INPUT=$(jq -n \
     --argjson sections "$([[ -z "$ALL_SECTIONS" ]] && echo "[]" || (printf '%s\n' "$ALL_SECTIONS" | jq -s '.'))" \
     --argjson defaults "$DEFAULTS_JSON" \
     --argjson configuration "$CONFIGURATION_JSON" \
     --argjson files "$CHANGED_FILES_JSON" \
     --arg current_version "$CURRENT_PLUGIN_VERSION" \
-    '{sections: $sections, defaults: $defaults, configuration: $configuration, files: $files, current_version: $current_version}'
+    --argjson language_detection "$LANGUAGE_DETECTION_JSON" \
+    '{sections: $sections, defaults: $defaults, configuration: $configuration, files: $files, current_version: $current_version, language_detection: $language_detection}'
 )
 
 echo "$JQ_INPUT" | jq '
@@ -275,6 +318,7 @@ echo "$JQ_INPUT" | jq '
     .configuration as $config |
     .files as $files |
     .current_version as $current_version |
+    .language_detection as $language_detection |
 
     # ---- 2. Resolve user agents from sections (existing hierarchical-scope logic) ----
     ([$sections[] | select(.type == "agent")] |
@@ -377,6 +421,7 @@ echo "$JQ_INPUT" | jq '
             override_count: ($overridden_default_names | length),
             user_count: ($user_agents | map(select(.kind == "user")) | length),
             overridden_default_names: $overridden_default_names
-        }
+        },
+        language_detection: $language_detection
     }
 '
