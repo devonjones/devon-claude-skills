@@ -265,7 +265,7 @@ After each round, evaluate:
 
 ### Hard Round Ceiling (Circuit Breaker)
 
-**If you reach 7 total rounds OR 5 *consecutive* nitpick-only rounds, STOP the loop regardless of state.** Report to the user:
+**If you reach 7 total rounds, STOP the loop regardless of state.** This is a pure circuit breaker — the quality-weighted exit condition (see ONE MORE LOOP Rule) handles normal termination earlier; this fires only when the loop is stuck. Report to the user:
 
 - Rounds completed and elapsed time
 - Total comments received, by priority (P1/P2/P3 — see Priority to Exit-Condition Mapping) and source (Gemini, other bots, each agent)
@@ -280,7 +280,9 @@ When a full round (Gemini + other bots + agent reviewers) produces no actionable
 
 **Actionable feedback** = a **P1 or P2** finding (per the Priority to Exit-Condition Mapping) that is addressed with a code change. "Won't fix" responses, nitpick (P3) fixes, and zero-comment rounds are NOT actionable for loop-control purposes — they all count toward exit condition (b) below.
 
-**Unifying with stopping heuristics**: A "Won't fix" or nitpick-only round satisfies the ONE MORE LOOP trigger. When the "Two consecutive rounds with mostly Won't fix OR nitpick-only feedback" stopping heuristic fires, the second qualifying round IS the trigger: begin the final verification round immediately.
+**Unifying with stopping heuristics**: The "Two consecutive rounds with mostly Won't fix OR nitpick-only feedback" stopping heuristic and ONE MORE LOOP describe the same exit mechanism from two angles:
+- The **first** qualifying round (Won't-fix-or-nitpick-only) IS the ONE MORE LOOP trigger.
+- The **second** qualifying round IS the final verification — if it also has no actionable (P1/P2) fixes AND condition (d) below is satisfied, you exit immediately at end of that round. No third round needed.
 
 **Tracking state**: Use TodoWrite to track whether you're in the "final verification round". Create a todo like "Final verification round - if no actionable feedback, ready to merge".
 
@@ -290,6 +292,7 @@ When a full round (Gemini + other bots + agent reviewers) produces no actionable
 - (a) **No P1/P2 findings** (correctness, security, breaking changes) in the last round
 - (b) **The last two rounds had zero actionable (P1/P2) fixes** — i.e., they contained only nitpicks, were zero-comment rounds, or all feedback was "Won't fix"
 - (c) **No contradictions across rounds**
+- (d) **No unresolved P1/P2 Won't-fix findings carried forward from any prior round** — every Won't-fix on a P1/P2 must have been either (i) reclassified to P3 with explicit justification per the Priority Mapping rule, or (ii) actually fixed in a later round. Carried-forward Won't-fix on a real P1/P2 blocks exit regardless of (a) and (b).
 
 — **OR** the Hard Round Ceiling has fired (see above).
 
