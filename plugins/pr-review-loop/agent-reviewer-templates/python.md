@@ -2,7 +2,7 @@
 
 ```json
 {
-  "defaults_version_checked": "1.4.0",
+  "defaults_version_checked": "1.5.0",
   "disabled": [
     "silent-failure-hunter",
     "comment-analyzer",
