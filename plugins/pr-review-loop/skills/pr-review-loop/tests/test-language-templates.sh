@@ -291,6 +291,36 @@ run_install "$repo" i9 golang:no-such-dir
 assert_exit "exit 2 (subtree doesn't exist)" "$i9_exit" "2"
 
 echo
+echo
+echo "=== Test I_T1: lang with slash → exit 2 (path-traversal guard) ==="
+repo="$(make_temp_repo)"
+run_install "$repo" iT1 "foo/bar:."
+assert_exit "exit 2" "$iT1_exit" "2"
+rm -rf "$repo"
+
+echo
+echo "=== Test I_T2: subtree with '..' → exit 2 ==="
+repo="$(make_temp_repo)"
+run_install "$repo" iT2 "golang:../escape"
+assert_exit "exit 2" "$iT2_exit" "2"
+rm -rf "$repo"
+
+echo
+echo "=== Test I_T3: absolute subtree path → exit 2 ==="
+repo="$(make_temp_repo)"
+run_install "$repo" iT3 "golang:/etc"
+assert_exit "exit 2" "$iT3_exit" "2"
+rm -rf "$repo"
+
+echo
+echo "=== Test I_T4: subtree with embedded '..' segment → exit 2 ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/sub"
+run_install "$repo" iT4 "golang:sub/../escape"
+assert_exit "exit 2" "$iT4_exit" "2"
+rm -rf "$repo"
+
+echo
 echo "=== Test I10: install pins defaults_version_checked to plugin version ==="
 repo="$(make_temp_repo)"
 run_install "$repo" i10 golang:.

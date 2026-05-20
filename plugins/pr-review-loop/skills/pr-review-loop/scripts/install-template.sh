@@ -103,6 +103,17 @@ for pair in "${PAIRS[@]}"; do
         exit 2
     fi
 
+    # Path-traversal guard. lang feeds into a template filename; subtree
+    # feeds into a path under REPO_ROOT. Neither should escape its scope.
+    if [[ "$lang" == */* || "$lang" == .* ]]; then
+        echo "Error: invalid language name '$lang' (no slashes or leading dots allowed)" >&2
+        exit 2
+    fi
+    if [[ "$subtree" == */../* || "$subtree" == ../* || "$subtree" == */.. || "$subtree" == /* ]]; then
+        echo "Error: invalid subtree '$subtree' (no '..' traversal or absolute paths allowed)" >&2
+        exit 2
+    fi
+
     template_path="$TEMPLATES_DIR/${lang}.md"
     if [[ ! -f "$template_path" ]]; then
         echo "Error: no template found for language '$lang' at $template_path" >&2
@@ -166,15 +177,17 @@ fi
 # ---------------------------------------------------------------------------
 
 # extract_section <template-path> <section-name>
-# Emits everything between `# <section-name>` and the next `# ` H1 (exclusive).
+# Emits everything between `# <section-name>` and the next H1 (exclusive).
+# Accepts any whitespace between `#` and the heading text so templates
+# with `#  Agents` or `#\tAgents` parse correctly (not just `# Agents`).
 extract_section() {
     local file="$1" section="$2"
     awk -v section="$section" '
         BEGIN { in_section = 0 }
-        /^# / {
+        /^#[[:space:]]+/ {
             if (in_section) { in_section = 0 }
-            heading = substr($0, 3)
-            # Trim trailing whitespace
+            heading = $0
+            sub(/^#[[:space:]]+/, "", heading)
             sub(/[[:space:]]+$/, "", heading)
             if (heading == section) { in_section = 1; next }
         }

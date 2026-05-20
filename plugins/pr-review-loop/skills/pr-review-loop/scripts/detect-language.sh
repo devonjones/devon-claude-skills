@@ -77,12 +77,14 @@ for d in "${skip_dirs[@]}"; do
     prune_args+=(-name "$d" -prune -o)
 done
 
-# Build the -name expression for the find search.
+# Build the -name expression for the find search. Conditionally insert
+# `-o` between terms rather than appending then unsetting the trailing
+# element — the latter is fragile if `all_manifests` is ever empty.
 name_args=()
 for m in "${all_manifests[@]}"; do
-    name_args+=(-name "$m" -o)
+    [[ ${#name_args[@]} -gt 0 ]] && name_args+=(-o)
+    name_args+=(-name "$m")
 done
-unset 'name_args[${#name_args[@]}-1]'
 
 # Run find inside the repo root so paths are clean relative.
 found_files="$(
