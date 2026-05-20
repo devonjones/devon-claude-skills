@@ -357,11 +357,14 @@ The review loop should **not** override branch protections or bypass repo-define
 1. **Discover and merge agents.** Run `scripts/discover-agents.sh <PR>` once. Its output includes:
    - The full merged agent list (defaults + user agents per C+E semantics)
    - The `configuration` block with `stale_pin`, `defaults_version_checked`, `current_plugin_version`, counts
-2. **Check the stale pin.** If `configuration.stale_pin` is `true` AND `--skip-stale-check` was not passed:
+   - The `language_detection` block (`null` when the repo already has any `AGENT-REVIEWERS.md`; otherwise `{matched: [...], same_directory_polyglot: bool}`)
+2. **Offer language templates** (only when `language_detection != null` AND `language_detection.matched` is non-empty). See "Language Template Offer" below for the prompt shape, the `install-template.sh` invocation, and the same-directory-polyglot fallback. If the user accepts, the install runs before round 1 and the loop continues with the newly-installed agents discoverable in subsequent steps. If the user declines, record the decline for the rest of this loop invocation so the offer doesn't re-fire — then continue to step 3 with only the 6 baked-in defaults.
+3. **Check the stale pin.** If `configuration.stale_pin` is `true` AND `--skip-stale-check` was not passed:
    - Emit the stale-pin message (see "Stale Pin Detection" above) with current and pinned versions
    - **Exit non-zero.** Do NOT proceed to round 1.
-3. **Emit the spawning summary.** Once cleared to proceed, log a one-line summary of which agents will run (see "Spawning Summary" above).
-4. **Track --skip-stale-check usage.** If the bypass flag was used, remember to include the bypass note in the final merge-readiness summary.
+   - Note: when step 2 just installed a template, `install-template.sh` pinned `defaults_version_checked` to the current plugin version, so the stale-pin check passes by construction.
+4. **Emit the spawning summary.** Once cleared to proceed, log a one-line summary of which agents will run (see "Spawning Summary" above).
+5. **Track --skip-stale-check usage.** If the bypass flag was used, remember to include the bypass note in the final merge-readiness summary.
 
 After setup, proceed to The Loop.
 
@@ -767,6 +770,100 @@ Fields:
 - **`overlap_acknowledged`** — map from a user agent name to `{ overlaps_with, reason }`. Both agents continue to spawn; this entry documents intentional duplication so the audit tool doesn't recommend renaming. **`reason` is REQUIRED** — the parser rejects entries without it, so future readers see why both agents are intentionally running.
 - **`independent_validator`** — controls the per-finding validation step (see "Independent Validator Pipeline" below). All three nested fields are optional; defaults are `enabled: true`, `skip_for: []`, `uncertain_action: "post_with_annotation"`.
 
+### Language Template Offer
+
+When the repo has no `AGENT-REVIEWERS.md` anywhere (root or in any subdirectory walked from changed files), `discover-agents.sh` calls `detect-language.sh` and surfaces a `language_detection` block in its output. Pre-loop step 2 reads that block and, when non-empty, offers to install language-specific reviewer templates before the loop runs.
+
+The plugin ships templates under `plugins/pr-review-loop/agent-reviewer-templates/`. Initial set: `golang.md`, `python.md`. Templates are opinionated bundles — each disables the baked-in defaults it explicitly subsumes (e.g., `silent-failure-hunter` is disabled by both packs because they ship richer `error-handling-reviewer` agents) and acknowledges legitimate overlaps with `pr-test-analyzer`.
+
+#### When the offer fires
+
+Only when ALL of these hold:
+- `language_detection != null` (no AGENT-REVIEWERS.md exists at root OR via walk-up from changed files)
+- `language_detection.matched` is non-empty (at least one manifest detected)
+- The user has not declined the offer earlier in this loop invocation
+
+If any condition fails, skip the offer silently and continue to step 3 (stale-pin check).
+
+#### Prompt shapes
+
+**Single match (one language, one subtree):**
+
+```
+No AGENT-REVIEWERS.md found. Detected: golang in `/` (matched: go.mod).
+
+Available template: golang.md — adds 8 reviewers (test-coverage,
+error-handling, complexity, concurrency, resource-leak, external-process,
+dead-code, clarity) and disables silent-failure-hunter / comment-analyzer
+/ code-simplifier (subsumed by the language pack's richer agents).
+
+Install? [y/N]
+```
+
+**Per-subtree polyglot (`same_directory_polyglot == false`):**
+
+```
+No AGENT-REVIEWERS.md found. Detected:
+  - golang in `/backend` (matched: go.mod)
+  - python in `/frontend` (matched: pyproject.toml)
+
+Available templates:
+  [1] golang.md → /backend/AGENT-REVIEWERS.md
+  [2] python.md → /frontend/AGENT-REVIEWERS.md
+
+Each template installs in its detected subtree. A merged # Configuration
+will be written to the root AGENT-REVIEWERS.md.
+
+Install all? [y/N/select]
+```
+
+**Same-directory polyglot (`same_directory_polyglot == true`):**
+
+```
+No AGENT-REVIEWERS.md found. Detected MULTIPLE languages in the same directory:
+  - golang in `/` (matched: go.mod)
+  - python in `/` (matched: pyproject.toml)
+
+The language packs share agent names (test-coverage-reviewer, etc.) and
+cannot both install at the same subtree. Pick ONE to install at the
+detected location, or skip and set up subtree boundaries manually.
+
+Pick one to install: [1=golang, 2=python, N=skip]
+```
+
+#### Invocation
+
+On user accept, run `install-template.sh` with the chosen pairs:
+
+```bash
+# Single match
+scripts/install-template.sh golang:.
+
+# Per-subtree polyglot — install all
+scripts/install-template.sh golang:backend python:frontend
+
+# Same-directory polyglot — user picked golang
+scripts/install-template.sh golang:.
+```
+
+The script is transactional — it validates ALL target paths before writing anything and refuses if any `AGENT-REVIEWERS.md` already exists. Successful install bumps `defaults_version_checked` to the current plugin version, so the subsequent stale-pin check (step 3) passes by construction.
+
+#### After install: offer plan mode
+
+Once `install-template.sh` succeeds, offer a second prompt for repo-tailored reviewer recommendations:
+
+```
+Template installed. Want recommendations for repo-specific reviewers
+based on the codebase (e.g., migration-safety-reviewer for DB-heavy
+repos, prompt-injection-reviewer for LLM-heavy repos)? [y/N]
+```
+
+On accept, enter Claude Code's plan mode and follow the "Project-Specific Reviewer Recommendations" section below (tranche d). On decline, proceed to step 3 with just the template install in place.
+
+#### When the user declines the install offer
+
+Don't re-prompt within the same loop invocation. Track the decline in TodoWrite (or equivalent ephemeral state) so a fresh loop invocation re-fires the offer if conditions still hold (i.e., the user can change their mind on the next PR). Continue to step 3 with only the 6 baked-in defaults.
+
 ### Stale Pin Detection (at loop start)
 
 Before round 1, the loop checks `defaults_version_checked` against the installed plugin version. The check is deterministic — a pure version-string compare, no LLM inference.
@@ -1141,7 +1238,9 @@ When detected, the script suggests:
 | `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post line comment with agent signature |
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |
 | `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |
-| `discover-agents.sh <PR>` | Discover + merge agent reviewers (defaults + user agents per C+E); emits `configuration` block with `stale_pin` |
+| `discover-agents.sh <PR>` | Discover + merge agent reviewers (defaults + user agents per C+E); emits `configuration` block with `stale_pin` and (when no AGENT-REVIEWERS.md exists) the `language_detection` block driving the Language Template Offer |
+| `detect-language.sh [--repo-root <path>]` | Scan repo for language manifests (go.mod, pyproject.toml, etc.); emits `[{language, subtree, manifest}, ...]`. Deterministic; called by discover-agents.sh |
+| `install-template.sh [--repo-root <path>] <lang>:<subtree> [...]` | Install language template(s) at the given subtrees + merged # Configuration at root. Transactional; refuses existing AGENT-REVIEWERS.md. Bumps `defaults_version_checked` to current plugin version |
 | `_load_defaults.sh` | Internal helper: load native default subagents from `plugins/pr-review-loop/agents/` |
 | `_parse_configuration.sh <AGENT-REVIEWERS.md>` | Internal helper: parse the `# Configuration` JSON block; validates required `reason` in `overlap_acknowledged` |
 
@@ -1158,6 +1257,7 @@ Bash(scripts/get-agent-comments.sh:*)
 Bash(scripts/reopen-comment.sh:*)
 Bash(scripts/discover-agents.sh:*)
 Bash(scripts/get-pr-comments.sh:*)
+Bash(scripts/install-template.sh:*)
 ```
 
 ## Prerequisites
