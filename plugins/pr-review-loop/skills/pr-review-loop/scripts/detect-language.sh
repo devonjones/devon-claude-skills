@@ -86,6 +86,15 @@ for m in "${all_manifests[@]}"; do
     name_args+=(-name "$m")
 done
 
+# Defensive guard: an empty name_args would make `find ... \( \)` a
+# syntax error. Today all_manifests is hardcoded non-empty, but if
+# the manifest list ever becomes config-driven, this guard prevents
+# a confusing crash.
+if [[ ${#name_args[@]} -eq 0 ]]; then
+    echo "[]"
+    exit 0
+fi
+
 # Run find inside the repo root so paths are clean relative.
 found_files="$(
     cd "$REPO_ROOT"
