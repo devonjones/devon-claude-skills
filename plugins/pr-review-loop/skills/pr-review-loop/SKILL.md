@@ -78,9 +78,31 @@ Streamline the push-review-fix cycle for PRs with automated reviewers.
 |-----|---------|-----------------|
 | **Gemini Code Assist** | `/gemini review` comment | `![critical]`, `![high]`, `![medium]`, `![low]` |
 | **Cursor Bugbot** | Auto on push | `<!-- **High Severity** -->`, `### Bug:` |
-| **Claude** | Manual via script | `**Critical**`, `### Critical Issues` |
+| **Claude** | Manual via script | `🚨`, `**Critical**`, `### Critical Issues`, `⚠️` |
 
 Priority detection automatically parses all formats when summarizing and fetching comments.
+
+### Priority to Exit-Condition Mapping
+
+The quality-weighted exit condition (see ONE MORE LOOP Rule) depends on classifying findings as P1/P2 vs P3/nitpick. Use this table:
+
+| Source label | P-level | Blocks quality-weighted exit? |
+|---|---|---|
+| Gemini `![critical]`, `![high]` | P1/P2 | Yes — must be resolved or merged with explicit user sign-off |
+| Gemini `![medium]` | P2 if correctness/security/breaking; else P3 | Yes if correctness/security/breaking; no if style/prose |
+| Gemini `![low]` | P3/nitpick | No |
+| Cursor `**High Severity**`, `### Bug:` | P1/P2 | Yes |
+| Claude `🚨`, `### Critical Issues`, `**Critical**` | P1/P2 | Yes |
+| Claude `⚠️` | P2 if correctness/security/breaking; else P3 | Yes if correctness/security/breaking; no if style/prose |
+| Agent comment, no explicit label | Infer from content: correctness/security/breaking → P1/P2; else P3 | Per inferred level |
+
+**"Won't fix" on a P1/P2 finding does NOT resolve it** — it still blocks quality-weighted exit unless the finding is misclassified (drop it one P-level with explicit justification in the reply).
+
+**Classifying `![medium]` (Gemini's most-used label) — use these heuristics:**
+
+- P2 (blocking): the comment describes a correctness bug, security concern, breaking change, data loss risk, or incorrect error handling. Example: *"this will return nil for empty input"*, *"missing null check could crash on production data"*, *"env var not validated before use"*.
+- P3 (non-blocking): the comment describes naming, phrasing, formatting, alternative implementations of equivalent behavior, documentation polish, or preference-level style. Example: *"variable name is ambiguous"*, *"consider using map over for-loop"*, *"comment could be clearer"*.
+- When ambiguous: default to P2 on the first round; downgrade to P3 only if the fix is a judgment call, not a correctness improvement.
 
 ## Comment Formats: Line Comments vs PR Comments
 
@@ -235,21 +257,46 @@ After each round, evaluate:
 
 ### When to Stop
 
-- Two consecutive rounds with mostly "Won't fix" or nitpick-only feedback
+- Two consecutive rounds with zero actionable (P1/P2) fixes — i.e., only nitpicks, only "Won't fix" responses, or zero-comment rounds
 - A self-contradiction is detected (pause for user input)
 - The fix/rejection ratio drops below ~25% (most comments are not actionable)
 - All remaining comments are stylistic or theoretical
-- Hard ceiling: 7 total rounds, or 5 consecutive nitpick-only rounds — stop regardless of other signals
+- The Hard Round Ceiling has fired (see below) — stop regardless of other signals
+
+### Hard Round Ceiling (Circuit Breaker)
+
+**If you reach 7 total rounds, STOP the loop regardless of state.** This is a pure circuit breaker — the quality-weighted exit condition (see ONE MORE LOOP Rule) handles normal termination earlier; this fires only when the loop is stuck. Report to the user:
+
+- Rounds completed and elapsed time
+- Total comments received, by priority (P1/P2/P3 — see Priority to Exit-Condition Mapping) and source (Gemini, other bots, each agent)
+- Outstanding unresolved items (if any)
+- A recommendation on whether to continue, declare "good enough," or escalate
+
+Then ask the user before proceeding further.
 
 ### ONE MORE LOOP Rule
 
 When a full round (Gemini + other bots + agent reviewers) produces no actionable feedback, do ONE additional "final verification" round to catch any last feedback from the final push.
 
+**Actionable feedback** = a **P1 or P2** finding (per the Priority to Exit-Condition Mapping) that is addressed with a code change. "Won't fix" responses, nitpick (P3) fixes, and zero-comment rounds are NOT actionable for loop-control purposes — they all count toward exit condition (b) below.
+
+**Unifying with stopping heuristics**: The "Two consecutive rounds with zero actionable (P1/P2) fixes" stopping heuristic and ONE MORE LOOP describe the same exit mechanism from two angles:
+- The **first** qualifying round (zero actionable fixes — i.e., only nitpicks, only "Won't fix", or zero comments) IS the ONE MORE LOOP trigger.
+- The **second** qualifying round IS the final verification — if the full Exit condition (quality-weighted) below is satisfied (all of (a) through (d)), you exit immediately at end of that round. No third round needed.
+
 **Tracking state**: Use TodoWrite to track whether you're in the "final verification round". Create a todo like "Final verification round - if no actionable feedback, ready to merge".
 
-**Reset condition**: If the final verification round produces feedback you actually fix (not just "Won't fix"), remove the "final verification round" todo — you need a fresh "one more" after pushing those fixes.
+**Reset condition**: If the final verification round produces **P1 or P2 fixes** (correctness, security, breaking changes — see Priority to Exit-Condition Mapping), remove the "final verification round" todo — you need a fresh "one more" after pushing those fixes. Nitpick-level (P3) fixes do NOT reset the counter.
 
-**Exit condition**: If the "final verification round" todo exists AND the round produces no actionable feedback (only nitpicks/won't-fix responses), you're done — proceed to merge readiness checks.
+**Exit condition (quality-weighted)**: You're done when ALL of:
+- (a) **No P1/P2 findings** (correctness, security, breaking changes) in the last round
+- (b) **The last two rounds had zero actionable (P1/P2) fixes** — i.e., they contained only nitpicks, were zero-comment rounds, or all feedback was "Won't fix"
+- (c) **No contradictions across rounds**
+- (d) **No unresolved P1/P2 Won't-fix findings carried forward from any prior round** — every Won't-fix on a P1/P2 must have been either (i) reclassified to P3 with explicit justification per the Priority Mapping rule, or (ii) actually fixed in a later round. Carried-forward Won't-fix on a real P1/P2 blocks exit regardless of (a) and (b).
+
+— **OR** the Hard Round Ceiling has fired (see above).
+
+Proceed to merge readiness checks.
 
 ## Merge Readiness
 
@@ -357,7 +404,8 @@ EACH ROUND — three phases, in order:
                               │
                               ▼
   If F6 returned new comments → next COLLECT PHASE (new round).
-  Otherwise → apply ONE MORE LOOP Rule (see Stopping Heuristics).
+  Otherwise → apply quality-weighted exit condition + Hard Round
+  Ceiling check (see ONE MORE LOOP Rule in Stopping Heuristics).
 ```
 
 **Phase order is mandatory.** Complete all COLLECT steps (C1, C2, C3) before beginning any FIX step (F1–F7). The BATCH POINT between them is what makes Pattern Analysis (`Sweep Before Fixing`) work.
@@ -469,7 +517,7 @@ scripts/trigger-review.sh <PR> --wait
 ```
 The `--wait` flag polls every 30s for up to 5 minutes waiting for new comments. Do NOT use sleep or manual polling.
 
-**F7. Inspect F6's output BEFORE applying exit conditions.** If F6 returned new comments, start the next COLLECT PHASE. Otherwise apply the ONE MORE LOOP Rule (see Stopping Heuristics).
+**F7. Inspect F6's output BEFORE applying exit conditions.** If F6 returned new comments, start the next COLLECT PHASE. Otherwise apply the quality-weighted exit condition and Hard Round Ceiling check (see ONE MORE LOOP Rule in Stopping Heuristics).
 
 ## CI Failure Handling
 
