@@ -633,6 +633,81 @@ assert_stderr_contains "warning names the typo" "$t22_err" "enabld"
 rm -rf "$repo"
 
 # ---------------------------------------------------------------------------
+# Test 23–26: language_detection block (98b tranche b)
+# ---------------------------------------------------------------------------
+
+echo
+echo "=== Test 23: no AGENT-REVIEWERS.md + no manifests → language_detection.matched is empty ==="
+repo="$(make_temp_repo)"
+run_discover "$repo" "src/foo.py" t23
+assert_exit "exit 0" "$t23_exit" "0"
+assert_jq "language_detection is object" "$t23" '.language_detection | type == "object"'
+assert_jq "matched is empty array" "$t23" '.language_detection.matched == []'
+assert_jq "same_directory_polyglot false" "$t23" '.language_detection.same_directory_polyglot == false'
+rm -rf "$repo"
+
+echo
+echo "=== Test 24: no AGENT-REVIEWERS.md + go.mod at root → detects golang ==="
+repo="$(make_temp_repo)"
+touch "$repo/go.mod"
+run_discover "$repo" "main.go" t24
+assert_jq "one match" "$t24" '.language_detection.matched | length == 1'
+assert_jq "golang detected at root" "$t24" '.language_detection.matched[0] | (.language == "golang" and .subtree == "." and .template == "golang.md")'
+rm -rf "$repo"
+
+echo
+echo "=== Test 25: per-subtree polyglot (go in backend, python in frontend) ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/backend" "$repo/frontend"
+touch "$repo/backend/go.mod" "$repo/frontend/pyproject.toml"
+run_discover "$repo" "backend/main.go" t25
+assert_jq "two matches" "$t25" '.language_detection.matched | length == 2'
+assert_jq "templates include both" "$t25" '[.language_detection.matched[].template] | sort == ["golang.md","python.md"]'
+assert_jq "same_directory_polyglot false" "$t25" '.language_detection.same_directory_polyglot == false'
+rm -rf "$repo"
+
+echo
+echo "=== Test 26: same-directory polyglot (go.mod + pyproject.toml at same dir) ==="
+repo="$(make_temp_repo)"
+touch "$repo/go.mod" "$repo/pyproject.toml"
+run_discover "$repo" "main.go" t26
+assert_jq "two matches" "$t26" '.language_detection.matched | length == 2'
+assert_jq "both at root" "$t26" 'all(.language_detection.matched[]; .subtree == ".")'
+assert_jq "same_directory_polyglot true" "$t26" '.language_detection.same_directory_polyglot == true'
+rm -rf "$repo"
+
+echo
+echo "=== Test 27: AGENT-REVIEWERS.md exists → language_detection is null (suppressed) ==="
+repo="$(make_temp_repo)"
+touch "$repo/go.mod"   # manifest present
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Agents
+
+## my-reviewer
+
+Custom reviewer.
+EOF
+run_discover "$repo" "main.go" t27
+assert_jq "language_detection is null" "$t27" '.language_detection == null'
+rm -rf "$repo"
+
+echo
+echo "=== Test 28: AGENT-REVIEWERS.md in subdir (no root file) → language_detection still suppressed ==="
+repo="$(make_temp_repo)"
+touch "$repo/go.mod"
+mkdir -p "$repo/sub"
+cat > "$repo/sub/AGENT-REVIEWERS.md" <<'EOF'
+# Agents
+
+## sub-reviewer
+
+A scoped reviewer.
+EOF
+run_discover "$repo" "sub/file.go" t28
+assert_jq "language_detection is null (subdir AGENT-REVIEWERS.md found via walk-up)" "$t28" '.language_detection == null'
+rm -rf "$repo"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo
