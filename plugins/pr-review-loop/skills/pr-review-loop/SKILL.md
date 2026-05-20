@@ -93,7 +93,7 @@ The quality-weighted exit condition (see ONE MORE LOOP Rule) depends on classify
 | Gemini `![low]` | P3/nitpick | No |
 | Cursor `**High Severity**`, `### Bug:` | P1/P2 | Yes |
 | Claude `🚨`, `### Critical Issues`, `**Critical**` | P1/P2 | Yes |
-| Claude `⚠️` | P2 if correctness/security/breaking; else P3 | Yes if correctness/security/breaking |
+| Claude `⚠️` | P2 if correctness/security/breaking; else P3 | Yes if correctness/security/breaking; no if style/prose |
 | Agent comment, no explicit label | Infer from content: correctness/security/breaking → P1/P2; else P3 | Per inferred level |
 
 **"Won't fix" on a P1/P2 finding does NOT resolve it** — it still blocks quality-weighted exit unless the finding is misclassified (drop it one P-level with explicit justification in the reply).
@@ -265,7 +265,7 @@ After each round, evaluate:
 
 ### Hard Round Ceiling (Circuit Breaker)
 
-**If you reach 7 rounds OR 5 rounds where every round was nitpick-only, STOP the loop regardless of state.** Report to the user:
+**If you reach 7 total rounds OR 5 *consecutive* nitpick-only rounds, STOP the loop regardless of state.** Report to the user:
 
 - Rounds completed and elapsed time
 - Total comments received, by priority (P1/P2/P3 — see Priority to Exit-Condition Mapping) and source (Gemini, other bots, each agent)
@@ -278,7 +278,7 @@ Then ask the user before proceeding further.
 
 When a full round (Gemini + other bots + agent reviewers) produces no actionable feedback, do ONE additional "final verification" round to catch any last feedback from the final push.
 
-**Actionable feedback** means feedback you actually fix — not "Won't fix" responses, not nitpicks, not zero-comment rounds.
+**Actionable feedback** = a **P1 or P2** finding (per the Priority to Exit-Condition Mapping) that is addressed with a code change. "Won't fix" responses, nitpick (P3) fixes, and zero-comment rounds are NOT actionable for loop-control purposes — they all count toward exit condition (b) below.
 
 **Unifying with stopping heuristics**: A "Won't fix" or nitpick-only round satisfies the ONE MORE LOOP trigger. When the "Two consecutive rounds with mostly Won't fix OR nitpick-only feedback" stopping heuristic fires, the second qualifying round IS the trigger: begin the final verification round immediately.
 
@@ -288,7 +288,7 @@ When a full round (Gemini + other bots + agent reviewers) produces no actionable
 
 **Exit condition (quality-weighted)**: You're done when ALL of:
 - (a) **No P1/P2 findings** (correctness, security, breaking changes) in the last round
-- (b) **The last two rounds had only nitpick-level findings OR zero actionable fixes** (zero-comment rounds — e.g., Gemini timeout plus all agents returning "no issues")
+- (b) **The last two rounds had zero actionable (P1/P2) fixes** — i.e., they contained only nitpicks, were zero-comment rounds, or all feedback was "Won't fix"
 - (c) **No contradictions across rounds**
 
 — **OR** the Hard Round Ceiling has fired (see above).
