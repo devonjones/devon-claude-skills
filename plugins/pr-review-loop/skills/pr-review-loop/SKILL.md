@@ -864,6 +864,144 @@ On accept, enter Claude Code's plan mode and follow the "Project-Specific Review
 
 Don't re-prompt within the same loop invocation. Track the decline in TodoWrite (or equivalent ephemeral state) so a fresh loop invocation re-fires the offer if conditions still hold (i.e., the user can change their mind on the next PR). Continue to step 3 with only the 6 baked-in defaults.
 
+### Project-Specific Reviewer Recommendations
+
+After `install-template.sh` succeeds and the user accepts the post-install "want recommendations?" prompt, the loop spawns a focused scan of the repo and proposes 3-7 additional reviewers tailored to what it finds (e.g., `migration-safety-reviewer` for a repo with a `/db/migrations/` tree, `prompt-injection-reviewer` for a repo with LLM API calls in the diff).
+
+This step is OPT-IN — skip it entirely if the user declined.
+
+#### Design rationale: AskUserQuestion, not plan mode
+
+The original sketch for this flow used Claude Code's plan mode. **It doesn't work.** Verified: `EnterPlanMode` exists but `ExitPlanMode` returns no structured data — there's no programmatic way for a skill to read back which items the user approved, rejected, or modified. The right primitive is `AskUserQuestion` with `multiSelect: true`, which returns the user's picks structured.
+
+Trade-off: no "modify a proposal before accepting" UX. The user accepts or rejects each proposal as written. If they want to tweak wording, they accept and edit the resulting AGENT-REVIEWERS.md by hand.
+
+#### Repo scan: orchestrator picks per-repo
+
+The scan that informs proposals is **the orchestrator's call** — there's no fixed list of files to read. Use these guidelines to set scan depth:
+
+| Always read (cheap, high-signal) | Optional (depth-dependent) |
+|----------------------------------|----------------------------|
+| `README.md` at root              | `.beads/issues.jsonl` recent open issues |
+| `CLAUDE.md` at root              | Top 20 commit messages (`git log --oneline -20`) |
+| Top-level dependency manifests (names, not lockfiles) | Sampled source files |
+
+**Scan budget**: keep the total read at ≤10k tokens of repo content. Stop scanning when you have enough signal to propose 3-7 reviewers — more scanning past that point produces overlapping proposals without adding signal.
+
+**Source-file sampling**: for repos with <100 source files total, sample 5-10. For larger repos, cap at ~20. Bias toward larger / older files (more likely to encode patterns the team cares about). Skip generated code, tests, and vendored dependencies.
+
+**Don't read the full PR diff** — the PR is just one slice of the repo; proposals should serve the repo broadly, not be PR-specific.
+
+#### Proposal generation: spawn as a Task
+
+Use the Task tool with a focused prompt rather than inlining the scan in the main loop conversation. Keeps main-context tokens low and lets the scan be the only thing the agent thinks about.
+
+```yaml
+Task tool:
+  subagent_type: general-purpose
+  description: Propose repo-specific reviewers for <repo-name>
+  prompt: |
+    The user just installed language-specific code-reviewer templates
+    in this repo via the pr-review-loop skill. They want recommendations
+    for ADDITIONAL repo-specific reviewers that the language packs can't
+    anticipate — things tied to this repo's domain, architecture, or
+    historical pain points.
+
+    ## Already installed (do NOT re-propose these)
+
+    Baked-in defaults: code-reviewer, silent-failure-hunter,
+    pr-test-analyzer, comment-analyzer, type-design-analyzer,
+    code-simplifier.
+
+    Language pack(s) just installed: <pass the list from
+    install-template.sh output, e.g., "golang.md (at /backend)">
+
+    ## What to scan
+
+    Use the scan-budget guidelines from SKILL.md "Repo scan" section.
+    You have ~10k tokens of repo content to read; pick wisely. Always
+    read README.md, CLAUDE.md, and top-level manifests. Sample source
+    files. Skim recent commits and .beads/ if present.
+
+    ## Output
+
+    Return 3-7 proposed reviewers as a JSON array, no other text:
+
+    ```json
+    [
+      {
+        "name": "migration-safety-reviewer",
+        "focus": "One-line description of what this reviewer flags",
+        "scope": "/db/" | "/" | "/backend/" | ...,
+        "rationale": "Why this repo needs it — cite a file or pattern you saw"
+      },
+      ...
+    ]
+    ```
+
+    Scope rules:
+    - "/" means root (applies to all changed files)
+    - "/path/" means only files under that directory
+
+    Don't propose reviewers that overlap with the already-installed
+    ones. Don't propose generic best-practice reviewers ("be careful
+    with secrets") — those add noise. Each proposal should cite a
+    specific repo signal you saw during the scan.
+
+    If you can't find 3 distinct repo-specific patterns worth proposing,
+    return fewer (or even an empty array). Quality over count.
+```
+
+#### Presenting proposals via AskUserQuestion
+
+Parse the proposal JSON. Show proposals in batches of ≤4 via `AskUserQuestion` with `multiSelect: true`. Use a `(1 of N)` indicator in the question header when batching:
+
+```
+Question: "Which proposed reviewers should the loop install? (1 of 2)"
+Header: "Reviewers 1/2"
+multiSelect: true
+Options:
+  - "migration-safety-reviewer" — Flag schema changes without rollback paths in /db/migrations/
+  - "prompt-injection-reviewer" — Flag unbounded string interpolation into LLM API calls
+  - "auth-bypass-reviewer" — Flag controller actions missing the require_auth callback
+  - "race-condition-reviewer" — Flag shared-state writes outside the actor model in /workers/
+```
+
+After the first batch's answers, automatically follow up with batch 2 (no gate question) until all proposals have been presented. Zero picks across all batches is a valid outcome — just don't write anything.
+
+#### Writing accepted proposals
+
+Each accepted proposal has an explicit `scope`. Use it to route the write:
+
+- **Scope `/`** (root-wide): append to root `AGENT-REVIEWERS.md`. If the root file has no `# Agents` section yet (templates went to subtrees), add one before the first proposal lands.
+- **Scope `/path/`** (subtree): append to `<path>/AGENT-REVIEWERS.md`. If that file doesn't exist (no template was installed at that subtree), create it with just `# Agents` — the root file owns `# Configuration` per the install-template convention.
+
+For each proposal, generate the H2 block:
+
+```markdown
+## <proposal.name>
+
+<proposal.focus>
+
+<!-- Proposed during install-template setup; rationale: <proposal.rationale> -->
+```
+
+Append as a new `## ` block under `# Agents` in the target file. Preserve any existing agents. The rationale comment is informational — future audit-agents runs (q2h) can use it to explain why a reviewer is present.
+
+#### After writing
+
+Emit a one-line summary to the spawning summary surface:
+
+```
+Installed 3 project-specific reviewer(s): migration-safety-reviewer (/db/), prompt-injection-reviewer (/), auth-bypass-reviewer (/).
+```
+
+No re-run of `discover-agents.sh` needed — the loop is about to proceed to round 1, and it picks up the new files on its next walk.
+
+#### When the user declines the recommendations prompt
+
+Just continue to step 3 (stale-pin check). The template install stays in place; no further writes happen. Track the decline in TodoWrite so the prompt doesn't re-fire if the loop happens to revisit this code path within the same invocation.
+
 ### Stale Pin Detection (at loop start)
 
 Before round 1, the loop checks `defaults_version_checked` against the installed plugin version. The check is deterministic — a pure version-string compare, no LLM inference.
