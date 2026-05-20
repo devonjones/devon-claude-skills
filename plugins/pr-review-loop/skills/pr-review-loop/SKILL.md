@@ -358,7 +358,7 @@ The review loop should **not** override branch protections or bypass repo-define
    - The full merged agent list (defaults + user agents per C+E semantics)
    - The `configuration` block with `stale_pin`, `defaults_version_checked`, `current_plugin_version`, counts
    - The `language_detection` block (`null` when the repo already has any `AGENT-REVIEWERS.md`; otherwise `{matched: [...], same_directory_polyglot: bool}`)
-2. **Offer language templates** (only when `language_detection != null` AND `language_detection.matched` is non-empty). See "Language Template Offer" below for the prompt shape, the `install-template.sh` invocation, and the same-directory-polyglot fallback. If the user accepts, the install runs before round 1 and the loop continues with the newly-installed agents discoverable in subsequent steps. If the user declines, record the decline for the rest of this loop invocation so the offer doesn't re-fire — then continue to step 3 with only the 6 baked-in defaults.
+2. **Offer language templates** (only when `language_detection != null` AND `language_detection.matched` is non-empty). See "Language Template Offer" below for the full flow.
 3. **Check the stale pin.** If `configuration.stale_pin` is `true` AND `--skip-stale-check` was not passed:
    - Emit the stale-pin message (see "Stale Pin Detection" above) with current and pinned versions
    - **Exit non-zero.** Do NOT proceed to round 1.
@@ -772,9 +772,7 @@ Fields:
 
 ### Language Template Offer
 
-When the repo has no `AGENT-REVIEWERS.md` anywhere (root or in any subdirectory walked from changed files), `discover-agents.sh` calls `detect-language.sh` and surfaces a `language_detection` block in its output. Pre-loop step 2 reads that block and, when non-empty, offers to install language-specific reviewer templates before the loop runs.
-
-The plugin ships templates under `plugins/pr-review-loop/agent-reviewer-templates/`. Initial set: `golang.md`, `python.md`. Templates are opinionated bundles — each disables the baked-in defaults it explicitly subsumes (e.g., `silent-failure-hunter` is disabled by both packs because they ship richer `error-handling-reviewer` agents) and acknowledges legitimate overlaps with `pr-test-analyzer`.
+When pre-loop step 2 sees a non-empty `language_detection` block from `discover-agents.sh`, the loop offers to install language-specific reviewer templates before round 1. Templates live under `plugins/pr-review-loop/agent-reviewer-templates/` (initial set: `golang.md`, `python.md`). Each is an opinionated bundle that disables the baked-in defaults it explicitly subsumes (e.g., both packs ship a richer `error-handling-reviewer` and disable `silent-failure-hunter`) and acknowledges legitimate overlaps with `pr-test-analyzer`.
 
 #### When the offer fires
 
@@ -782,8 +780,6 @@ Only when ALL of these hold:
 - `language_detection != null` (no AGENT-REVIEWERS.md exists at root OR via walk-up from changed files)
 - `language_detection.matched` is non-empty (at least one manifest detected)
 - The user has not declined the offer earlier in this loop invocation
-
-If any condition fails, skip the offer silently and continue to step 3 (stale-pin check).
 
 #### Prompt shapes
 
@@ -848,7 +844,7 @@ scripts/install-template.sh golang:.
 
 The script is transactional — it validates ALL target paths before writing anything and refuses if any `AGENT-REVIEWERS.md` already exists. Successful install bumps `defaults_version_checked` to the current plugin version, so the subsequent stale-pin check (step 3) passes by construction.
 
-#### After install: offer plan mode
+#### After install: offer repo-tailored recommendations
 
 Once `install-template.sh` succeeds, offer a second prompt for repo-tailored reviewer recommendations:
 
@@ -858,17 +854,15 @@ based on the codebase (e.g., migration-safety-reviewer for DB-heavy
 repos, prompt-injection-reviewer for LLM-heavy repos)? [y/N]
 ```
 
-On accept, enter Claude Code's plan mode and follow the "Project-Specific Reviewer Recommendations" section below (tranche d). On decline, proceed to step 3 with just the template install in place.
+On accept, follow the "Project-Specific Reviewer Recommendations" section below — the proposals are presented via `AskUserQuestion` (multi-select), not plan mode. On decline, proceed to step 3 with just the template install in place.
 
 #### When the user declines the install offer
 
-Don't re-prompt within the same loop invocation. Track the decline in TodoWrite (or equivalent ephemeral state) so a fresh loop invocation re-fires the offer if conditions still hold (i.e., the user can change their mind on the next PR). Continue to step 3 with only the 6 baked-in defaults.
+Don't re-prompt within the same loop invocation. Track the decline in TodoWrite (or equivalent ephemeral state) so a fresh loop invocation re-fires the offer if conditions still hold. Continue to step 3 with only the 6 baked-in defaults.
 
 ### Project-Specific Reviewer Recommendations
 
 After `install-template.sh` succeeds and the user accepts the post-install "want recommendations?" prompt, the loop spawns a focused scan of the repo and proposes 3-7 additional reviewers tailored to what it finds (e.g., `migration-safety-reviewer` for a repo with a `/db/migrations/` tree, `prompt-injection-reviewer` for a repo with LLM API calls in the diff).
-
-This step is OPT-IN — skip it entirely if the user declined.
 
 #### Design rationale: AskUserQuestion, not plan mode
 
@@ -886,7 +880,7 @@ The scan that informs proposals is **the orchestrator's call** — there's no fi
 | `CLAUDE.md` at root              | Top 20 commit messages (`git log --oneline -20`) |
 | Top-level dependency manifests (names, not lockfiles) | Sampled source files |
 
-**Scan budget**: keep the total read at ≤10k tokens of repo content. Stop scanning when you have enough signal to propose 3-7 reviewers — more scanning past that point produces overlapping proposals without adding signal.
+**Scan budget**: keep the total read at ≤10k tokens of repo content. Stop scanning once you have enough signal to propose 3-7 reviewers.
 
 **Source-file sampling**: for repos with <100 source files total, sample 5-10. For larger repos, cap at ~20. Bias toward larger / older files (more likely to encode patterns the team cares about). Skip generated code, tests, and vendored dependencies.
 
@@ -894,7 +888,7 @@ The scan that informs proposals is **the orchestrator's call** — there's no fi
 
 #### Proposal generation: spawn as a Task
 
-Use the Task tool with a focused prompt rather than inlining the scan in the main loop conversation. Keeps main-context tokens low and lets the scan be the only thing the agent thinks about.
+Use the Task tool with a focused prompt rather than inlining the scan in the main loop conversation. Keeps main-context tokens low.
 
 ```yaml
 Task tool:
@@ -986,7 +980,7 @@ For each proposal, generate the H2 block:
 <!-- Proposed during install-template setup; rationale: <proposal.rationale> -->
 ```
 
-Append as a new `## ` block under `# Agents` in the target file. Preserve any existing agents. The rationale comment is informational — future audit-agents runs (q2h) can use it to explain why a reviewer is present.
+Append as a new `## ` block under `# Agents` in the target file. Preserve any existing agents. The rationale comment supports future audit-agents (q2h) recommendations.
 
 #### After writing
 
@@ -996,7 +990,7 @@ Emit a one-line summary to the spawning summary surface:
 Installed 3 project-specific reviewer(s): migration-safety-reviewer (/db/), prompt-injection-reviewer (/), auth-bypass-reviewer (/).
 ```
 
-No re-run of `discover-agents.sh` needed — the loop is about to proceed to round 1, and it picks up the new files on its next walk.
+No re-run of `discover-agents.sh` needed — round 1 picks up the new files naturally.
 
 #### When the user declines the recommendations prompt
 
