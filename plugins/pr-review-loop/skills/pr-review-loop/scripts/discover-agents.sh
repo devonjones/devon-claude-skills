@@ -255,8 +255,11 @@ if [[ ${#AGENT_FILES[@]} -eq 0 ]] && [[ ! -f "$ROOT_AGENT_REVIEWERS" ]]; then
         # but if it does, fall back to null rather than crashing the loop.
         if RAW_DETECT=$("$SCRIPT_DIR/detect-language.sh" --repo-root "$REPO_ROOT" 2>/dev/null); then
             # Transform: add template field per entry; compute same_directory_polyglot flag.
-            LANGUAGE_DETECTION_JSON=$(jq -n --argjson matches "$RAW_DETECT" '
-                {
+            # Pass JSON via env to avoid MAX_ARG_STRLEN (~128KB on Linux) on
+            # huge repos where the manifest list grows.
+            LANGUAGE_DETECTION_JSON=$(RAW_DETECT="$RAW_DETECT" jq -n '
+                (env.RAW_DETECT | fromjson) as $matches
+                | {
                     matched: ($matches | map(. + {template: (.language + ".md")})),
                     same_directory_polyglot: (
                         # True iff two matches share a subtree with different languages
@@ -285,11 +288,14 @@ done
 # Warn on disabled names that don't match any default — likely typos.
 # Without this, e.g. `disabled: ["pr-test-analyser"]` (British spelling)
 # would silently no-op.
-UNKNOWN_DISABLED=$(jq -n \
-    --argjson defaults "$DEFAULTS_JSON" \
-    --argjson config "$CONFIGURATION_JSON" \
-    -r '
-        ($defaults | map(.name)) as $known
+# Pass JSON via env to avoid MAX_ARG_STRLEN on large repos.
+UNKNOWN_DISABLED=$(
+    DEFAULTS_JSON="$DEFAULTS_JSON" \
+    CONFIGURATION_JSON="$CONFIGURATION_JSON" \
+    jq -nr '
+        (env.DEFAULTS_JSON | fromjson) as $defaults
+        | (env.CONFIGURATION_JSON | fromjson) as $config
+        | ($defaults | map(.name)) as $known
         | (($config.disabled // []) - $known)
         | join(", ")
     ')
@@ -301,14 +307,25 @@ fi
 # Prepare input for jq:
 #   {sections: [...], defaults: [...], configuration: {...}, current_version: "...",
 #    language_detection: null | {...}}
-JQ_INPUT=$(jq -n \
-    --argjson sections "$([[ -z "$ALL_SECTIONS" ]] && echo "[]" || (printf '%s\n' "$ALL_SECTIONS" | jq -s '.'))" \
-    --argjson defaults "$DEFAULTS_JSON" \
-    --argjson configuration "$CONFIGURATION_JSON" \
-    --argjson files "$CHANGED_FILES_JSON" \
-    --arg current_version "$CURRENT_PLUGIN_VERSION" \
-    --argjson language_detection "$LANGUAGE_DETECTION_JSON" \
-    '{sections: $sections, defaults: $defaults, configuration: $configuration, files: $files, current_version: $current_version, language_detection: $language_detection}'
+# Pass JSON via env (not --argjson) to avoid MAX_ARG_STRLEN (~128KB on
+# Linux). ALL_SECTIONS and DEFAULTS_JSON are the most likely to grow:
+# many user agents in AGENT-REVIEWERS.md, or many shipped defaults.
+SECTIONS_JSON="$([[ -z "$ALL_SECTIONS" ]] && echo "[]" || (printf '%s\n' "$ALL_SECTIONS" | jq -s '.'))"
+JQ_INPUT=$(
+    SECTIONS_JSON="$SECTIONS_JSON" \
+    DEFAULTS_JSON="$DEFAULTS_JSON" \
+    CONFIGURATION_JSON="$CONFIGURATION_JSON" \
+    FILES_JSON="$CHANGED_FILES_JSON" \
+    LANGUAGE_DETECTION_JSON="$LANGUAGE_DETECTION_JSON" \
+    jq -n --arg current_version "$CURRENT_PLUGIN_VERSION" '
+        {
+            sections: (env.SECTIONS_JSON | fromjson),
+            defaults: (env.DEFAULTS_JSON | fromjson),
+            configuration: (env.CONFIGURATION_JSON | fromjson),
+            files: (env.FILES_JSON | fromjson),
+            current_version: $current_version,
+            language_detection: (env.LANGUAGE_DETECTION_JSON | fromjson)
+        }'
 )
 
 echo "$JQ_INPUT" | jq '
