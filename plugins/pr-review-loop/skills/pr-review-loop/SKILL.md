@@ -257,7 +257,7 @@ After each round, evaluate:
 
 ### When to Stop
 
-- Two consecutive rounds with mostly "Won't fix" or nitpick-only feedback
+- Two consecutive rounds with zero actionable (P1/P2) fixes — i.e., only nitpicks, only "Won't fix" responses, or zero-comment rounds
 - A self-contradiction is detected (pause for user input)
 - The fix/rejection ratio drops below ~25% (most comments are not actionable)
 - All remaining comments are stylistic or theoretical
@@ -280,9 +280,9 @@ When a full round (Gemini + other bots + agent reviewers) produces no actionable
 
 **Actionable feedback** = a **P1 or P2** finding (per the Priority to Exit-Condition Mapping) that is addressed with a code change. "Won't fix" responses, nitpick (P3) fixes, and zero-comment rounds are NOT actionable for loop-control purposes — they all count toward exit condition (b) below.
 
-**Unifying with stopping heuristics**: The "Two consecutive rounds with mostly Won't fix OR nitpick-only feedback" stopping heuristic and ONE MORE LOOP describe the same exit mechanism from two angles:
-- The **first** qualifying round (Won't-fix-or-nitpick-only) IS the ONE MORE LOOP trigger.
-- The **second** qualifying round IS the final verification — if it also has no actionable (P1/P2) fixes AND condition (d) below is satisfied, you exit immediately at end of that round. No third round needed.
+**Unifying with stopping heuristics**: The "Two consecutive rounds with zero actionable (P1/P2) fixes" stopping heuristic and ONE MORE LOOP describe the same exit mechanism from two angles:
+- The **first** qualifying round (zero actionable fixes — i.e., only nitpicks, only "Won't fix", or zero comments) IS the ONE MORE LOOP trigger.
+- The **second** qualifying round IS the final verification — if the full Exit condition (quality-weighted) below is satisfied (all of (a) through (d)), you exit immediately at end of that round. No third round needed.
 
 **Tracking state**: Use TodoWrite to track whether you're in the "final verification round". Create a todo like "Final verification round - if no actionable feedback, ready to merge".
 
