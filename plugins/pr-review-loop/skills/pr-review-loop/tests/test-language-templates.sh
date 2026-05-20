@@ -321,6 +321,50 @@ assert_exit "exit 2" "$iT4_exit" "2"
 rm -rf "$repo"
 
 echo
+echo
+echo "=== Test I_FA1: fence-aware extract — python.md installs all 13 reviewers (regression for latent PR #25 bug) ==="
+repo="$(make_temp_repo)"
+run_install "$repo" iFA1 python:.
+# Count agents under # Agents H1 ONLY, fence-aware (don't be fooled by # BAD/# GOOD in code blocks)
+agent_count="$(awk '
+    BEGIN { f=0; in_fence=0 }
+    /^```/ { in_fence = !in_fence; next }
+    !in_fence && /^# Agents/ { f=1; next }
+    !in_fence && /^# / { f=0 }
+    f && !in_fence && /^## / { print }
+' "$repo/AGENT-REVIEWERS.md" | wc -l)"
+if [[ "$agent_count" == "13" ]]; then
+    echo "  PASS  python.md installs all 13 reviewers"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo "  FAIL  python.md installed $agent_count reviewers, expected 13"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED+=("python.md install reviewer count")
+fi
+rm -rf "$repo"
+
+echo
+echo "=== Test I_FA2: fence-aware extract — golang.md installs all 8 reviewers ==="
+repo="$(make_temp_repo)"
+run_install "$repo" iFA2 golang:.
+agent_count="$(awk '
+    BEGIN { f=0; in_fence=0 }
+    /^```/ { in_fence = !in_fence; next }
+    !in_fence && /^# Agents/ { f=1; next }
+    !in_fence && /^# / { f=0 }
+    f && !in_fence && /^## / { print }
+' "$repo/AGENT-REVIEWERS.md" | wc -l)"
+if [[ "$agent_count" == "8" ]]; then
+    echo "  PASS  golang.md installs all 8 reviewers"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo "  FAIL  golang.md installed $agent_count reviewers, expected 8"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED+=("golang.md install reviewer count")
+fi
+rm -rf "$repo"
+
+echo
 echo "=== Test I10: install pins defaults_version_checked to plugin version ==="
 repo="$(make_temp_repo)"
 run_install "$repo" i10 golang:.

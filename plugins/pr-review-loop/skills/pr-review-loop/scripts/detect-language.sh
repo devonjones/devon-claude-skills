@@ -55,18 +55,37 @@ REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
 
 # Manifest → (language, priority). Priority is 0=canonical, higher=fallback.
 # Languages and priorities here are the source of truth for detection.
+#
+# Special-case: Gemfile maps to "rails" ONLY when it actually mentions
+# `gem "rails"` — a plain Gemfile could be Sinatra or pure-Ruby tooling.
+# That check happens in the per-file loop below, not here.
 manifest_to_lang_priority() {
     case "$1" in
-        go.mod)           echo "golang 0" ;;
-        pyproject.toml)   echo "python 0" ;;
-        setup.py)         echo "python 1" ;;
-        requirements.txt) echo "python 2" ;;
-        *)                return 1 ;;
+        go.mod)            echo "golang 0" ;;
+        pyproject.toml)    echo "python 0" ;;
+        setup.py)          echo "python 1" ;;
+        requirements.txt)  echo "python 2" ;;
+        # Terraform: any of the 5 canonical files indicates an active module.
+        # main.tf is the most common entry point; the others rank lower for
+        # the "which manifest do we report" tiebreaker but all signal Terraform.
+        main.tf)           echo "terraform 0" ;;
+        versions.tf)       echo "terraform 1" ;;
+        providers.tf)      echo "terraform 2" ;;
+        variables.tf)      echo "terraform 3" ;;
+        outputs.tf)        echo "terraform 4" ;;
+        # JavaScript / TypeScript: single combined pack triggered by package.json
+        # (the pack's reviewers branch on tsconfig.json presence internally).
+        package.json)      echo "javascript 0" ;;
+        # Gemfile maps to rails only after a content check (see loop below).
+        # Listed here so it gets discovered by `find`; the per-entry loop
+        # decides whether to emit a "rails" entry or skip it entirely.
+        Gemfile)           echo "rails 0" ;;
+        *)                 return 1 ;;
     esac
 }
 
 # Build the list of manifests we want to find.
-all_manifests=(go.mod pyproject.toml setup.py requirements.txt)
+all_manifests=(go.mod pyproject.toml setup.py requirements.txt main.tf versions.tf providers.tf variables.tf outputs.tf package.json Gemfile)
 
 # Directories to skip during the walk.
 skip_dirs=(.git node_modules vendor .venv venv __pycache__ dist build target .beads .next .tox .mypy_cache .pytest_cache .ruff_cache)
@@ -117,6 +136,14 @@ while IFS= read -r relpath; do
     fi
     lang="${lookup% *}"
     priority="${lookup##* }"
+
+    # Rails-specific: a plain Gemfile could be Sinatra or pure-Ruby tooling.
+    # Only count it as a Rails marker if the file actually references rails.
+    if [[ "$mfile" == "Gemfile" ]]; then
+        if ! grep -qE "^[[:space:]]*gem[[:space:]]+['\"]rails['\"]" "$REPO_ROOT/$relpath" 2>/dev/null; then
+            continue
+        fi
+    fi
 
     entry="$(jq -cn \
         --arg language "$lang" \
