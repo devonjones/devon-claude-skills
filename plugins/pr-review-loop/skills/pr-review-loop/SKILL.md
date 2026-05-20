@@ -78,13 +78,13 @@ Streamline the push-review-fix cycle for PRs with automated reviewers.
 |-----|---------|-----------------|
 | **Gemini Code Assist** | `/gemini review` comment | `![critical]`, `![high]`, `![medium]`, `![low]` |
 | **Cursor Bugbot** | Auto on push | `<!-- **High Severity** -->`, `### Bug:` |
-| **Claude** | Manual via script | `**Critical**`, `### Critical Issues` |
+| **Claude** | Manual via script | `🚨`, `**Critical**`, `### Critical Issues`, `⚠️` |
 
 Priority detection automatically parses all formats when summarizing and fetching comments.
 
 ### Priority to Exit-Condition Mapping
 
-The quality-weighted exit condition (see ONE MORE LOOP Rule) depends on classifying findings as P1/P2 (blocking) vs P3/nitpick (non-blocking). Use this table:
+The quality-weighted exit condition (see ONE MORE LOOP Rule) depends on classifying findings as P1/P2 vs P3/nitpick. Use this table:
 
 | Source label | P-level | Blocks quality-weighted exit? |
 |---|---|---|
@@ -268,7 +268,7 @@ After each round, evaluate:
 **If you reach 7 rounds OR 5 rounds where every round was nitpick-only, STOP the loop regardless of state.** Report to the user:
 
 - Rounds completed and elapsed time
-- Total comments received, by priority (P1/P2/P3 — see Priority to Exit-Condition Mapping table) and source (Gemini, other bots, each agent)
+- Total comments received, by priority (P1/P2/P3 — see Priority to Exit-Condition Mapping) and source (Gemini, other bots, each agent)
 - Outstanding unresolved items (if any)
 - A recommendation on whether to continue, declare "good enough," or escalate
 
@@ -280,18 +280,18 @@ When a full round (Gemini + other bots + agent reviewers) produces no actionable
 
 **Actionable feedback** means feedback you actually fix — not "Won't fix" responses, not nitpicks, not zero-comment rounds.
 
-**Unifying with stopping heuristics**: A "Won't fix" round satisfies the ONE MORE LOOP trigger. When the "Two consecutive rounds with mostly Won't fix" stopping heuristic fires, the second Won't-fix round IS the trigger: begin the final verification round immediately (no push needed if no fixes were made in that round).
+**Unifying with stopping heuristics**: A "Won't fix" or nitpick-only round satisfies the ONE MORE LOOP trigger. When the "Two consecutive rounds with mostly Won't fix OR nitpick-only feedback" stopping heuristic fires, the second qualifying round IS the trigger: begin the final verification round immediately.
 
 **Tracking state**: Use TodoWrite to track whether you're in the "final verification round". Create a todo like "Final verification round - if no actionable feedback, ready to merge".
 
-**Reset condition**: If the final verification round produces **P1 or P2 fixes** (correctness, security, breaking changes — see Priority to Exit-Condition Mapping table), remove the "final verification round" todo — you need a fresh "one more" after pushing those fixes. Nitpick-level (P3) fixes do NOT reset the counter — they satisfy condition (b) of the quality-weighted exit below.
+**Reset condition**: If the final verification round produces **P1 or P2 fixes** (correctness, security, breaking changes — see Priority to Exit-Condition Mapping), remove the "final verification round" todo — you need a fresh "one more" after pushing those fixes. Nitpick-level (P3) fixes do NOT reset the counter.
 
 **Exit condition (quality-weighted)**: You're done when ALL of:
 - (a) **No P1/P2 findings** (correctness, security, breaking changes) in the last round
 - (b) **The last two rounds had only nitpick-level findings OR zero actionable fixes** (zero-comment rounds — e.g., Gemini timeout plus all agents returning "no issues")
 - (c) **No contradictions across rounds**
 
-— **OR** the Hard Round Ceiling has fired (see above), in which case stop and ask the user regardless.
+— **OR** the Hard Round Ceiling has fired (see above).
 
 Proceed to merge readiness checks.
 
