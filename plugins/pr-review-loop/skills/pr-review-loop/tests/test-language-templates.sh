@@ -322,6 +322,130 @@ rm -rf "$repo"
 
 echo
 echo
+echo
+echo "=== Test D9: terraform detected via main.tf ==="
+repo="$(make_temp_repo)"
+echo 'terraform { required_version = ">= 1.0" }' > "$repo/main.tf"
+run_detect "$repo" d9
+assert_jq "one match" "$d9" 'length == 1'
+assert_jq "terraform at root with main.tf" "$d9" '.[0] == {language:"terraform", subtree:".", manifest:"main.tf"}'
+rm -rf "$repo"
+
+echo
+echo "=== Test D10: terraform detected via versions.tf even without main.tf ==="
+repo="$(make_temp_repo)"
+echo 'terraform { required_version = ">= 1.0" }' > "$repo/versions.tf"
+run_detect "$repo" d10
+assert_jq "terraform via versions.tf" "$d10" '.[0].manifest == "versions.tf"'
+rm -rf "$repo"
+
+echo
+echo "=== Test D11: rails detected via Gemfile with gem \"rails\" ==="
+repo="$(make_temp_repo)"
+cat > "$repo/Gemfile" <<'EOF'
+source 'https://rubygems.org'
+gem "rails", "~> 7.1"
+EOF
+run_detect "$repo" d11
+assert_jq "one rails match" "$d11" 'length == 1 and .[0] == {language:"rails", subtree:".", manifest:"Gemfile"}'
+rm -rf "$repo"
+
+echo
+echo "=== Test D12: Gemfile without rails does NOT detect as rails (Sinatra-style) ==="
+repo="$(make_temp_repo)"
+cat > "$repo/Gemfile" <<'EOF'
+source 'https://rubygems.org'
+gem "sinatra"
+gem "puma"
+EOF
+run_detect "$repo" d12
+assert_jq "no matches" "$d12" '. == []'
+rm -rf "$repo"
+
+echo
+echo "=== Test D13: javascript detected via package.json ==="
+repo="$(make_temp_repo)"
+echo '{"name":"test","version":"1.0.0"}' > "$repo/package.json"
+run_detect "$repo" d13
+assert_jq "javascript match" "$d13" '.[0] == {language:"javascript", subtree:".", manifest:"package.json"}'
+rm -rf "$repo"
+
+echo
+echo "=== Test D14: per-subtree polyglot — python at root + terraform in /terraform/ ==="
+repo="$(make_temp_repo)"
+touch "$repo/pyproject.toml"
+mkdir -p "$repo/terraform"
+echo 'terraform { required_version = ">= 1.0" }' > "$repo/terraform/main.tf"
+run_detect "$repo" d14
+assert_jq "two matches" "$d14" 'length == 2'
+assert_jq "python at root" "$d14" 'any(. == {language:"python", subtree:".", manifest:"pyproject.toml"})'
+assert_jq "terraform at terraform/" "$d14" 'any(. == {language:"terraform", subtree:"terraform", manifest:"main.tf"})'
+rm -rf "$repo"
+
+echo
+echo "=== Test I_FA3: rails.md installs all 8 reviewers (fence-aware regression) ==="
+repo="$(make_temp_repo)"
+run_install "$repo" iFA3 rails:.
+agent_count="$(awk '
+    BEGIN { f=0; in_fence=0 }
+    /^```/ { in_fence = !in_fence; next }
+    !in_fence && /^# Agents/ { f=1; next }
+    !in_fence && /^# / { f=0 }
+    f && !in_fence && /^## / { print }
+' "$repo/AGENT-REVIEWERS.md" | wc -l)"
+if [[ "$agent_count" == "8" ]]; then
+    echo "  PASS  rails.md installs all 8 reviewers"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo "  FAIL  rails.md installed $agent_count reviewers, expected 8"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED+=("rails.md install reviewer count")
+fi
+rm -rf "$repo"
+
+echo
+echo "=== Test I_FA4: terraform.md installs all 7 reviewers ==="
+repo="$(make_temp_repo)"
+run_install "$repo" iFA4 terraform:.
+agent_count="$(awk '
+    BEGIN { f=0; in_fence=0 }
+    /^```/ { in_fence = !in_fence; next }
+    !in_fence && /^# Agents/ { f=1; next }
+    !in_fence && /^# / { f=0 }
+    f && !in_fence && /^## / { print }
+' "$repo/AGENT-REVIEWERS.md" | wc -l)"
+if [[ "$agent_count" == "7" ]]; then
+    echo "  PASS  terraform.md installs all 7 reviewers"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo "  FAIL  terraform.md installed $agent_count reviewers, expected 7"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED+=("terraform.md install reviewer count")
+fi
+rm -rf "$repo"
+
+echo
+echo "=== Test I_FA5: javascript.md installs all 7 reviewers ==="
+repo="$(make_temp_repo)"
+run_install "$repo" iFA5 javascript:.
+agent_count="$(awk '
+    BEGIN { f=0; in_fence=0 }
+    /^```/ { in_fence = !in_fence; next }
+    !in_fence && /^# Agents/ { f=1; next }
+    !in_fence && /^# / { f=0 }
+    f && !in_fence && /^## / { print }
+' "$repo/AGENT-REVIEWERS.md" | wc -l)"
+if [[ "$agent_count" == "7" ]]; then
+    echo "  PASS  javascript.md installs all 7 reviewers"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo "  FAIL  javascript.md installed $agent_count reviewers, expected 7"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED+=("javascript.md install reviewer count")
+fi
+rm -rf "$repo"
+
+echo
 echo "=== Test I_FA1: fence-aware extract — python.md installs all 13 reviewers (regression for latent PR #25 bug) ==="
 repo="$(make_temp_repo)"
 run_install "$repo" iFA1 python:.
