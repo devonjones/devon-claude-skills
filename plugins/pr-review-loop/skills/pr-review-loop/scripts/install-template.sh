@@ -180,11 +180,26 @@ fi
 # Emits everything between `# <section-name>` and the next H1 (exclusive).
 # Accepts any whitespace between `#` and the heading text so templates
 # with `#  Agents` or `#\tAgents` parse correctly (not just `# Agents`).
+#
+# Fence-aware: lines inside ```...``` code blocks are treated as content,
+# never as headings. Without this, language-pack templates whose code
+# examples use `#` comments (Python, Ruby, shell) would falsely close
+# the section the first time a `# BAD` comment appears inside a fence,
+# silently losing every agent definition that comes after.
 extract_section() {
     local file="$1" section="$2"
     awk -v section="$section" '
-        BEGIN { in_section = 0 }
-        /^#[[:space:]]+/ {
+        BEGIN { in_section = 0; in_fence = 0 }
+        # Toggle fence state on any line that opens or closes a code block.
+        # Inside a fence, treat the fence line itself as content (print if
+        # currently in_section) and skip the H1-detection branch entirely.
+        /^```/ {
+            in_fence = !in_fence
+            if (in_section) print
+            next
+        }
+        # Only consider H1 headings outside fenced code blocks.
+        !in_fence && /^#[[:space:]]+/ {
             if (in_section) { in_section = 0 }
             heading = $0
             sub(/^#[[:space:]]+/, "", heading)

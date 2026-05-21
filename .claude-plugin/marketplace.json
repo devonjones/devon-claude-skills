@@ -9,7 +9,7 @@
     {
       "name": "pr-review-loop",
       "description": "Autonomous PR review automation with multi-bot support (Gemini, Cursor, Claude)",
-      "version": "1.4.0",
+      "version": "1.5.0",
       "source": "./plugins/pr-review-loop",
       "category": "productivity",
       "author": {
