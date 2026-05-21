@@ -116,18 +116,30 @@ assert_file_not_grep() {
 }
 
 # Counts H2 agent headings under # Agents in a fence-aware way, then asserts the
-# total matches expected. `|| true` keeps a malformed/missing file from aborting
-# the suite under `set -euo pipefail` — the count just comes back as 0 and FAILs.
+# total matches expected. Counts inside awk's END (no `wc -l`, which adds leading
+# spaces on BSD/macOS). Flexible H1/H2 matching (`#[[:space:]]+`) mirrors
+# install-template.sh's own parser. Missing file → FAIL line, not suite abort,
+# without using `|| true` (which would mask awk failures into false PASS at
+# expected=0).
 assert_agent_count() {
     local name="$1" path="$2" expected="$3"
+    if [[ ! -f "$path" ]]; then
+        echo "  FAIL  $name (missing file: $path)"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        FAILED+=("$name")
+        return
+    fi
     local actual
     actual="$(awk '
-        BEGIN { f=0; in_fence=0 }
+        BEGIN { f=0; in_fence=0; count=0 }
         /^```/ { in_fence = !in_fence; next }
-        !in_fence && /^# Agents/ { f=1; next }
-        !in_fence && /^# / { f=0 }
-        f && !in_fence && /^## / { print }
-    ' "$path" 2>/dev/null | wc -l || true)"
+        !in_fence && /^#[[:space:]]+/ {
+            h=$0; sub(/^#[[:space:]]+/, "", h); sub(/[[:space:]]+$/, "", h)
+            f=(h=="Agents"); next
+        }
+        f && !in_fence && /^##[[:space:]]+/ { count++ }
+        END { print count }
+    ' "$path")"
     if [[ "$actual" == "$expected" ]]; then
         echo "  PASS  $name"
         TESTS_PASSED=$((TESTS_PASSED + 1))

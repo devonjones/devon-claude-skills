@@ -212,7 +212,7 @@ Review IAM policies (AWS `aws_iam_policy_document`, `aws_iam_role_policy`, GCP `
 
 ### `Action: "*"` + `Resource: "*"` on a non-admin role → P1
 
-This grants full cloud admin. Only flag-not-flag for genuine admin roles (`administrator`, `breakglass`, etc.). Otherwise flag.
+This grants full cloud admin. Only exempt genuine admin roles (`administrator`, `breakglass`, etc.). Otherwise flag.
 
 ### Action wildcards scoped to a resource → P2
 
