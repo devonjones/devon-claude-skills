@@ -27,8 +27,13 @@ WAIT_FOR_COMMENTS=false
 WAIT_TIMEOUT=300  # 5 minutes
 POLL_INTERVAL=30
 
-# Get repo info via gh's own detection (doesn't depend on a remote named "origin").
-REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || { echo "Warning: Could not determine repository." >&2; })
+# Get repo info via gh's own detection (doesn't require a remote named "origin").
+# Hard-exit on failure: OWNER/REPO_NAME are used in GraphQL queries that can't
+# function with empty values.
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
+    echo "Error: Could not determine repository. Run from within a git repository." >&2
+    exit 1
+}
 OWNER=$(echo "$REPO" | cut -d'/' -f1)
 REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
 

@@ -16,8 +16,13 @@ COMMENT_ID="${2:?Usage: reply-to-comment.sh <pr-number> <comment-id> \"reply mes
 REPLY="${3:?Usage: reply-to-comment.sh <pr-number> <comment-id> \"reply message\" [--no-resolve]}"
 NO_RESOLVE="${4:-}"
 
-# Get repo info via gh's own detection (doesn't depend on a remote named "origin").
-REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || { echo "Warning: Could not determine repository." >&2; })
+# Get repo info via gh's own detection (doesn't require a remote named "origin").
+# Hard-exit on failure: OWNER/REPO_NAME are used in REST/GraphQL calls that
+# can't function with empty values.
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
+    echo "Error: Could not determine repository. Run from within a git repository." >&2
+    exit 1
+}
 OWNER=$(echo "$REPO" | cut -d'/' -f1)
 REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
 

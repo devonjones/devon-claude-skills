@@ -46,9 +46,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Get repo info via gh's own detection. New pattern already produces empty REPO
-# on failure (with a stderr warning), so the `|| REPO=""` fallback is no longer
-# needed — but the `[[ -n "$REPO" ]]` gate below still skips -R when empty.
+# Get repo info via gh's own detection (doesn't require a remote named "origin").
+# Empty REPO is OK — REPO_FLAG below skips -R when unset.
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || { echo "Warning: Could not determine repository." >&2; })
 REPO_FLAG=""
 if [[ -n "$REPO" ]]; then

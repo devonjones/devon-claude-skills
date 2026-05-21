@@ -44,9 +44,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Get repo info via gh's own detection — works from worktrees, doesn't depend on
-# a remote being named "origin", and falls back gracefully if detection fails.
-REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || { echo "Warning: Could not determine repository." >&2; })
+# Get repo info via gh's own detection (doesn't require a remote named "origin").
+# Hard-exit on failure: every downstream gh call uses -R "$REPO", so the script
+# can't function with an empty slug.
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
+    echo "Error: Could not determine repository. Run from within a git repository." >&2
+    exit 1
+}
 
 # Validate PR number to fail fast on invalid input
 if ! gh pr view "$PR_NUMBER" -R "$REPO" --json number &> /dev/null; then
