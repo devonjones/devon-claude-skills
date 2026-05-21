@@ -118,21 +118,11 @@ case "$TARGET" in
     | "dropbox:ObsidianVaults/$VAULT_NAME/" \
     | "dropbox:ObsidianVaults/$VAULT_NAME/sources/" \
     | "dropbox:ObsidianVaults/$VAULT_NAME/sources/videos/" \
-    | "dropbox:ObsidianVaults/$VAULT_NAME/sources/books/" \
     | "$PARENT_REMOTE")
         echo "Error: refusing to sync to a too-broad target: $TARGET" >&2
         exit 1
         ;;
 esac
-
-# Channel-only check for videos (kept separate so the error message can say
-# "channel" specifically). For books we treat this as a no-op since the
-# books-root check below covers the same typo surface.
-if [[ "$SOURCE_TYPE" == "video" \
-      && "$TARGET" == "dropbox:ObsidianVaults/$VAULT_NAME/sources/videos/$CHANNEL_NAME/" ]]; then
-    echo "Error: refusing to sync to a too-broad target: $TARGET" >&2
-    exit 1
-fi
 
 # Confirm rclone is available before we promise success.
 if ! command -v rclone >/dev/null 2>&1; then

@@ -24,7 +24,7 @@ Write a handoff document that captures the **live, transient state** of the curr
 $TMPDIR/claude-handoffs/<UTC-timestamp>-<short-topic-slug>.md
 ```
 
-Falls back to `/tmp/claude-handoffs/` if `$TMPDIR` is unset. Create the directory if missing. The timestamp + slug means multiple handoffs from the same project don't collide and the user can `ls -lt` to find the most recent.
+Falls back to `/tmp/claude-handoffs/` if `$TMPDIR` is unset. Create the directory if missing. The timestamp + slug names are collision-free and sort newest-last.
 
 Print the absolute path to the user (the last line of your response). They will paste it into the next session's first message.
 
@@ -61,8 +61,8 @@ For each in-flight item, name the **next concrete action**. ("Run gh pr merge 25
 
 This is the section that justifies the handoff existing at all. Include:
 
-- **Background tasks**: any `Bash run_in_background` jobs you started, `CronCreate` schedules, `Monitor` streams, `ScheduleWakeup` timers. List the task ID, what it's waiting for, and where its output goes. The next agent won't have these references otherwise.
-- **Decisions made + rationale**: any judgment calls you made that aren't visible from the diff/commit messages alone (e.g., "chose AskUserQuestion over plan-mode after probing ExitPlanMode behavior"). Cite WHY, not just what — the why is what gets lost on rehydration.
+- **Background tasks**: any `Bash run_in_background` jobs you started, `CronCreate` schedules, `Monitor` streams, `ScheduleWakeup` timers. List the task ID, what it's waiting for, and where its output goes.
+- **Decisions made + rationale**: any judgment calls you made that aren't visible from the diff/commit messages alone (e.g., "chose AskUserQuestion over plan-mode after probing ExitPlanMode behavior"). Cite WHY, not just what.
 - **Won't-fix / reclassifications**: review findings you declined to fix with explicit reasoning. The next agent might re-encounter the same finding.
 - **Open questions** you couldn't resolve and the user hasn't answered yet.
 
@@ -106,12 +106,16 @@ If the information already lives in git, beads, or memory, **link to it; do not 
 
 Before saving, scan the doc for:
 
-- API keys, OAuth tokens, session tokens (anything matching common prefixes: `sk-`, `gho_`, `ghp_`, `xoxb-`, `xoxp-`, etc.)
+- API keys, OAuth tokens, session tokens (anything matching common prefixes: `sk-`, `gho_`, `ghp_`, `xoxb-`, `xoxp-`, `AKIA`, `Bearer `, etc.)
 - Passwords, private keys, certificates
 - Personally identifiable information unrelated to the work (real names, emails) IF the conversation surfaced any — replace with `<redacted>`
 - Customer or company-internal identifiers if the next agent might be working in a public context
 
 If anything sensitive can't be redacted without breaking continuity, NOTE it explicitly: `<redacted: contact user for value>`.
+
+### Sanitize the topic slug
+
+When constructing `<short-topic-slug>` for the filename, replace any character that isn't alphanumeric or hyphen — especially `/`, `.`, `..`, leading dots, and whitespace — with `-`. This keeps the handoff document inside its intended directory and avoids path-traversal surprises if the slug is ever derived from untrusted input (PR titles, issue text, etc.).
 
 ### Tailor to the user's argument
 
@@ -139,4 +143,4 @@ Output to the user:
 2. A one-line confirmation of what was captured ("Wrote handoff for PR #25 dogfood + open beads ticket fv0 to ...")
 3. The Resume command (section 6 above) so they can copy-paste it
 
-Do NOT output the full handoff content in your message — the user can read the file. The conversation has already been long enough; your final message stays short.
+Do NOT output the full handoff content in your message — the user can read the file. Keep your final message short.
