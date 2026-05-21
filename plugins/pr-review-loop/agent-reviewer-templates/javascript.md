@@ -416,7 +416,7 @@ the review loop's exit-condition consideration.
 
 **Implementation note:**
 
-This reviewer scans existing PR review comments (via `get-review-comments.sh <PR>`) for migration-pushing language. It runs in parallel with other reviewers and only sees findings from earlier rounds; strict last-ordering is not required.
+This reviewer scans the PR's existing review comments (the orchestrator supplies the PR number and review-fetching tooling at spawn time) for migration-pushing language. It runs in parallel with other reviewers and only sees findings from earlier rounds; strict last-ordering is not required.
 
 Migration-pushing language to scan for:
 
@@ -426,7 +426,7 @@ Migration-pushing language to scan for:
 - "add types" *in the context of a .js file*
 - "rename .js to .ts"
 
-When such a suggestion is found, post the policy comment as a reply (resolving the migration suggestion as P3 / out-of-scope).
+When such a suggestion is found, **emit the policy comment as a standard agent-reviewer finding** (e.g., via `post-line-comment.sh` against the file/line the original suggestion targeted). The orchestrator's main loop handles linking back to the source thread and dispositioning it as P3 / out-of-scope. This reviewer does not directly reply to or resolve other reviewers' comments.
 
 **Does NOT flag:**
 
