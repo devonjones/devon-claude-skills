@@ -15,8 +15,12 @@ set -euo pipefail
 
 PR_NUMBER="${1:?Usage: check-gemini-quota.sh <pr-number>}"
 
-# Derive repo slug from origin so -R works on forks with both origin and upstream remotes
-REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//')
+# Get repo info via gh's own detection (doesn't require a remote named "origin").
+# Hard-exit on failure: gh pr view -R "$REPO" below can't function with empty REPO.
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
+    echo "Error: Could not determine repository. Run from within a git repository." >&2
+    exit 1
+}
 
 # Get the most recent comment from gemini-code-assist (may appear as bot or non-bot)
 LAST_GEMINI_COMMENT=$(gh pr view "$PR_NUMBER" -R "$REPO" --json comments --jq '

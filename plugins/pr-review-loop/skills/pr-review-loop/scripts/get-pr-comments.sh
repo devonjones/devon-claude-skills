@@ -44,9 +44,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Get repo info (needed for all gh calls to work from worktrees or when origin remote differs).
-# Let git's own error surface if we're not in a git repo or origin is missing.
-REPO=$(git remote get-url origin | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//')
+# Get repo info via gh's own detection (doesn't require a remote named "origin").
+# Hard-exit on failure: every downstream gh call uses -R "$REPO", so the script
+# can't function with an empty slug.
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
+    echo "Error: Could not determine repository. Run from within a git repository." >&2
+    exit 1
+}
 
 # Validate PR number to fail fast on invalid input
 if ! gh pr view "$PR_NUMBER" -R "$REPO" --json number &> /dev/null; then
