@@ -106,7 +106,7 @@ If the information already lives in git, beads, or memory, **link to it; do not 
 
 Before saving, scan the doc for:
 
-- API keys, OAuth tokens, session tokens (anything matching common prefixes: `sk-`, `gho_`, `ghp_`, `xoxb-`, `xoxp-`, `AKIA`, `Bearer `, etc.)
+- API keys, OAuth tokens, session tokens (anything matching common prefixes: `sk-`, `gho_`, `ghp_`, `github_pat_`, `xoxb-`, `xoxp-`, `AKIA`, `ASIA`, `AIza`, `Bearer `, etc.)
 - Passwords, private keys, certificates
 - Personally identifiable information unrelated to the work (real names, emails) IF the conversation surfaced any — replace with `<redacted>`
 - Customer or company-internal identifiers if the next agent might be working in a public context
