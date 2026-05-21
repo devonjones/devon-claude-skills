@@ -19,7 +19,7 @@
 
 **Why each default is disabled:**
 
-- **`silent-failure-hunter`** — covered by `n-plus-one-query-reviewer` (catches the Rails-flavor silent failure: missing eager-loading causing latency degradation that doesn't error) plus the Rails community's established `rescue => e` discouragement (handled in callback-overuse and strong-params reviewers).
+- **`silent-failure-hunter`** — covered by `n-plus-one-query-reviewer` (catches the Rails-flavor silent failure: missing eager-loading causing latency degradation that doesn't error). `rescue => e` discouragement is a Rails community convention not separately enforced by this pack.
 - **`comment-analyzer`** — covered by `clarity-reviewer`. Rails code is conventional enough that the generic comment-analyzer over-flags; the pack's clarity-reviewer scopes to the conventions that matter for Rails (route comments, callback rationale, schema-comment freshness).
 - **`code-simplifier`** — Rails developers have strong existing simplification conventions (Sandi Metz's rules, Rails idioms). The generic code-simplifier conflicts with Rails-canon patterns (e.g., flags `ActiveRecord::Relation` chains as "complex" when they're idiomatic). Disabled to avoid noise.
 
@@ -33,7 +33,7 @@ A reviewer pack for Ruby on Rails projects. Each section under `# Agents` below 
 
 ## How the pack runs
 
-Each reviewer runs independently and reports findings without coordination. A reviewer's silence on something is not an endorsement — it just means that reviewer didn't see anything in its scope.
+Each reviewer runs independently and reports findings without coordination.
 
 **Per-reviewer file scope:**
 
@@ -114,8 +114,6 @@ per post for the authors. With @posts.count > 1, this is a classic N+1.
 Suggested fix: In PostsController#index, change `@posts = Post.all` to
 `@posts = Post.includes(:author)`. Verify with bullet or rack-mini-profiler.
 ```
-
-Structured findings are diff-able, easy to triage, and easy to deduplicate when multiple reviewers flag the same line.
 
 ## Deferring findings with beads
 

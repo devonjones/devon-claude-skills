@@ -139,9 +139,20 @@ while IFS= read -r relpath; do
 
     # Rails-specific: a plain Gemfile could be Sinatra or pure-Ruby tooling.
     # Only count it as a Rails marker if the file actually references rails.
+    # Distinguish grep exit 1 (no match — not Rails, skip silently) from exit 2+
+    # (I/O error — stderr stays visible, warn and skip).
+    # Regex accepts both `gem "rails"` and `gem("rails")` syntax.
     if [[ "$mfile" == "Gemfile" ]]; then
-        if ! grep -qE "^[[:space:]]*gem[[:space:]]+['\"]rails['\"]" "$REPO_ROOT/$relpath" 2>/dev/null; then
-            continue
+        if grep -qE "^[[:space:]]*gem[[:space:]]*\(?[[:space:]]*['\"]rails['\"]" "$REPO_ROOT/$relpath"; then
+            :  # matched — proceed with rails entry
+        else
+            rc=$?
+            if [[ $rc -eq 1 ]]; then
+                continue
+            else
+                echo "Warning: could not read $relpath (grep exit $rc); skipping" >&2
+                continue
+            fi
         fi
     fi
 

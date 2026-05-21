@@ -18,7 +18,7 @@
 
 Terraform is declarative IaC, not imperative code. Several baked-in default reviewers don't have a useful lens on `.tf` files:
 
-- **`silent-failure-hunter`** — Terraform doesn't have try/catch or error-swallowing patterns; resources either apply or they don't. Disabled.
+- **`silent-failure-hunter`** — Terraform doesn't have try/catch or error-swallowing patterns; resources either apply or they don't.
 - **`pr-test-analyzer`** — Terraform's test conventions (terratest, kitchen-terraform) are project-by-project and rarely adopted. Defaulting to "you must have tests" produces noise on every TF PR; disabled. If a repo has chosen a TF testing framework, add a custom test-coverage-reviewer locally.
 - **`comment-analyzer`** — covered by `clarity-reviewer`. Terraform variable/output descriptions ARE the doc surface; the pack's clarity-reviewer scopes to those plus README accuracy.
 - **`type-design-analyzer`** — encapsulation/invariant patterns assume OOP design surface. Doesn't apply to HCL.

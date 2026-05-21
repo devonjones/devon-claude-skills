@@ -33,7 +33,7 @@ A reviewer pack for JavaScript and TypeScript projects. **One pack handles both*
 
 ## Policy: No pushy JS → TS migration
 
-This pack explicitly **does NOT** propose converting `.js` files to TypeScript. JS-and-TS mixed codebases are valid; pure-JS codebases are valid; pure-TS codebases are valid. The pack reviews each file in the language it's written in. The `js-vs-ts-policy-reviewer` agent codifies this stance and pushes back if any other reviewer (or a human) attempts to flag a `.js` file simply for being JS.
+This pack explicitly **does NOT** propose converting `.js` files to TypeScript. JS-only, TS-only, and mixed codebases are all valid. The pack reviews each file in the language it's written in. The `js-vs-ts-policy-reviewer` agent codifies this stance and pushes back if any other reviewer (or a human) attempts to flag a `.js` file simply for being JS.
 
 If a team chooses to migrate JS → TS, that's a deliberate, scoped initiative — not something to nag-into-being on every PR.
 
@@ -53,7 +53,7 @@ Each reviewer runs independently and reports findings without coordination.
 | `js-vs-ts-policy-reviewer` | Activates when ANY review (human or agent) appears to push JS→TS migration |
 | `clarity-reviewer` | `*.md` (README, docs), JSDoc/TSDoc in `.{js,ts,jsx,tsx}` |
 
-Skip reviewers whose file scope doesn't match the PR diff. The `typescript-strictness-reviewer` is a no-op on PRs that touch only `.js` files; it does NOT flag the absence of TS.
+Skip reviewers whose file scope doesn't match the PR diff.
 
 ## Tooling assumed in CI
 
@@ -416,7 +416,9 @@ the review loop's exit-condition consideration.
 
 **Implementation note:**
 
-This reviewer runs LAST in the round, after all other reviewers have posted. It scans the round's findings (via `get-review-comments.sh <PR>`) for migration-pushing language:
+This reviewer scans the PR's existing review comments (via `get-review-comments.sh <PR>`) for migration-pushing language. It runs in parallel with the other reviewers; in any given round it will only see findings that other reviewers (or humans) posted in earlier rounds. That's fine — across the lifetime of a PR's review loop, migration-pushing language gets caught and replied to within one or two rounds of being posted. The reviewer does NOT require strict "runs last" ordering, which the orchestrator does not currently support.
+
+Migration-pushing language to scan for:
 
 - "should be TypeScript"
 - "convert to .ts"

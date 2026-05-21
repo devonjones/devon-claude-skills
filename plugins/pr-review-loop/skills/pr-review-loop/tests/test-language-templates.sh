@@ -115,6 +115,29 @@ assert_file_not_grep() {
     fi
 }
 
+# Counts H2 agent headings under # Agents in a fence-aware way, then asserts the
+# total matches expected. `|| true` keeps a malformed/missing file from aborting
+# the suite under `set -euo pipefail` — the count just comes back as 0 and FAILs.
+assert_agent_count() {
+    local name="$1" path="$2" expected="$3"
+    local actual
+    actual="$(awk '
+        BEGIN { f=0; in_fence=0 }
+        /^```/ { in_fence = !in_fence; next }
+        !in_fence && /^# Agents/ { f=1; next }
+        !in_fence && /^# / { f=0 }
+        f && !in_fence && /^## / { print }
+    ' "$path" 2>/dev/null | wc -l || true)"
+    if [[ "$actual" == "$expected" ]]; then
+        echo "  PASS  $name"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+    else
+        echo "  FAIL  $name (got $actual, expected $expected)"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        FAILED+=("$name")
+    fi
+}
+
 run_detect() {
     local repo="$1" out_var="$2"
     local out exit_code=0
@@ -386,106 +409,36 @@ echo
 echo "=== Test I_FA3: rails.md installs all 8 reviewers (fence-aware regression) ==="
 repo="$(make_temp_repo)"
 run_install "$repo" iFA3 rails:.
-agent_count="$(awk '
-    BEGIN { f=0; in_fence=0 }
-    /^```/ { in_fence = !in_fence; next }
-    !in_fence && /^# Agents/ { f=1; next }
-    !in_fence && /^# / { f=0 }
-    f && !in_fence && /^## / { print }
-' "$repo/AGENT-REVIEWERS.md" | wc -l)"
-if [[ "$agent_count" == "8" ]]; then
-    echo "  PASS  rails.md installs all 8 reviewers"
-    TESTS_PASSED=$((TESTS_PASSED + 1))
-else
-    echo "  FAIL  rails.md installed $agent_count reviewers, expected 8"
-    TESTS_FAILED=$((TESTS_FAILED + 1))
-    FAILED+=("rails.md install reviewer count")
-fi
+assert_agent_count "rails.md installs all 8 reviewers" "$repo/AGENT-REVIEWERS.md" 8
 rm -rf "$repo"
 
 echo
 echo "=== Test I_FA4: terraform.md installs all 7 reviewers ==="
 repo="$(make_temp_repo)"
 run_install "$repo" iFA4 terraform:.
-agent_count="$(awk '
-    BEGIN { f=0; in_fence=0 }
-    /^```/ { in_fence = !in_fence; next }
-    !in_fence && /^# Agents/ { f=1; next }
-    !in_fence && /^# / { f=0 }
-    f && !in_fence && /^## / { print }
-' "$repo/AGENT-REVIEWERS.md" | wc -l)"
-if [[ "$agent_count" == "7" ]]; then
-    echo "  PASS  terraform.md installs all 7 reviewers"
-    TESTS_PASSED=$((TESTS_PASSED + 1))
-else
-    echo "  FAIL  terraform.md installed $agent_count reviewers, expected 7"
-    TESTS_FAILED=$((TESTS_FAILED + 1))
-    FAILED+=("terraform.md install reviewer count")
-fi
+assert_agent_count "terraform.md installs all 7 reviewers" "$repo/AGENT-REVIEWERS.md" 7
 rm -rf "$repo"
 
 echo
 echo "=== Test I_FA5: javascript.md installs all 7 reviewers ==="
 repo="$(make_temp_repo)"
 run_install "$repo" iFA5 javascript:.
-agent_count="$(awk '
-    BEGIN { f=0; in_fence=0 }
-    /^```/ { in_fence = !in_fence; next }
-    !in_fence && /^# Agents/ { f=1; next }
-    !in_fence && /^# / { f=0 }
-    f && !in_fence && /^## / { print }
-' "$repo/AGENT-REVIEWERS.md" | wc -l)"
-if [[ "$agent_count" == "7" ]]; then
-    echo "  PASS  javascript.md installs all 7 reviewers"
-    TESTS_PASSED=$((TESTS_PASSED + 1))
-else
-    echo "  FAIL  javascript.md installed $agent_count reviewers, expected 7"
-    TESTS_FAILED=$((TESTS_FAILED + 1))
-    FAILED+=("javascript.md install reviewer count")
-fi
+assert_agent_count "javascript.md installs all 7 reviewers" "$repo/AGENT-REVIEWERS.md" 7
 rm -rf "$repo"
 
 echo
 echo "=== Test I_FA1: fence-aware extract — python.md installs all 13 reviewers (regression for latent PR #25 bug) ==="
 repo="$(make_temp_repo)"
 run_install "$repo" iFA1 python:.
-# Count agents under # Agents H1 ONLY, fence-aware (don't be fooled by # BAD/# GOOD in code blocks)
-agent_count="$(awk '
-    BEGIN { f=0; in_fence=0 }
-    /^```/ { in_fence = !in_fence; next }
-    !in_fence && /^# Agents/ { f=1; next }
-    !in_fence && /^# / { f=0 }
-    f && !in_fence && /^## / { print }
-' "$repo/AGENT-REVIEWERS.md" | wc -l)"
-if [[ "$agent_count" == "13" ]]; then
-    echo "  PASS  python.md installs all 13 reviewers"
-    TESTS_PASSED=$((TESTS_PASSED + 1))
-else
-    echo "  FAIL  python.md installed $agent_count reviewers, expected 13"
-    TESTS_FAILED=$((TESTS_FAILED + 1))
-    FAILED+=("python.md install reviewer count")
-fi
+# Counts agents under # Agents H1 ONLY, fence-aware (don't be fooled by # BAD/# GOOD in code blocks)
+assert_agent_count "python.md installs all 13 reviewers" "$repo/AGENT-REVIEWERS.md" 13
 rm -rf "$repo"
 
 echo
 echo "=== Test I_FA2: fence-aware extract — golang.md installs all 8 reviewers ==="
 repo="$(make_temp_repo)"
 run_install "$repo" iFA2 golang:.
-agent_count="$(awk '
-    BEGIN { f=0; in_fence=0 }
-    /^```/ { in_fence = !in_fence; next }
-    !in_fence && /^# Agents/ { f=1; next }
-    !in_fence && /^# / { f=0 }
-    f && !in_fence && /^## / { print }
-' "$repo/AGENT-REVIEWERS.md" | wc -l)"
-if [[ "$agent_count" == "8" ]]; then
-    echo "  PASS  golang.md installs all 8 reviewers"
-    TESTS_PASSED=$((TESTS_PASSED + 1))
-else
-    echo "  FAIL  golang.md installed $agent_count reviewers, expected 8"
-    TESTS_FAILED=$((TESTS_FAILED + 1))
-    FAILED+=("golang.md install reviewer count")
-fi
+assert_agent_count "golang.md installs all 8 reviewers" "$repo/AGENT-REVIEWERS.md" 8
 rm -rf "$repo"
 
 echo
