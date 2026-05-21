@@ -55,6 +55,16 @@
       "author": {
         "name": "Devon Jones"
       }
+    },
+    {
+      "name": "handoff",
+      "description": "Compact the current conversation into a handoff document for another agent (new session, teammate, different agent) to pick up the work without ramping from zero.",
+      "version": "1.0.0",
+      "source": "./plugins/handoff",
+      "category": "productivity",
+      "author": {
+        "name": "Devon Jones"
+      }
     }
   ]
 }
