@@ -47,8 +47,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Get repo info
-REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//')
+# Get repo info via gh's own detection (doesn't depend on a remote named "origin").
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || { echo "Warning: Could not determine repository." >&2; })
 OWNER=$(echo "$REPO" | cut -d'/' -f1)
 REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
 

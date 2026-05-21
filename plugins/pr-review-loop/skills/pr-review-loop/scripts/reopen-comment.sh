@@ -15,8 +15,9 @@ COMMENT_ID="${2:?Usage: reopen-comment.sh <pr-number> <comment-id> <agent-name> 
 AGENT_NAME="${3:?Usage: reopen-comment.sh <pr-number> <comment-id> <agent-name> \"reason\"}"
 REASON="${4:?Usage: reopen-comment.sh <pr-number> <comment-id> <agent-name> \"reason\"}"
 
-# Get repo info
-REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//') || {
+# Get repo info via gh's own detection (doesn't depend on a remote named "origin").
+# Hard-exit on failure: this script can't reopen a comment without a known repo.
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
     echo "Error: Could not determine repository. Run from within a git repository." >&2
     exit 1
 }
