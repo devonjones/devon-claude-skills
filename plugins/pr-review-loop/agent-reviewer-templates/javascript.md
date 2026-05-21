@@ -416,7 +416,7 @@ the review loop's exit-condition consideration.
 
 **Implementation note:**
 
-This reviewer scans the PR's existing review comments (via `get-review-comments.sh <PR>`) for migration-pushing language. It runs in parallel with the other reviewers; in any given round it will only see findings that other reviewers (or humans) posted in earlier rounds. That's fine — across the lifetime of a PR's review loop, migration-pushing language gets caught and replied to within one or two rounds of being posted. The reviewer does NOT require strict "runs last" ordering, which the orchestrator does not currently support.
+This reviewer scans existing PR review comments (via `get-review-comments.sh <PR>`) for migration-pushing language. It runs in parallel with other reviewers and only sees findings from earlier rounds; strict last-ordering is not required.
 
 Migration-pushing language to scan for:
 
