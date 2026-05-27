@@ -2,8 +2,6 @@
 
 This file is the operational companion to the round-structure diagram in `SKILL.md`'s "The Loop" section. The diagram is the source-of-truth for phase order; this file gives the per-step bash commands and example outputs.
 
-Read this file when actually executing a round (the model can re-read it on demand). The diagram in `SKILL.md` stays loaded in every session; the prose here doesn't need to be.
-
 ---
 
 **Do NOT reply to anything during the COLLECT phase (C1–C3) — all replies happen in the FIX phase (F1–F3).**

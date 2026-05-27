@@ -89,9 +89,9 @@ The quality-weighted exit condition (see ONE MORE LOOP Rule) depends on classify
 | Claude `⚠️` | P2 if correctness/security/breaking; else P3 | Yes if correctness/security/breaking; no if style/prose |
 | Agent comment, no explicit label | Infer from content: correctness/security/breaking → P1/P2; else P3 | Per inferred level |
 
-**"Won't fix" on a P1/P2 finding does NOT resolve it on its own** — it still blocks quality-weighted exit unless either (i) the finding is reclassified to P3 with explicit justification (drop one P-level with reasoning), or (ii) the user explicitly signs off on the carry-forward, in which case the finding is recorded as an acknowledged unresolved item in the merge-readiness summary.
+**"Won't fix" on a P1/P2 finding does NOT resolve it on its own** — it still blocks quality-weighted exit unless either (i) the finding is reclassified to P3 with explicit justification (drop one P-level with reasoning), (ii) the finding is actually fixed in a later round, or (iii) the user explicitly signs off on the carry-forward, in which case the finding is recorded as an acknowledged unresolved item in the merge-readiness summary.
 
-The (ii) escape valve exists so the model isn't forced to relabel its own honest "won't fix" judgment as a reclassification just to satisfy exit conditions. If a P2 finding is genuinely a "this won't be fixed because the trade-off is intentional and documented" — and the model can't honestly drop it to P3 — surface it to the user and let them sign off on the carry-forward.
+The (iii) escape valve exists so the model isn't forced to relabel a genuine "won't fix" as a reclassification: surface the finding to the user, they sign off, it's recorded in the merge-readiness summary.
 
 **Classifying `![medium]` (Gemini's most-used label) — use these heuristics:**
 
@@ -964,7 +964,7 @@ This catches the asymmetric-cost failure mode: a false-positive that gets *appli
 
 The validator runs on **sonnet uniformly across all flaggers**, regardless of the flagger's own model. This is a deliberate choice for telemetry hygiene: per-flagger acceptance-rate signal stays comparable across agents only when the validator instrument is held constant. Mirroring the flagger's model (e.g., opus-validates-opus) would conflate "this flagger emits false positives" with "opus is more confident than sonnet" — both move the acceptance rate in the same direction.
 
-Sonnet is the right choice for a "second look": cheaper than opus while still strong enough to verify the validator task (read diff, decide if the finding holds against the code as written).
+Sonnet is the right choice for a "second look": cheaper than opus while still strong enough for the validator task.
 
 Per-agent overrides may land later (see `devon-claude-skills-qml`) — when they do, the override is an explicit user opt-in, and the documentation will state that an overridden agent's acceptance rate is no longer directly comparable to others'.
 
