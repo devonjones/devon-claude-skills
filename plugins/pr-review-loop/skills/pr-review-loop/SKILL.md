@@ -8,13 +8,6 @@ description: |
   Supports multiple review bots: Gemini Code Assist, Cursor Bugbot, and Claude agent fallback.
   Also supports custom agent reviewers defined in AGENT-REVIEWERS.md for focused reviews (security, DRY, etc.).
   Automatically detects priority levels from different bot formats and handles rate limits.
-
-  IMPORTANT: Do NOT run the main review loop as a background Task agent. Tasks cannot spawn sub-Tasks,
-  so agent reviewers (from AGENT-REVIEWERS.md) will silently fail to run. Execute the review
-  loop directly in the main conversation so it can spawn agent reviewer Tasks.
-
-  CRITICAL: When using this skill, NEVER use raw git commit/push commands. ALWAYS use commit-and-push.sh script.
-  The user has NOT granted permission for raw git commands - only the script is allowed.
 ---
 
 # PR Review Loop
@@ -96,7 +89,9 @@ The quality-weighted exit condition (see ONE MORE LOOP Rule) depends on classify
 | Claude `⚠️` | P2 if correctness/security/breaking; else P3 | Yes if correctness/security/breaking; no if style/prose |
 | Agent comment, no explicit label | Infer from content: correctness/security/breaking → P1/P2; else P3 | Per inferred level |
 
-**"Won't fix" on a P1/P2 finding does NOT resolve it** — it still blocks quality-weighted exit unless the finding is misclassified (drop it one P-level with explicit justification in the reply).
+**"Won't fix" on a P1/P2 finding does NOT resolve it on its own** — it still blocks quality-weighted exit unless (i) the finding is reclassified to P3 with explicit justification (drop one P-level with reasoning), (ii) the finding is actually fixed in a later round, or (iii) the user explicitly signs off on the carry-forward, in which case the finding is recorded as an acknowledged unresolved item in the merge-readiness summary.
+
+The (iii) escape valve exists so the model isn't forced to relabel a genuine "won't fix" as a reclassification: surface the finding to the user, they sign off, it's recorded in the merge-readiness summary.
 
 **Classifying `![medium]` (Gemini's most-used label) — use these heuristics:**
 
@@ -284,15 +279,15 @@ When a full round (Gemini + other bots + agent reviewers) produces no actionable
 - The **first** qualifying round (zero actionable fixes — i.e., only nitpicks, only "Won't fix", or zero comments) IS the ONE MORE LOOP trigger.
 - The **second** qualifying round IS the final verification — if the full Exit condition (quality-weighted) below is satisfied (all of (a) through (d)), you exit immediately at end of that round. No third round needed.
 
-**Tracking state**: Use TodoWrite to track whether you're in the "final verification round". Create a todo like "Final verification round - if no actionable feedback, ready to merge".
+**Tracking state**: Use `TaskCreate` to track whether you're in the "final verification round". Create a task like "Final verification round - if no actionable feedback, ready to merge".
 
-**Reset condition**: If the final verification round produces **P1 or P2 fixes** (correctness, security, breaking changes — see Priority to Exit-Condition Mapping), remove the "final verification round" todo — you need a fresh "one more" after pushing those fixes. Nitpick-level (P3) fixes do NOT reset the counter.
+**Reset condition**: If the final verification round produces **P1 or P2 fixes** (correctness, security, breaking changes — see Priority to Exit-Condition Mapping), remove the "final verification round" task — you need a fresh "one more" after pushing those fixes. Nitpick-level (P3) fixes do NOT reset the counter.
 
 **Exit condition (quality-weighted)**: You're done when ALL of:
 - (a) **No P1/P2 findings** (correctness, security, breaking changes) in the last round
 - (b) **The last two rounds had zero actionable (P1/P2) fixes** — i.e., they contained only nitpicks, were zero-comment rounds, or all feedback was "Won't fix"
 - (c) **No contradictions across rounds**
-- (d) **No unresolved P1/P2 Won't-fix findings carried forward from any prior round** — every Won't-fix on a P1/P2 must have been either (i) reclassified to P3 with explicit justification per the Priority Mapping rule, or (ii) actually fixed in a later round. Carried-forward Won't-fix on a real P1/P2 blocks exit regardless of (a) and (b).
+- (d) **No unresolved P1/P2 Won't-fix findings carried forward from any prior round** — every Won't-fix on a P1/P2 must have been (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) actually fixed in a later round, or (iii) explicitly signed off on by the user as an acknowledged carry-forward (recorded in the merge-readiness summary). Carried-forward Won't-fix on a real P1/P2 without one of these three resolutions blocks exit regardless of (a) and (b).
 
 — **OR** the Hard Round Ceiling has fired (see above).
 
@@ -413,114 +408,13 @@ EACH ROUND — three phases, in order:
 
 **Phase order is mandatory.** Complete all COLLECT steps (C1, C2, C3) before beginning any FIX step (F1–F7). The BATCH POINT between them is what makes Pattern Analysis (`Sweep Before Fixing`) work.
 
-**For full step-by-step details with commands and example outputs, see the "Step-by-step (Each Round)" section below.** The diagram above is the authoritative execution order.
+**For full step-by-step details with commands and example outputs, see [`references/round-workflow.md`](references/round-workflow.md).** The diagram above is the authoritative execution order; the reference file is the operational companion the model can read on demand when actually running a round.
 
 **COMPLETION:**
 When a full round produces no actionable feedback (Gemini + other bots + agents all stable)
 AND this was the "final verification" round:
 - Report all beads tickets created during the loop (if any)
 - Ask user about merge
-
-### Step-by-step (Each Round)
-
-**Do NOT reply to anything during the COLLECT phase (C1–C3) — all replies happen in the FIX phase (F1–F3).**
-
-**C1. Check for unresolved Gemini line comments (ALWAYS use --wait for first check after PR creation or push):**
-```bash
-scripts/summarize-reviews.sh <PR>
-scripts/get-review-comments.sh <PR> --with-ids --wait
-```
-The `--wait` flag polls every 30s for up to 5 minutes, waiting for Gemini to respond. Do NOT skip this or use a shorter timeout.
-
-The `--with-ids` flag outputs comment IDs needed for replies. Example output:
-```
-=== Comment ID: 2710906366 | Node ID: PRRC_kwDOD3ZsRc6hlSX- ===
-File: pfsrd2/equipment.py:84
-Priority: high
-
-The function appears to duplicate functionality...
-```
-
-**Use the Node ID (PRRC_...) when replying to comments.** The Node ID is required for `reply-to-comment.sh` to properly attach your reply to the review thread.
-
-**C2. Check for other bot PR comments (Claude, Cursor, Copilot):**
-
-These bots post single PR comments (not line comments) containing multiple issues. Use `get-pr-comments.sh` (handles priority detection and author filtering):
-```bash
-scripts/get-pr-comments.sh <PR> --with-ids --author claude
-```
-
-For each issue in the comment, parse the structured markdown (numbered issues, file:line references) and note it for the BATCH POINT.
-
-**C3. Run agent reviewers (the merged default + user agent set from pre-loop setup):**
-
-- Spawn non-retired agents as parallel Tasks (defaults always spawn unless overridden or disabled per C+E)
-- Wait for all agents to return
-- **For each finding returned, run the independent validator** (per "Independent Validator Pipeline" section). VALID findings flow to the BATCH POINT below; INVALID dropped; UNCERTAIN handled per `independent_validator.uncertain_action`. Skip validation for any flagger named in `independent_validator.skip_for`. Skip validation entirely if `independent_validator.enabled` is false.
-
-#### BATCH POINT (required before FIX Phase)
-
-Apply **"Batch Before Acting"** (see Pattern Analysis section above):
-- List all C1 + C2 + C3 comments as a single set
-- Identify cross-source patterns (same issue type across multiple comments or files) — plan sweeps, not individual fixes
-- For each planned fix, re-read the new text through each active agent's lens before staging: would code-reviewer flag this? Would comment-analyzer flag a stale assertion? Revise until the fix itself wouldn't draw a new comment
-- Record deliberate trade-offs for the commit message body (so reviewers see reasoning and don't re-flag the concern)
-
-#### FIX Phase (apply the batched plan)
-
-**F1. Apply + reply to Gemini line comments (MANDATORY — reply to every comment):**
-
-- Apply the planned fixes from BATCH POINT (or decide to skip)
-- **ALWAYS reply using the script with the Node ID** — this resolves the thread:
-```bash
-# Use the Node ID (PRRC_...) from C1 output
-scripts/reply-to-comment.sh <PR> PRRC_kwDOD3ZsRc6hlSX- "Fixed - description"
-# OR for bad/inappropriate suggestions:
-scripts/reply-to-comment.sh <PR> PRRC_kwDOD3ZsRc6hlSX- "Won't fix - reason"
-# OR for good suggestions outside PR scope — see "Out of Scope Suggestions" section:
-scripts/reply-to-comment.sh <PR> PRRC_kwDOD3ZsRc6hlSX- "Out of scope - tracked in BD-XXX"
-```
-
-**F2. Apply + reply to other bot comments:**
-
-Reply to the PR comment with a consolidated response covering all issues from C2:
-```bash
-gh pr comment <PR> --body "## Response to Claude Review
-
-**Issue 1 (name):** Fixed - description
-**Issue 2 (name):** Won't fix - reason
-**Issue 3 (name):** Out of scope - tracked in BD-XXX
-"
-```
-
-**F3. Apply + reply to agent comments:**
-- Same fix/wontfix/out-of-scope flow as Gemini (use `reply-to-comment.sh` with the Node ID)
-- Track per-agent diminishing returns; see "Agent Reviewers" section for retirement logic
-
-**F4. Commit and push (ALWAYS use the script, NEVER raw git) — ONCE per round, if any fixes were made:**
-```bash
-scripts/commit-and-push.sh "$(cat <<'EOF'
-fix: address review comments
-
-Trade-offs from BATCH POINT:
-- [reasoning for choice X — pre-empts re-flag from agent Y]
-EOF
-)"
-```
-This script runs pre-commit, commits with proper footer, and pushes. Include deliberate trade-offs in the commit body so reviewers see reasoning rather than re-flagging the concern.
-
-**F5. Wait for CI checks and fix failures (if any):**
-```bash
-scripts/check-ci.sh <PR> --wait
-```
-
-**F6. Trigger next review and wait for response:**
-```bash
-scripts/trigger-review.sh <PR> --wait
-```
-The `--wait` flag polls every 30s for up to 5 minutes waiting for new comments. Do NOT use sleep or manual polling.
-
-**F7. Inspect F6's output BEFORE applying exit conditions.** If F6 returned new comments, start the next COLLECT PHASE. Otherwise apply the quality-weighted exit condition and Hard Round Ceiling check (see ONE MORE LOOP Rule in Stopping Heuristics).
 
 ## CI Failure Handling
 
@@ -651,7 +545,7 @@ scripts/reply-to-comment.sh <PR> <comment-id> "Out of scope - tracked in BD-XXX"
    ```bash
    scripts/reply-to-comment.sh <PR> <comment-id> "Out of scope for this PR - see review loop completion summary"
    ```
-2. Collect all out-of-scope findings with full context (original comment text, file paths, line numbers, PR number, reviewer, and the `gh api` command to fetch the comment). Store these in your TodoWrite state so they survive across rounds.
+2. Collect all out-of-scope findings with full context (original comment text, file paths, line numbers, PR number, reviewer, and the `gh api` command to fetch the comment). Track these via `TaskCreate` (one task per finding, with the full context in the task body) so they survive across rounds.
 3. In the completion summary, list all out-of-scope findings and recommend installing beads to track them. Offer to create a follow-up PR that:
    - Creates a markdown file (e.g., `TODO-beads.md`) with pre-filled `bd create` commands for each out-of-scope finding, using the context collected in step 2
    - Includes instructions for the user to run `bd init` and execute the commands in the markdown file
@@ -858,7 +752,7 @@ On accept, follow the "Project-Specific Reviewer Recommendations" section below 
 
 #### When the user declines the install offer
 
-Don't re-prompt within the same loop invocation. Track the decline in TodoWrite (or equivalent ephemeral state) so a fresh loop invocation re-fires the offer if conditions still hold. Continue to step 3 with only the 6 baked-in defaults.
+Don't re-prompt within the same loop invocation. Track the decline via `TaskCreate` (or equivalent ephemeral state) so a fresh loop invocation re-fires the offer if conditions still hold. Continue to step 3 with only the 6 baked-in defaults.
 
 ### Project-Specific Reviewer Recommendations
 
@@ -994,7 +888,7 @@ No re-run of `discover-agents.sh` needed — round 1 picks up the new files natu
 
 #### When the user declines the recommendations prompt
 
-Just continue to step 3 (stale-pin check). The template install stays in place; no further writes happen. Track the decline in TodoWrite so the prompt doesn't re-fire if the loop happens to revisit this code path within the same invocation.
+Just continue to step 3 (stale-pin check). The template install stays in place; no further writes happen. Track the decline via `TaskCreate` so the prompt doesn't re-fire if the loop happens to revisit this code path within the same invocation.
 
 ### Stale Pin Detection (at loop start)
 
@@ -1025,12 +919,12 @@ Once the stale check passes (or `--skip-stale-check` is set), the loop emits a o
 ```
 Spawning 6 reviewers: 4 defaults + 1 user override (code-reviewer) + 1 user agent (pci-auditor).
 Disabled defaults: pr-test-analyzer.
-Validation: enabled (opus validators for 2 bug-class agents, sonnet validators for 4 others).
+Validation: enabled (sonnet validators across all flaggers).
 ```
 
-(Math: 6 defaults − 1 disabled (pr-test-analyzer) − 1 overridden (code-reviewer) = 4 default agents spawning; plus the user's `code-reviewer` override and `pci-auditor` user agent = 6 total. Of those 6, 2 are bug-class (silent-failure-hunter, code-simplifier) and 4 are compliance/sonnet, so the validators tier accordingly.)
+(Math: 6 defaults − 1 disabled (pr-test-analyzer) − 1 overridden (code-reviewer) = 4 default agents spawning; plus the user's `code-reviewer` override and `pci-auditor` user agent = 6 total. Flagger model varies (some agents flag in opus, others in sonnet) but the validator model is held constant at sonnet so per-flagger acceptance-rate telemetry isn't confounded by validator strictness.)
 
-Goes to the same TodoWrite / pre-round summary surface as other setup state.
+Goes to the same task tracking state / pre-round summary surface as other setup state.
 
 When validation is disabled or partially skipped, the third line reflects that:
 
@@ -1068,17 +962,19 @@ This catches the asymmetric-cost failure mode: a false-positive that gets *appli
 
 #### Validator model selection
 
-The validator's model **mirrors the flagger's model.** Bug-class agents (silent-failure-hunter, pr-test-analyzer, code-simplifier; future security-reviewer / performance-reviewer via 9ao) flag in opus and get opus validators. Compliance agents (code-reviewer, comment-analyzer, type-design-analyzer) flag in sonnet and get sonnet validators.
+The validator runs on **sonnet uniformly across all flaggers**, regardless of the flagger's own model. This is a deliberate choice for telemetry hygiene: per-flagger acceptance-rate signal stays comparable across agents only when the validator instrument is held constant. Mirroring the flagger's model (e.g., opus-validates-opus) would conflate "this flagger emits false positives" with "opus is more confident than sonnet" — both move the acceptance rate in the same direction.
 
-Custom user agents that don't declare a model default to sonnet for both flagging and validation.
+Sonnet is the right choice for a "second look": cheaper than opus while still strong enough for the validator task.
+
+Per-agent overrides may land later (see `devon-claude-skills-qml`) — when they do, the override is an explicit user opt-in, and the documentation will state that an overridden agent's acceptance rate is no longer directly comparable to others'.
 
 #### Validator Task prompt template
 
 ```yaml
 Task tool:
   subagent_type: general-purpose
-  model: <flagger.model or "sonnet">
-  description: validate <flagger-category> finding on <file>:<line>
+  model: sonnet
+  description: validate review finding on <file>:<line>
   prompt: |
     You are an independent validator for a code review finding.
     Your only job is to verify the finding against the actual code.
@@ -1132,8 +1028,7 @@ The parser **rejects** non-boolean `enabled`, non-array `skip_for`, `uncertain_a
 #### Telemetry
 
 Each finding's validator outcome is logged to `.beads/pr-review-loop/findings/<pr>-<round>.jsonl` (per the gx4 telemetry framework when it lands). Aggregated at end-of-round and end-of-loop:
-- Per-flagger validation acceptance rate (helps identify reviewers that emit many false positives)
-- Per-validator-model count (visualises the cost split across opus/sonnet validators)
+- Per-flagger validation acceptance rate (helps identify reviewers that emit many false positives — comparable across flaggers because the validator model is held constant)
 - Total findings dropped or annotated by the validator
 
 ### AGENT-REVIEWERS.md Format
@@ -1302,7 +1197,7 @@ Agent reviewers run as C3 — the last step of the COLLECT phase, after C1 (Gemi
 
 Apply the same heuristic as Gemini, but **per agent**:
 
-- Track each agent with TodoWrite: `"<agent-name>: final verification loop"`
+- Track each agent via `TaskCreate`: `"<agent-name>: final verification loop"`
 - After 2-3 cycles where an agent produces only nitpicks or "Won't fix" responses, enter final verification for that agent
 - If an agent's final verification produces actual fixes, reset its state
 - If an agent's final verification produces no actionable feedback, **stop calling that agent**
