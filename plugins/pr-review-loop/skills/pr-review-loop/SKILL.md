@@ -924,7 +924,7 @@ Validation: enabled (sonnet validators across all flaggers).
 
 (Math: 6 defaults − 1 disabled (pr-test-analyzer) − 1 overridden (code-reviewer) = 4 default agents spawning; plus the user's `code-reviewer` override and `pci-auditor` user agent = 6 total. Flagger model varies (some agents flag in opus, others in sonnet) but the validator model is held constant at sonnet so per-flagger acceptance-rate telemetry isn't confounded by validator strictness.)
 
-Goes to the same `TaskCreate` / pre-round summary surface as other setup state.
+Goes to the same task tracking state / pre-round summary surface as other setup state.
 
 When validation is disabled or partially skipped, the third line reflects that:
 
