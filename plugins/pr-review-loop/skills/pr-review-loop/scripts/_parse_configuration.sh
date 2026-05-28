@@ -74,9 +74,16 @@ RAW_JSON="$(awk '
     !in_fence && /^#[[:space:]]+/ { in_config = 0 }
     in_json { print }
     END {
-        # Defensive: warn on malformed input. An unclosed fence here means
-        # the json block was never closed cleanly, so RAW_JSON is incomplete
-        # and the downstream jq parse will fail with a less obvious error.
+        # Defensive: warn on malformed input. `in_fence == 1` at EOF covers
+        # two cases:
+        #   (a) the json fence opened and never closed — RAW_JSON contains
+        #       partial json and the downstream jq parse fails with a less
+        #       obvious error
+        #   (b) a non-json prose fence opened and never closed — RAW_JSON
+        #       is empty and the wrapper silently returns `{}` (see the
+        #       `[[ -z "$RAW_JSON" ]]` branch below)
+        # Case (b) is the silent-config-loss failure mode the warning makes
+        # visible. Case (a) just makes the existing jq error easier to read.
         if (in_fence) {
             print "Warning: unclosed code fence in " FILENAME > "/dev/stderr"
         }

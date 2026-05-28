@@ -866,6 +866,7 @@ run_discover "$repo" "src/foo.py" t35
 # The unclosed fence corrupts the parse — but the script falls back to {}
 # rather than aborting the whole loop. What we care about is the user gets
 # a clear stderr signal so they can fix their markdown.
+assert_exit "exit 0 (non-fatal — locks in graceful-fallback half of contract)" "$t35_exit" "0"
 assert_stderr_contains "unclosed-fence warning in stderr" "$t35_err" "unclosed code fence"
 rm -rf "$repo"
 
