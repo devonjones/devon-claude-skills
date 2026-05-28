@@ -817,6 +817,59 @@ assert_jq "overlap_acknowledged parsed" "$t31" '.configuration.overlaps_acknowle
 rm -rf "$repo"
 
 echo
+echo "=== Test 34: unclosed code fence in agent body emits stderr warning ==="
+# Defensive: an unclosed code fence is malformed input that would otherwise
+# silently swallow subsequent H1/H2. The awk's END block warns to stderr so
+# the user has a clear signal.
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Agents
+
+## first-reviewer
+
+Example with an unclosed fence:
+
+```bash
+# this fence never closes
+echo "oops"
+
+## second-reviewer
+
+A second reviewer that gets silently swallowed under toggle semantics.
+EOF
+run_discover "$repo" "src/foo.py" t34
+assert_exit "exit 0 (warning, not error)" "$t34_exit" "0"
+assert_stderr_contains "unclosed-fence warning in stderr" "$t34_err" "unclosed code fence"
+rm -rf "$repo"
+
+echo
+echo "=== Test 35: unclosed fence in # Configuration narrative emits stderr warning ==="
+# Same defensive check in _parse_configuration.sh's awk. An unclosed fence
+# before the json block means the parser will never reach the real config —
+# the END block warns so the user knows why their config didn't take effect.
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+Example with an unclosed shell fence (no closing backticks):
+
+```bash
+# disabled lists default reviewer names to skip
+
+```json
+{
+  "disabled": ["code-simplifier"]
+}
+```
+EOF
+run_discover "$repo" "src/foo.py" t35
+# The unclosed fence corrupts the parse — but the script falls back to {}
+# rather than aborting the whole loop. What we care about is the user gets
+# a clear stderr signal so they can fix their markdown.
+assert_stderr_contains "unclosed-fence warning in stderr" "$t35_err" "unclosed code fence"
+rm -rf "$repo"
+
+echo
 echo "=== Test 33: multiple json blocks under # Configuration — first block wins ==="
 # The awk in _parse_configuration.sh exits on the first json fence close. If a
 # user writes an annotated "example" json block before the real config block

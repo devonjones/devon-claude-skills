@@ -192,9 +192,10 @@ parse_agent_file() {
         next
     }
 
-    !in_fence && /^# / {
+    !in_fence && /^#[[:space:]]+/ {
         flush()
-        h1_name = substr($0, 3)
+        h1_name = $0
+        sub(/^#[[:space:]]+/, "", h1_name)
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", h1_name)
         current_h1 = h1_name
         in_agents = (h1_name == "Agents")
@@ -203,9 +204,10 @@ parse_agent_file() {
         next
     }
 
-    !in_fence && /^## / && in_agents {
+    !in_fence && /^##[[:space:]]+/ && in_agents {
         flush()
-        current_h2 = substr($0, 4)
+        current_h2 = $0
+        sub(/^##[[:space:]]+/, "", current_h2)
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", current_h2)
         content = ""
         next
@@ -218,6 +220,13 @@ parse_agent_file() {
 
     END {
         flush()
+        # Defensive: surface malformed input. An unclosed code fence
+        # silently swallows subsequent H1/H2 into the prior section
+        # content — same silent-data-loss class as the fence-unaware
+        # bug fixed by this awk, just triggered by malformed input.
+        if (in_fence) {
+            print "Warning: unclosed code fence in " source > "/dev/stderr"
+        }
     }
     ' "$file"
 }

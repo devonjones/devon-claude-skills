@@ -73,6 +73,14 @@ RAW_JSON="$(awk '
     # Any other H1 (outside fences) ends the Configuration section.
     !in_fence && /^#[[:space:]]+/ { in_config = 0 }
     in_json { print }
+    END {
+        # Defensive: warn on malformed input. An unclosed fence here means
+        # the json block was never closed cleanly, so RAW_JSON is incomplete
+        # and the downstream jq parse will fail with a less obvious error.
+        if (in_fence) {
+            print "Warning: unclosed code fence in " FILENAME > "/dev/stderr"
+        }
+    }
 ' "$FILE")"
 
 if [[ -z "$RAW_JSON" ]]; then
