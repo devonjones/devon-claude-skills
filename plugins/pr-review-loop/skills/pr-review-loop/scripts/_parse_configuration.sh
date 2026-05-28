@@ -40,18 +40,40 @@ fi
 
 # Extract the fenced JSON block within the # Configuration H1 section.
 # Logic:
-#   - On `# Configuration`, enter configuration section
-#   - On any other `# `, leave configuration section
+#   - Track `in_fence` for ANY fenced code block (not just the json one) so
+#     `^# ` lines inside narrative-example fences don't falsely close the
+#     Configuration section before the json block is reached.
+#   - On `# Configuration` (outside fences), enter configuration section.
+#   - On any other `# ` (outside fences), leave configuration section.
 #   - Inside configuration section, when we see ```json, capture lines
-#     until the closing ```
+#     until the next ``` (which is the closing of the json fence).
 RAW_JSON="$(awk '
-    BEGIN { in_config = 0; in_fence = 0 }
-    /^# Configuration[[:space:]]*$/ { in_config = 1; next }
-    # Any other H1 ends the Configuration section.
-    /^# / { in_config = 0 }
-    in_config && /^```json[[:space:]]*$/ { in_fence = 1; next }
-    in_config && in_fence && /^```[[:space:]]*$/ { in_fence = 0; in_config = 0; exit }
-    in_config && in_fence { print }
+    BEGIN { in_config = 0; in_fence = 0; in_json = 0 }
+    # Track every fence open/close so heading detection stays accurate even
+    # when prose preceding the json block contains fenced `^# ` examples.
+    /^```/ {
+        # Json-block bookkeeping: if we are about to close the json fence we
+        # were capturing, emit nothing and exit cleanly.
+        if (in_json && /^```[[:space:]]*$/) {
+            in_json = 0
+            in_fence = 0
+            in_config = 0
+            exit
+        }
+        # Opening the json fence inside the Configuration section.
+        if (in_config && !in_fence && /^```json[[:space:]]*$/) {
+            in_fence = 1
+            in_json = 1
+            next
+        }
+        # Any other fence: just toggle the generic tracker.
+        in_fence = !in_fence
+        next
+    }
+    !in_fence && /^# Configuration[[:space:]]*$/ { in_config = 1; next }
+    # Any other H1 (outside fences) ends the Configuration section.
+    !in_fence && /^# / { in_config = 0 }
+    in_json { print }
 ' "$FILE")"
 
 if [[ -z "$RAW_JSON" ]]; then

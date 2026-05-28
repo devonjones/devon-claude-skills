@@ -173,9 +173,23 @@ parse_agent_file() {
         current_h2 = ""
         current_h1 = ""
         content = ""
+        in_fence = 0
     }
 
-    /^# / {
+    # Toggle fence state on any line starting with three backticks. Inside a
+    # fence, treat the line as content (so the rendered agent body keeps its
+    # opening/closing fence) and skip the H1/H2-detection branches. Without
+    # this, an agent body containing a fenced `# BAD` or `## Example` line
+    # silently flushes mid-agent and (worse) flips `in_agents` off when the
+    # bogus h1 does not equal "Agents", dropping every agent defined below.
+    /^```/ {
+        in_fence = !in_fence
+        if (content != "") content = content "\n" $0
+        else content = $0
+        next
+    }
+
+    !in_fence && /^# / {
         flush()
         h1_name = substr($0, 3)
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", h1_name)
@@ -186,7 +200,7 @@ parse_agent_file() {
         next
     }
 
-    /^## / && in_agents {
+    !in_fence && /^## / && in_agents {
         flush()
         current_h2 = substr($0, 4)
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", current_h2)
@@ -277,10 +291,18 @@ fi
 # Warn if subdirectory AGENT-REVIEWERS.md files have a # Configuration section —
 # their configuration is silently ignored, so surface that fact to the user.
 # Compare canonical paths via realpath so `/./` segments don't false-positive.
+# Detection is fence-aware: a `# Configuration` inside a fenced example in an
+# agent body is content, not a heading, and shouldn't trigger the warning.
 ROOT_AGENT_REVIEWERS_CANON="$(realpath "$ROOT_AGENT_REVIEWERS" 2>/dev/null || echo "$ROOT_AGENT_REVIEWERS")"
 for f in "${AGENT_FILES[@]}"; do
     f_canon="$(realpath "$f" 2>/dev/null || echo "$f")"
-    if [[ "$f_canon" != "$ROOT_AGENT_REVIEWERS_CANON" ]] && grep -q '^# Configuration[[:space:]]*$' "$f"; then
+    [[ "$f_canon" == "$ROOT_AGENT_REVIEWERS_CANON" ]] && continue
+    if awk '
+        BEGIN { in_fence = 0; found = 0 }
+        /^```/ { in_fence = !in_fence; next }
+        !in_fence && /^# Configuration[[:space:]]*$/ { found = 1; exit }
+        END { exit (found ? 0 : 1) }
+    ' "$f"; then
         echo "Warning: # Configuration section found in $f — ignored (only the root AGENT-REVIEWERS.md's configuration is honored)" >&2
     fi
 done

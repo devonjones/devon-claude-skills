@@ -708,6 +708,158 @@ assert_jq "language_detection is null (subdir AGENT-REVIEWERS.md found via walk-
 rm -rf "$repo"
 
 # ---------------------------------------------------------------------------
+# Test 29–32: fence-aware awk parsing in discover-agents.sh and
+# _parse_configuration.sh. Regression for the same fence-unaware bug class
+# that install-template.sh's extract_section closed in 98b — adjacent awk
+# programs had the same silent-data-loss failure mode.
+# ---------------------------------------------------------------------------
+
+echo
+echo "=== Test 29: fenced '# ' inside agent body doesn't drop subsequent agents ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Agents
+
+## first-reviewer
+
+Look for shell scripts missing `set -euo pipefail`. Example of what to flag:
+
+```bash
+#!/bin/bash
+# BAD: no error handling
+echo hello
+```
+
+## second-reviewer
+
+A different reviewer that should still appear in the merged agent list.
+
+## third-reviewer
+
+A third reviewer that should also still appear.
+EOF
+run_discover "$repo" "src/foo.py" t29
+assert_exit "exit 0" "$t29_exit" "0"
+assert_jq "first user agent present" "$t29" 'any(.agents[]; .name == "first-reviewer" and .kind == "user")'
+assert_jq "second user agent present (would be dropped by fence-unaware parser)" "$t29" 'any(.agents[]; .name == "second-reviewer" and .kind == "user")'
+assert_jq "third user agent present" "$t29" 'any(.agents[]; .name == "third-reviewer" and .kind == "user")'
+assert_jq "user_count is 3" "$t29" '.configuration.user_count == 3'
+rm -rf "$repo"
+
+echo
+echo "=== Test 30: fenced '## ' inside agent body doesn't fragment current agent ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Agents
+
+## docs-reviewer
+
+Look for missing sections in README files. Example template:
+
+```markdown
+# Project Title
+
+## Installation
+...
+## Usage
+...
+```
+
+The above markdown fences `## Installation` and `## Usage` should not
+register as new agent definitions.
+
+## other-reviewer
+
+A second agent.
+EOF
+run_discover "$repo" "src/foo.py" t30
+assert_exit "exit 0" "$t30_exit" "0"
+assert_jq "docs-reviewer present" "$t30" 'any(.agents[]; .name == "docs-reviewer")'
+assert_jq "other-reviewer present" "$t30" 'any(.agents[]; .name == "other-reviewer")'
+assert_jq "no spurious agent named Installation" "$t30" '[.agents[] | select(.name == "Installation")] | length == 0'
+assert_jq "no spurious agent named Usage" "$t30" '[.agents[] | select(.name == "Usage")] | length == 0'
+rm -rf "$repo"
+
+echo
+echo "=== Test 31: fenced '^# ' in prose before json block doesn't discard # Configuration ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+Here is an annotated example showing what each field does. The fenced
+shell block below contains `#` comments that the parser must ignore —
+otherwise the json block further down would be silently discarded.
+
+```bash
+# disabled lists default reviewer names to skip
+# overlap_acknowledged maps user agent name → {overlaps_with, reason}
+echo "explanatory shell example"
+```
+
+And here is the real configuration:
+
+```json
+{
+  "disabled": ["code-simplifier"],
+  "overlap_acknowledged": {
+    "my-extra-reviewer": {
+      "overlaps_with": "code-reviewer",
+      "reason": "project-specific scope"
+    }
+  }
+}
+```
+EOF
+run_discover "$repo" "src/foo.py" t31
+assert_exit "exit 0" "$t31_exit" "0"
+assert_jq "disabled list parsed from json (would be empty under fence-unaware parser)" "$t31" '.configuration.disabled_defaults == ["code-simplifier"]'
+assert_jq "overlap_acknowledged parsed" "$t31" '.configuration.overlaps_acknowledged | has("my-extra-reviewer")'
+rm -rf "$repo"
+
+echo
+echo "=== Test 32: fenced '# Configuration' inside subtree agent body doesn't trigger ignored-warning ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/sub"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Agents
+
+## root-reviewer
+
+Root-level reviewer.
+EOF
+cat > "$repo/sub/AGENT-REVIEWERS.md" <<'EOF'
+# Agents
+
+## sub-reviewer
+
+This reviewer flags missing config sections. Example of what to look for:
+
+```markdown
+# Configuration
+
+```json
+{}
+```
+```
+
+The above is a documentation snippet, not a real Configuration section.
+EOF
+run_discover "$repo" "sub/file.py" t32
+assert_exit "exit 0" "$t32_exit" "0"
+# The subtree file has no real # Configuration heading (only fenced examples),
+# so the "ignored" warning should NOT fire.
+if [[ "$t32_err" == *"# Configuration section found in"*"sub/AGENT-REVIEWERS.md"* ]]; then
+    echo "  FAIL  no spurious ignored-warning on subtree (fence-unaware grep -q would emit it)"
+    echo "        stderr: $t32_err"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    FAILED+=("no spurious ignored-warning on subtree")
+else
+    echo "  PASS  no spurious ignored-warning on subtree (fence-unaware grep -q would emit it)"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+fi
+rm -rf "$repo"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo
