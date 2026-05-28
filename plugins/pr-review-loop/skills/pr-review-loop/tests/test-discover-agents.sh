@@ -817,6 +817,45 @@ assert_jq "overlap_acknowledged parsed" "$t31" '.configuration.overlaps_acknowle
 rm -rf "$repo"
 
 echo
+echo "=== Test 33: multiple json blocks under # Configuration — first block wins ==="
+# The awk in _parse_configuration.sh exits on the first json fence close. If a
+# user writes an annotated "example" json block before the real config block
+# under the same heading, the EXAMPLE wins and the real block is silently
+# ignored. Documents current behavior so a regression (e.g., switching to
+# last-wins or merging) would be caught.
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+Example showing the shape (this is an annotated illustration):
+
+```json
+{
+  "disabled": ["example-only-not-real"],
+  "overlap_acknowledged": {}
+}
+```
+
+And the real config:
+
+```json
+{
+  "disabled": ["code-simplifier"],
+  "overlap_acknowledged": {}
+}
+```
+EOF
+run_discover "$repo" "src/foo.py" t33
+assert_exit "exit 0" "$t33_exit" "0"
+# First json block wins: "example-only-not-real" makes it into the parsed config,
+# and "code-simplifier" does NOT. This is current behavior — if it ever changes
+# to last-wins or merge-all, this test will fail and the contract change is
+# explicit.
+assert_jq "first json block parsed (example-only-not-real present)" "$t33" '.configuration.disabled_defaults == ["example-only-not-real"]'
+assert_jq "second json block not merged (code-simplifier absent)" "$t33" '(.configuration.disabled_defaults | index("code-simplifier")) == null'
+rm -rf "$repo"
+
+echo
 echo "=== Test 32: fenced '# Configuration' inside subtree agent body doesn't trigger ignored-warning ==="
 repo="$(make_temp_repo)"
 mkdir -p "$repo/sub"

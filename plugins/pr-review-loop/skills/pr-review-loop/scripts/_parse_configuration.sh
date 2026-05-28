@@ -52,8 +52,7 @@ RAW_JSON="$(awk '
     # Track every fence open/close so heading detection stays accurate even
     # when prose preceding the json block contains fenced `^# ` examples.
     /^```/ {
-        # Json-block bookkeeping: if we are about to close the json fence we
-        # were capturing, emit nothing and exit cleanly.
+        # Close the captured json fence.
         if (in_json && /^```[[:space:]]*$/) {
             in_json = 0
             in_fence = 0
@@ -70,9 +69,9 @@ RAW_JSON="$(awk '
         in_fence = !in_fence
         next
     }
-    !in_fence && /^# Configuration[[:space:]]*$/ { in_config = 1; next }
+    !in_fence && /^#[[:space:]]+Configuration[[:space:]]*$/ { in_config = 1; next }
     # Any other H1 (outside fences) ends the Configuration section.
-    !in_fence && /^# / { in_config = 0 }
+    !in_fence && /^#[[:space:]]+/ { in_config = 0 }
     in_json { print }
 ' "$FILE")"
 

@@ -178,10 +178,13 @@ parse_agent_file() {
 
     # Toggle fence state on any line starting with three backticks. Inside a
     # fence, treat the line as content (so the rendered agent body keeps its
-    # opening/closing fence) and skip the H1/H2-detection branches. Without
-    # this, an agent body containing a fenced `# BAD` or `## Example` line
-    # silently flushes mid-agent and (worse) flips `in_agents` off when the
-    # bogus h1 does not equal "Agents", dropping every agent defined below.
+    # opening/closing fence) and skip the H1/H2-detection branches. Two
+    # distinct failure modes this guards against:
+    #   - A fenced H1 like `# BAD` triggers the H1 rule (which sets
+    #     `in_agents = 0` since "BAD" != "Agents"), dropping every agent
+    #     defined below — the catastrophic case.
+    #   - A fenced H2 like `## Example` triggers the H2 rule and creates a
+    #     spurious agent named "Example" — visible but wrong.
     /^```/ {
         in_fence = !in_fence
         if (content != "") content = content "\n" $0
@@ -300,7 +303,7 @@ for f in "${AGENT_FILES[@]}"; do
     if awk '
         BEGIN { in_fence = 0; found = 0 }
         /^```/ { in_fence = !in_fence; next }
-        !in_fence && /^# Configuration[[:space:]]*$/ { found = 1; exit }
+        !in_fence && /^#[[:space:]]+Configuration[[:space:]]*$/ { found = 1; exit }
         END { exit (found ? 0 : 1) }
     ' "$f"; then
         echo "Warning: # Configuration section found in $f — ignored (only the root AGENT-REVIEWERS.md's configuration is honored)" >&2
