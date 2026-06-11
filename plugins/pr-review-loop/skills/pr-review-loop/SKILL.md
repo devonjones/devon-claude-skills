@@ -58,7 +58,8 @@ context, or a commit message does NOT count as reviewed.
 | Substituting a consolidated "review record" PR comment for line comments | Line comments at the flagged lines; consolidated comments are a supplement, never the record |
 
 Why this is load-bearing, not ceremony:
-- **Audit trail**: the user reviews findings in situ on the diff, with reopen rights on every thread.
+- **The threads ARE the user's review.** The operator reviews the PR primarily by reading the problems the reviewers surfaced, in situ on the diff. When findings are absorbed into fixes without comments, the operator is left blind — they see a diff churning across rounds with no visible record of what was wrong, what was contested, or what was withdrawn.
+- **Audit trail**: findings, dispositions, and withdrawals stay attached to the lines they're about, with reopen rights on every thread.
 - **Round-to-round dedup**: each agent's step 1 (`get-agent-comments.sh`) checks its own prior comments — if nothing was posted, every later round re-litigates from scratch and reopen/retirement logic silently breaks.
 - **Cost routing**: the posting legwork (file/line anchoring, comment bodies) belongs on the cheap per-agent model, not the expensive main-loop model.
 - **Merge-readiness integrity**: the end-of-loop summary counts threads; zero posted threads with nonzero findings is a protocol violation that must be reported, not papered over.
