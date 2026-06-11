@@ -29,7 +29,7 @@
 #     "disabled_defaults_unknown": [],                  // entries that don't match any default (typos)
 #     "overlaps_acknowledged": {"my_pci_auditor": {overlaps_with, reason}, ...},
 #     "independent_validator": {                         // ydy: per-finding validation step
-#       "enabled": true,                                 // default true; user can disable
+#       "enabled": false,                                // default false; validation is opt-in
 #       "skip_for": ["code-simplifier", ...],            // flagger names that bypass validation
 #       "uncertain_action": "post_with_annotation"       // post_with_annotation | post_silently | drop
 #     },
@@ -461,7 +461,7 @@ echo "$JQ_INPUT" | jq '
             # explicit `enabled: false` to true.
             independent_validator: ($config.independent_validator as $iv | {
                 enabled: (if ($iv | type == "object") and ($iv | has("enabled"))
-                          then $iv.enabled else true end),
+                          then $iv.enabled else false end),
                 skip_for: (if ($iv | type == "object") and ($iv | has("skip_for"))
                            then $iv.skip_for else [] end),
                 uncertain_action: (if ($iv | type == "object") and ($iv | has("uncertain_action"))

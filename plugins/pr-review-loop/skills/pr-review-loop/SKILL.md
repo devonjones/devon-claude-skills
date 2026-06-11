@@ -954,16 +954,18 @@ Validation: enabled (sonnet validators across all flaggers).
 
 Goes to the same task tracking state / pre-round summary surface as other setup state.
 
-When validation is disabled or partially skipped, the third line reflects that:
+When validation is disabled (the default) or partially skipped, the third line reflects that:
 
 ```
+Validation: disabled (default).
 Validation: enabled (skip_for: code-simplifier).
-Validation: disabled.
 ```
 
 ### Independent Validator Pipeline
 
-After every agent reviewer has POSTED its findings as line comments (and returned its posting manifest), the loop runs an independent validator subagent per POSTED finding to verify the issue against the diff context alone, BEFORE any FIX-phase edit. Validation runs against the posted comment — posting is never delayed or gated on validation, because the posted thread IS the audit trail (see ⛔ rule 3).
+**Opt-in (default off).** Enable via `# Configuration .independent_validator.enabled: true`. Field experience showed a low refutable-finding rate (~1 in 30) that the orchestrator catches anyway at the BATCH POINT — it must read every finding to plan fixes, with more context than a blind validator gets — and the false-positive-fix risk is already double-guarded by tests/CI and next-round review of the fix commit. Per-flagger noise telemetry now comes free from thread dispositions (won't-fix / withdrawn rates), since posting is mandatory. Opt in when an agent pack is noisy/unproven, or when you want an independence check on the orchestrator judging criticism of code it authored itself.
+
+When enabled: after every agent reviewer has POSTED its findings as line comments (and returned its posting manifest), the loop runs an independent validator subagent per POSTED finding to verify the issue against the diff context alone, BEFORE any FIX-phase edit. Validation runs against the posted comment — posting is never delayed or gated on validation, because the posted thread IS the audit trail (see ⛔ rule 3).
 
 This catches the asymmetric-cost failure mode: a false-positive that gets *applied as a fix* introduces a real regression in once-correct code. Validate-after-post preserves that protection — refuted findings are withdrawn before the BATCH POINT, so they never reach a fix — while keeping every finding (including refuted ones) visible on the PR.
 
@@ -1049,7 +1051,7 @@ In `# Configuration`:
 }
 ```
 
-- `enabled` (default `true`) — toggle validation on/off
+- `enabled` (default `false`) — validation is opt-in; see the rationale at the top of this section
 - `skip_for` (default `[]`) — list of flagger agent names whose findings bypass validation
 - `uncertain_action` (default `"post_with_annotation"`) — `post_with_annotation` | `post_silently` | `drop`
 
