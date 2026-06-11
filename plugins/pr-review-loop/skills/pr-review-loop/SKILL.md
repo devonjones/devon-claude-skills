@@ -43,6 +43,31 @@ This gives you the full absolute path to the scripts directory.
 
 **If you use `git commit` or `git push` directly, it will be BLOCKED.**
 
+### 3. The PR is the system of record — agents POST their findings
+
+Every agent finding MUST exist as a line comment on the PR (posted by the
+agent itself via `post-line-comment.sh`) before its fix is committed. A
+finding that lives only in an agent's return text, the orchestrator's
+context, or a commit message does NOT count as reviewed.
+
+| ❌ FORBIDDEN | ✅ USE INSTEAD |
+|--------------|----------------|
+| Instructing agents to "return findings, do not post" | Agents post via `post-line-comment.sh`, then return a manifest of what they posted |
+| Fixing a finding that has no posted comment thread | Post first (the agent's job), then fix, then `reply-to-comment.sh` |
+| Silently dropping a validator-refuted finding | Reply + resolve its thread as withdrawn (`reply-to-comment.sh <PR> <id> "Withdrawn — validator refuted: <reason>"`) |
+| Substituting a consolidated "review record" PR comment for line comments | Line comments at the flagged lines; consolidated comments are a supplement, never the record |
+
+Why this is load-bearing, not ceremony:
+- **The threads ARE the user's review.** The operator reviews the PR primarily by reading the problems the reviewers surfaced, in situ on the diff. When findings are absorbed into fixes without comments, the operator is left blind — they see a diff churning across rounds with no visible record of what was wrong, what was contested, or what was withdrawn.
+- **Audit trail**: findings, dispositions, and withdrawals stay attached to the lines they're about, with reopen rights on every thread.
+- **Round-to-round dedup**: each agent's step 1 (`get-agent-comments.sh`) checks its own prior comments — if nothing was posted, every later round re-litigates from scratch and reopen/retirement logic silently breaks.
+- **Cost routing**: the posting legwork (file/line anchoring, comment bodies) belongs on the cheap per-agent model, not the expensive main-loop model.
+- **Merge-readiness integrity**: the end-of-loop summary counts threads; zero posted threads with nonzero findings is a protocol violation that must be reported, not papered over.
+
+A repo's `AGENT-REVIEWERS.md` may define an "Output format" / severity
+template for finding BODIES — that styles the comment text. It never
+overrides the posting requirement.
+
 ---
 
 ## ⚠️ Do NOT Run as a Background Task Agent
@@ -325,7 +350,8 @@ Always prepare a summary of what the review loop did and observed:
 - **Beads tickets**: Out-of-scope items captured for follow-up
 - **Branch protection status**: Whether all required checks and approvals are satisfied
 - **Stale defaults pin bypass** (if `--skip-stale-check` was used): note the config and current plugin versions; recommend running `/pr-review-loop:audit-agents`
-- **Validator activity** (if `independent_validator.enabled`): per-flagger acceptance rate (`X of Y findings posted; Z dropped as INVALID; W posted with [validator: uncertain]`). A flagger with persistent low acceptance is a candidate for retirement or prompt refinement.
+- **Posting integrity**: total agent findings vs posted line-comment threads vs replied threads, per round. These MUST match (every finding posted, every thread replied). Any round where findings were fixed without posted threads is a protocol violation — report it explicitly, never paper over it.
+- **Validator activity** (if `independent_validator.enabled`): per-flagger acceptance rate (`X of Y posted findings survived; Z withdrawn as INVALID; W annotated [validator: uncertain]`). A flagger with persistent low acceptance is a candidate for retirement or prompt refinement.
 
 If repo-specific guidance defines additional merge criteria (attestation requirements, approval types, etc.), include the status of those criteria in the summary as well.
 
@@ -379,7 +405,9 @@ EACH ROUND — three phases, in order:
   │ C1. Get Gemini comments (--wait only on first check)        │
   │ C2. Check for other bot PR comments (Claude, Cursor, etc.)  │
   │ C3. Run agent reviewers (defaults + AGENT-REVIEWERS.md);    │
-  │     for each finding, run the independent validator         │
+  │     agents POST findings as line comments + return their    │
+  │     manifests; then validate each POSTED finding (refuted   │
+  │     → withdrawn on-thread)                                  │
   └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -926,23 +954,27 @@ Validation: enabled (sonnet validators across all flaggers).
 
 Goes to the same task tracking state / pre-round summary surface as other setup state.
 
-When validation is disabled or partially skipped, the third line reflects that:
+When validation is disabled (the default) or partially skipped, the third line reflects that:
 
 ```
+Validation: disabled (default).
 Validation: enabled (skip_for: code-simplifier).
-Validation: disabled.
 ```
 
 ### Independent Validator Pipeline
 
-After every agent reviewer returns findings and BEFORE those findings are posted, the loop runs an independent validator subagent per finding to verify the issue against the diff context alone. Findings the validator rejects are dropped.
+**Opt-in (default off).** Enable via `# Configuration .independent_validator.enabled: true`. Field experience showed a low refutable-finding rate (~1 in 30) that the orchestrator catches anyway at the BATCH POINT — it must read every finding to plan fixes, with more context than a blind validator gets — and the false-positive-fix risk is already double-guarded by tests/CI and next-round review of the fix commit. Per-flagger noise telemetry now comes free from thread dispositions (won't-fix / withdrawn rates), since posting is mandatory. Opt in when an agent pack is noisy/unproven, or when you want an independence check on the orchestrator judging criticism of code it authored itself.
 
-This catches the asymmetric-cost failure mode: a false-positive that gets *applied as a fix* introduces a real regression in once-correct code.
+When enabled: after every agent reviewer has POSTED its findings as line comments (and returned its posting manifest), the loop runs an independent validator subagent per POSTED finding to verify the issue against the diff context alone, BEFORE any FIX-phase edit. Validation runs against the posted comment — posting is never delayed or gated on validation, because the posted thread IS the audit trail (see ⛔ rule 3).
 
-**When the validator runs.** Between agent return and finding posting, per round. Per-finding, in parallel via the Task tool.
+This catches the asymmetric-cost failure mode: a false-positive that gets *applied as a fix* introduces a real regression in once-correct code. Validate-after-post preserves that protection — refuted findings are withdrawn before the BATCH POINT, so they never reach a fix — while keeping every finding (including refuted ones) visible on the PR.
+
+> **History note**: an earlier revision of this pipeline ran validation between agent return and posting ("validated BEFORE posted"). That inverted the original agents-post-directly design and, in practice, licensed orchestrators to skip posting entirely — findings got absorbed into fixes with no PR trail. Do not reintroduce validate-before-post.
+
+**When the validator runs.** After C3's agents return their posting manifests, before the BATCH POINT. Per-finding, in parallel via the Task tool.
 
 **What the validator receives.**
-- The finding text (severity, location, issue body)
+- The posted finding (severity, location, issue body — as posted on the thread)
 - The relevant PR diff context (touched file or referenced lines)
 
 **What the validator does NOT receive.**
@@ -952,13 +984,13 @@ This catches the asymmetric-cost failure mode: a false-positive that gets *appli
 
 **Validator output.** Structured: `VERDICT: VALID | INVALID | UNCERTAIN` with a one-line `REASON:`.
 
-**Filter behavior.**
-- **VALID** → post the finding through the normal flow (`post-line-comment.sh` / pending-review batching)
-- **INVALID** → drop silently from this round's posted findings; record in telemetry
+**Filter behavior (acts on the posted thread).**
+- **VALID** → no thread action; the finding flows to the BATCH POINT.
+- **INVALID** → withdraw on-thread: `reply-to-comment.sh <PR> <id> "Withdrawn — validator refuted: <reason>"` (this resolves the thread). The finding is excluded from the BATCH POINT; record in telemetry. Never delete the comment — the withdrawal is part of the audit trail.
 - **UNCERTAIN** → behavior depends on `# Configuration .independent_validator.uncertain_action`:
-  - `post_with_annotation` (default) — post with a `[validator: uncertain]` annotation
-  - `post_silently` — post normally
-  - `drop` — drop like INVALID
+  - `post_with_annotation` (default) — reply `[validator: uncertain] <reason>` on the thread (without resolving); the finding flows to the BATCH POINT carrying the annotation
+  - `post_silently` — no thread action; flows to the BATCH POINT
+  - `drop` — withdraw like INVALID, with the uncertainty stated in the withdrawal reply
 
 #### Validator model selection
 
@@ -1019,7 +1051,7 @@ In `# Configuration`:
 }
 ```
 
-- `enabled` (default `true`) — toggle validation on/off
+- `enabled` (default `false`) — validation is opt-in; see the rationale at the top of this section
 - `skip_for` (default `[]`) — list of flagger agent names whose findings bypass validation
 - `uncertain_action` (default `"post_with_annotation"`) — `post_with_annotation` | `post_silently` | `drop`
 
@@ -1160,13 +1192,25 @@ Task tool:
        gh pr diff <PR> -- <file1> <file2> ...
        ```
 
-    4. **Post NEW findings** as line comments (only issues not already raised, only files in your scope):
+    4. **POST every new finding** as a line comment (only issues not already raised, only files in your scope):
        ```bash
        scripts/post-line-comment.sh <PR> <file> <line> <agent-name> "Issue description and suggestion"
        ```
        The script automatically adds `<!-- Agent: <agent-name> -->` signature.
 
-    5. **Return** - Do NOT fix anything. Your job is review only.
+       POSTING IS MANDATORY, NOT OPTIONAL. A finding you only describe in
+       your return text does not exist: the PR thread is the audit trail,
+       the user's reopen surface, and what your own step 1 checks next
+       round. Do NOT hold findings back for the orchestrator to post,
+       validate, or triage — an independent validator audits your POSTED
+       comments afterward, and a refuted finding is withdrawn on-thread
+       (that's expected and fine; an unposted finding is a protocol
+       violation).
+
+    5. **Return a posting manifest** - Do NOT fix anything. Your job is review only.
+       Your final message is a manifest of what you posted, one line per finding:
+       `<severity> | <file>:<line> | <one-line title>` — nothing else. The
+       orchestrator uses it to dispatch validators and track your round.
 
     ## Important:
     - Be thorough but not pedantic - only flag real issues within your focus area
@@ -1176,22 +1220,39 @@ Task tool:
     Available scripts: See pr-review-loop skill documentation for full script reference.
 ```
 
+**The orchestrator must never rewrite step 4/5 into "return your findings to me".** Batching, validation, and dedup all happen AFTER posting (see ⛔ rule 3 and the Independent Validator Pipeline). If you catch yourself about to spawn an agent with "do not post — return findings", stop: that variant destroys the audit trail and breaks every later round's `get-agent-comments.sh` dedup.
+
 **Spawn all agents in parallel** - use multiple Task tool calls in a single message.
 
 ### Main Loop Integration
 
 Agent reviewers run as C3 — the last step of the COLLECT phase, after C1 (Gemini) and C2 (other bots). Within C3, the individual agent reviewers spawn in parallel. All COLLECT-phase findings — Gemini + other bots + agents — flow into the BATCH POINT before any FIX-phase action.
 
-1. **After agent Tasks return** (in C3), their findings join the C1 + C2 findings at the BATCH POINT. Identify cross-source patterns and plan sweeps before staging any edit.
+1. **After agent Tasks return their posting manifests** (in C3), run the validator pass against the POSTED threads (withdrawing refuted ones on-thread), then the surviving findings join the C1 + C2 findings at the BATCH POINT. Identify cross-source patterns and plan sweeps before staging any edit.
 
-2. **In F3, address agent comments** using the same flow as Gemini:
+2. **In F3, address agent comment THREADS** using the same flow as Gemini:
    - Fix → reply "Fixed - ..."
    - Won't fix (bad) → reply "Won't fix - ..."
    - Out of scope (good) → create beads ticket if available, reply "Out of scope - tracked in BD-XXX"
 
+   Every thread gets a reply — same discipline as Gemini comments. If an
+   agent finding you're fixing has no thread (the agent failed to post),
+   that's a protocol break: post it yourself via `post-line-comment.sh`
+   with that agent's name BEFORE committing the fix, and tighten the
+   agent's prompt next round.
+
 3. **Update per-agent tracking** based on results (productive / final-verification / retired)
 
 4. **In F4–F6**, commit + push the batched fixes once, wait for CI, and trigger the next review.
+
+5. **Emit the end-of-round report** — a short block after F6, every round:
+   ```
+   Round N: posted X findings across Y agents (A withdrawn by validator);
+   replied to Z threads (F fixed / W won't-fix / O out-of-scope); Gemini: G comments.
+   ```
+   This makes posting-protocol drift visible immediately — a round that
+   fixed findings but posted/replied to zero threads is self-evidently
+   broken and must be corrected before the next round.
 
 ### Diminishing Returns for Agent Reviewers
 

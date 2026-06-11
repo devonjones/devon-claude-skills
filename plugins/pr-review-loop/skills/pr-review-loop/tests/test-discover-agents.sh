@@ -512,7 +512,7 @@ echo "=== Test 17: independent_validator defaults populate when no config given 
 repo="$(make_temp_repo)"
 run_discover "$repo" "src/foo.py" t17
 assert_exit "exit 0" "$t17_exit" "0"
-assert_jq "enabled defaults true" "$t17" '.configuration.independent_validator.enabled == true'
+assert_jq "enabled defaults false (validation is opt-in)" "$t17" '.configuration.independent_validator.enabled == false'
 assert_jq "skip_for defaults []" "$t17" '.configuration.independent_validator.skip_for == []'
 assert_jq "uncertain_action defaults post_with_annotation" "$t17" '.configuration.independent_validator.uncertain_action == "post_with_annotation"'
 rm -rf "$repo"
@@ -527,7 +527,7 @@ cat > "$repo/AGENT-REVIEWERS.md" <<EOF
 {
   "defaults_version_checked": "${PLUGIN_VERSION}",
   "independent_validator": {
-    "enabled": false,
+    "enabled": true,
     "skip_for": ["code-simplifier", "comment-analyzer"],
     "uncertain_action": "drop"
   }
@@ -536,7 +536,7 @@ cat > "$repo/AGENT-REVIEWERS.md" <<EOF
 EOF
 run_discover "$repo" "src/foo.py" t18
 assert_exit "exit 0" "$t18_exit" "0"
-assert_jq "enabled echoes false" "$t18" '.configuration.independent_validator.enabled == false'
+assert_jq "enabled echoes true (explicit opt-in overrides the false default)" "$t18" '.configuration.independent_validator.enabled == true'
 assert_jq "skip_for echoes back" "$t18" '.configuration.independent_validator.skip_for == ["code-simplifier", "comment-analyzer"]'
 assert_jq "uncertain_action echoes drop" "$t18" '.configuration.independent_validator.uncertain_action == "drop"'
 rm -rf "$repo"
