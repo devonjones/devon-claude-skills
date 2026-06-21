@@ -30,7 +30,7 @@ Use Glob to find the entry wrapper, then use its full literal path for every cal
 Glob: **/plugins/dream/scripts/dream      (clone)   OR   **/dream/*/scripts/dream  (installed)
 ```
 Run everything from the **target project directory** (so paths derive correctly),
-or pass `DREAM_PROJECT_DIR=/path/to/project`. The tool needs nothing wyrd-specific
+or pass `DREAM_PROJECT_DIR=/path/to/project`. The tool needs nothing project-specific
 — it derives the log dir, repo, `~/.dream/<slug>/` home, and the known-corpus
 (CLAUDE.md/AGENTS.md + the project's memory dir + **every `DECISIONS.md` under the
 git root**, auto-discovered) from context. `$DREAM_EXTRA_CORPUS` still appends more.
@@ -120,12 +120,13 @@ a `decisions-log` count even when it is 0). Done.
 
 ## Running on a schedule (nightly, unattended)
 
-To mine the corpus automatically, run this skill headlessly on a timer:
-`claude -p "<the dream prompt>" --permission-mode auto`, fired by your OS
-scheduler. `--permission-mode auto` lets the classifier gate each tool call and
-fail closed when unattended (the pipeline shells out, so stricter modes stall).
-Because the skill needs local session logs + `~/.dream/` state + a reachable
-ollama, it must run on your machine, not a cloud scheduler.
+Run this skill headlessly on a timer: `claude -p "<the dream prompt>"
+--permission-mode auto`, fired by your OS scheduler. `--permission-mode auto`
+lets the classifier gate each tool call and fail closed when unattended (the
+pipeline shells out, so stricter modes stall). Because the skill needs local
+session logs + `~/.dream/` state + a reachable ollama (install from
+<https://ollama.com>; see stage 1 for the env vars), it must run on your
+machine, not a cloud scheduler.
 
 See [`references/SCHEDULING.md`](../../references/SCHEDULING.md) for copy-paste
 setups: **Linux** (systemd user timer — survives logout via `loginctl

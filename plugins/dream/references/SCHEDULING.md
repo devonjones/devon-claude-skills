@@ -16,7 +16,7 @@ pending recommendations next time you open the project.
 claude -p "Run the dream skill on this project: distill new sessions, synth, then \
 consolidate. Auto-write only genuinely-new memories; collect every proposal into \
 the skill's review/pending/ file; do NOT auto-edit CLAUDE.md, skills, or DECISIONS.md. \
-Print a short summary with a per-bucket count. Do not manufacture insights." \
+Print a per-bucket count. Do not manufacture insights." \
   --permission-mode auto
 ```
 

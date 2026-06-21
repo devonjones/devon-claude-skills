@@ -1,9 +1,9 @@
 """Dream stage-1 CLI: distill Claude Code session logs into behavioral digests.
 
-    python -m dream.cli distill            # distill the backlog (cached)
-    python -m dream.cli distill --no-model # heuristic only (fast, no ollama)
-    python -m dream.cli distill --session <uuid>
-    python -m dream.cli stats              # summarize existing digests
+    python -m dreamlib.cli distill            # distill the backlog (cached)
+    python -m dreamlib.cli distill --no-model # heuristic only (fast, no ollama)
+    python -m dreamlib.cli distill --session <uuid>
+    python -m dreamlib.cli stats              # summarize existing digests
 
 Digests are cached in digests/{session_id}.json keyed by input_hash, so a
 re-run only re-distills sessions whose source file changed. The live/most-recent
@@ -149,7 +149,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
         with open(p) as fh:
             d = json.load(fh)
         st = d.get("stats", {})
-        ins = d.get("model", {}).get("candidate_insights", []) if d.get("model") else []
+        ins = d["model"].get("candidate_insights", []) if d.get("model") else []
         for c in ins:
             by_target[c.get("target", "?")] = by_target.get(c.get("target", "?"), 0) + 1
         tot["denials"] += st.get("denials", 0)

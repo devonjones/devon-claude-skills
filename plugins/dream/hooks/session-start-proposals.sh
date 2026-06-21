@@ -27,7 +27,12 @@ home="${DREAM_HOME:-$HOME/.dream/$slug}"
 # Outstanding = per-run proposal files sitting in review/pending/. The user
 # dismisses a run by moving its file into review/reviewed/ (or deleting it), so
 # this glob only needs the pending/ dir.
-mapfile -t pending < <(ls -1 "$home"/review/pending/*.md 2>/dev/null)
+# NB: no `mapfile` — it's bash 4.0+, and macOS ships bash 3.2. Read portably so
+# the hook works everywhere (and keeps its never-block contract).
+pending=()
+while IFS= read -r f; do
+  [ -n "$f" ] && pending+=("$f")
+done < <(ls -1 "$home"/review/pending/*.md 2>/dev/null)
 n=${#pending[@]}
 [ "$n" -eq 0 ] && exit 0
 

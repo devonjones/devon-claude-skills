@@ -2,7 +2,7 @@
 the skill works on any repo, not just wyrd.
 
 - project_log_dir : where Claude Code stores this project's session JSONL
-- dream_home      : per-project derived-data root (`<git-root>/.dream`, gitignored)
+- dream_home      : per-project derived-data root (`~/.dream/<slug>`, outside the repo)
 - markers_dir     : the dream-marker stream producers append to (see
                     references/MARKER-CONTRACT.md)
 - repo_slug       : owner/name for the GitHub-mining pipeline
