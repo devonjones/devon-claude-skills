@@ -24,23 +24,19 @@ slug="$(basename "$root")"
 home="${DREAM_HOME:-$HOME/.dream/$slug}"
 [ -d "$home" ] || exit 0
 
-# Outstanding = top-level proposal files not yet archived. The globs are
-# non-recursive, so anything moved into a reviewed/ subdir stops counting.
-mapfile -t pending < <(
-  {
-    ls -1 "$home"/review/PROPOSALS-*.md 2>/dev/null
-    ls -1 "$home"/reviews/ROSTER-PROPOSALS.md "$home"/reviews/*PROPOSALS*.md 2>/dev/null
-  } | sort -u
-)
+# Outstanding = per-run proposal files sitting in review/pending/. The user
+# dismisses a run by moving its file into review/reviewed/ (or deleting it), so
+# this glob only needs the pending/ dir.
+mapfile -t pending < <(ls -1 "$home"/review/pending/*.md 2>/dev/null)
 n=${#pending[@]}
 [ "$n" -eq 0 ] && exit 0
 
-echo "⚠️  Dream: ${n} outstanding recommendation file(s) await your review in ${home}/:"
+echo "⚠️  Dream: ${n} unreviewed recommendation file(s) in ${home}/review/pending/:"
 while IFS= read -r f; do
   [ -n "$f" ] && echo "    • ${f}"
 done < <(ls -1t "${pending[@]}" 2>/dev/null | head -3)
 [ "$n" -gt 3 ] && echo "    … and $((n - 3)) more"
-echo "    Dismiss reviewed items by moving them into a reviewed/ subfolder"
-echo "    (mkdir -p \"${home}/review/reviewed\" && mv <file> there) or deleting them."
+echo "    Dismiss a run once actioned by archiving it:"
+echo "    mkdir -p \"${home}/review/reviewed\" && mv \"${home}/review/pending/\"<file> \"${home}/review/reviewed/\""
 echo "(Assistant: surface this to the user now, at the start of the session.)"
 exit 0

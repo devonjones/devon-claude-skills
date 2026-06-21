@@ -75,10 +75,18 @@ contradicts a current decision, that is `DECISIONS.md` drift worth flagging
   `disabled` (config) or narrowed scope. Be cautious below ~5 findings (low signal).
 
 Weight `taste(user)` heavily — an operator overruling a reviewer is the strongest
-signal. Write `ROSTER-PROPOSALS.md` to `~/.dream/<slug>/reviews/`.
+signal. Keep the detailed scorecards/coverage artifacts in `~/.dream/<slug>/reviews/`
+(`SCORECARDS.md`, `COVERAGE.md`, `scorecards.json`) as backing data.
 
 ## 3. Promote
 
-Present proposals to the user. AGENT-REVIEWERS.md edits and `# Configuration`
-`disabled` changes are **propose-only** — this is the quality gate; the user
-approves every change. Product-only observations → the issue tracker, not the roster.
+Write the human-facing roster proposals to **one self-contained per-run file**:
+`~/.dream/<slug>/review/pending/<YYYYMMDD>-reviewers.md` (today's date; **overwrite**
+if a run already wrote it today — do NOT append). This shares the `review/pending/`
+queue the SessionStart hook watches and the `dream` skill writes to; the user
+dismisses a run by moving its file into `review/reviewed/` (or deleting it).
+
+AGENT-REVIEWERS.md edits and `# Configuration` `disabled` changes are
+**propose-only** — this is the quality gate; the user approves every change. Any
+`DECISIONS.md` drift you spot is propose-only too. Product-only observations →
+the issue tracker, not the roster.

@@ -93,17 +93,27 @@ the whole log. Then:
      **zero** here; that is the correct, honest output, not a gap to fill.
    - `product-decision` — a product decision better tracked as an issue/ticket
      (e.g. a `bd` decision) than a `DECISIONS.md` entry. NEVER agent instructions.
-4. Write a `SYNTHESIS.md` to `~/.dream/<slug>/review/` with the routed buckets.
+4. Write the routed buckets to **one self-contained per-run file**:
+   `~/.dream/<slug>/review/pending/<YYYYMMDD>-dream.md` (today's date; **overwrite**
+   it if a run already wrote it today — latest consolidation wins, do NOT append/
+   accrete). This is the human review unit: everything from this run in one file
+   the user can read in a sitting, then archive whole.
 
 For a large backlog, spawn this as a Task to keep main context lean.
 
 ## 4. Promote (copy-on-write gate)
 
 - **memory** candidates → write to the project memory dir (low-stakes, reversible).
-- **CLAUDE.md / doc / skill / decisions-log / product-decision** → **propose only**:
-  open issues / a review queue for the user. These are shared and load-bearing;
-  never auto-edit — and `DECISIONS.md` especially is append-with-supersession by
-  hand, so route every `decisions-log` proposal to the review file, never an edit.
+- **CLAUDE.md / doc / skill / decisions-log / product-decision** → **propose only**,
+  collected into this run's `review/pending/<YYYYMMDD>-dream.md`. These are shared
+  and load-bearing; never auto-edit — and `DECISIONS.md` especially is append-with-
+  supersession by hand, so route every `decisions-log` proposal to the pending
+  file, never an edit.
+
+**Pending → reviewed lifecycle.** Proposals live in `review/pending/`; the
+SessionStart hook warns about anything there. The user dismisses a run by moving
+its file into `review/reviewed/` (or deleting it) once actioned — so keep each
+run's proposals in its own file and never write into `review/reviewed/` yourself.
 
 Report what you auto-wrote and what you propose (with a per-bucket count, including
 a `decisions-log` count even when it is 0). Done.
