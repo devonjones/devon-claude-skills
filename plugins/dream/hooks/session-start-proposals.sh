@@ -31,12 +31,23 @@ mapfile -t pending < <(ls -1 "$home"/review/pending/*.md 2>/dev/null)
 n=${#pending[@]}
 [ "$n" -eq 0 ] && exit 0
 
-echo "⚠️  Dream: ${n} unreviewed recommendation file(s) in ${home}/review/pending/:"
+echo ""
+echo "🔴🔴🔴 ════════════════════════════════════════════════════════ 🔴🔴🔴"
+echo "   DREAM — ACTION NEEDED: ${n} UNREVIEWED RECOMMENDATION FILE(S)"
+echo "🔴🔴🔴 ════════════════════════════════════════════════════════ 🔴🔴🔴"
+echo "   In ${home}/review/pending/ :"
 while IFS= read -r f; do
-  [ -n "$f" ] && echo "    • ${f}"
-done < <(ls -1t "${pending[@]}" 2>/dev/null | head -3)
-[ "$n" -gt 3 ] && echo "    … and $((n - 3)) more"
-echo "    Dismiss a run once actioned by archiving it:"
-echo "    mkdir -p \"${home}/review/reviewed\" && mv \"${home}/review/pending/\"<file> \"${home}/review/reviewed/\""
-echo "(Assistant: surface this to the user now, at the start of the session.)"
+  [ -n "$f" ] && echo "      • $(basename "$f")"
+done < <(ls -1t "${pending[@]}" 2>/dev/null | head -5)
+[ "$n" -gt 5 ] && echo "      … and $((n - 5)) more"
+echo "   Dismiss once actioned:  mv the file into ${home}/review/reviewed/"
+echo "═══════════════════════════════════════════════════════════════════════"
+echo ""
+echo "ASSISTANT — MANDATORY, DO THIS FIRST: Before responding to anything else,"
+echo "OPEN your reply with a prominent alert that dream recommendations are"
+echo "awaiting review. Use a bold markdown heading (e.g. \"## 🔴 Dream:"
+echo "recommendations awaiting your review\"), then list the pending file(s) and"
+echo "the one-line dismiss instruction. This is a standing reminder the user"
+echo "explicitly asked to be made noticeable — do NOT bury it as a casual 'by the"
+echo "way' aside, a footnote, or a trailing sentence. It leads the message."
 exit 0
