@@ -9,7 +9,7 @@ so the expensive Opus judgment pass can be small and focused:
      signal (a 1-session lesson is a memory at most; a recurring one is a
      CLAUDE.md candidate).
   3. Pre-flag "likely already captured" by lexical match against the KNOWN
-     corpus — existing memories, both CLAUDE.md files, and kenning DECISIONS.md.
+     corpus — existing memories, both CLAUDE.md files, and any project DECISIONS.md.
   4. Suggest a route per cluster (with frequency-gated downgrade of over-eager
      claude_md tags), and emit a review queue.
 
@@ -124,7 +124,7 @@ def _load_known_paragraphs() -> list[tuple[str, set, str]]:
         sources.append((f"memory/{os.path.basename(f)}", f))
     for label, path in sources:
         try:
-            with open(path) as fh:
+            with open(path, encoding="utf-8") as fh:
                 text = fh.read()
         except Exception:
             continue

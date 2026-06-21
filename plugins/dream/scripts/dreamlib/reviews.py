@@ -78,9 +78,9 @@ def _gh(path: str) -> list:
 
 
 def fetch_review_comments(echo=lambda *_: None) -> list[dict]:
-    """Paginate every PR review (line) comment in the repo. Cached to one file —
-    closed/merged PR comments are effectively immutable so a refresh only needs
-    to pull pages newer than the last fetch (handled by re-running; cheap)."""
+    """Paginate every PR review (line) comment in the repo, caching to one file.
+    Each call re-fetches all pages from scratch (no incremental cursor) — fine at
+    this scale, and a re-run naturally picks up edits and new comments."""
     os.makedirs(RAW_DIR, exist_ok=True)
     repo = config.repo_slug()
     if not repo:
@@ -313,7 +313,7 @@ def _pr_of(desc: str) -> str | None:
 
 def _iter_log_lines():
     for f in sorted(_glob.glob(os.path.join(LOGS_DIR, "*.jsonl"))):
-        with open(f) as fh:
+        with open(f, encoding="utf-8") as fh:
             for line in fh:
                 if line.strip():
                     yield f, line
@@ -333,7 +333,13 @@ def coverage_from_logs() -> dict:
         if d.get("type") != "assistant":
             continue
         ts = d.get("timestamp")
-        for b in (d.get("message", {}) or {}).get("content", []) or []:
+        msg = d.get("message")
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for b in content:
             if not isinstance(b, dict) or b.get("type") != "tool_use":
                 continue
             if b.get("name") not in ("Agent", "Task"):
@@ -431,8 +437,7 @@ def harvest(echo=lambda *_: None) -> dict:
         path = tmp_by_id.get(rec["task_id"])
         if path:
             try:
-                with open(path) as fh:
-                    rec["tmp_transcript_bytes"] = os.path.getsize(path)
+                rec["tmp_transcript_bytes"] = os.path.getsize(path)
                 rec["source"] = "log-notification+tmp"
                 tmp_captured += 1
             except Exception:
@@ -459,7 +464,7 @@ def read_markers() -> list[dict]:
     references/MARKER-CONTRACT.md for the schema producers honor."""
     findings: list[dict] = []
     for path in sorted(_glob.glob(os.path.join(config.markers_dir(), "*.jsonl"))):
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -468,7 +473,7 @@ def read_markers() -> list[dict]:
                     m = json.loads(line)
                 except Exception:
                     continue
-                if m.get("kind") not in (None, "reviewer-finding"):
+                if m.get("kind") != "reviewer-finding":
                     continue  # non-reviewer markers belong to the session miner
                 if not m.get("reviewer"):
                     continue

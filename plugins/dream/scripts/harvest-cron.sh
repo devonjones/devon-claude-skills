@@ -14,7 +14,7 @@ PROJECT="${1:?usage: harvest-cron.sh <project-dir>}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT"
 # dream_home lives outside the repo at ~/.dream/<slug>; log alongside it.
-STATE="$HOME/.dream/$(basename "$PROJECT")"
+STATE="$HOME/.dream/$(basename "$PWD")"
 mkdir -p "$STATE"
 {
   echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) harvest run ($PROJECT) ==="

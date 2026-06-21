@@ -1,6 +1,7 @@
 """Stage 1b: enrich a heuristic digest via a local ollama model.
 
-Runs on the macbook box (default http://10.5.2.31:11434). Uses ollama's
+Runs against a local ollama (default http://localhost:11434; override with
+WYRD_OLLAMA_URL / DREAM_MODEL). Uses ollama's
 `format: json` to force valid JSON output, so no fragile parsing. The model
 turns the bounded transcript into structured fields + candidate insights — but
 it only *proposes*; promotion/dedup happens later in stage 2/3.
@@ -12,7 +13,7 @@ import json
 import os
 import urllib.request
 
-DEFAULT_URL = os.environ.get("WYRD_OLLAMA_URL", "http://10.5.2.31:11434")
+DEFAULT_URL = os.environ.get("WYRD_OLLAMA_URL", "http://localhost:11434")
 DEFAULT_MODEL = os.environ.get("DREAM_MODEL", "qwen2.5:7b")
 
 # JSON Schema we ask ollama to fill (also passed as `format` for grammar-level

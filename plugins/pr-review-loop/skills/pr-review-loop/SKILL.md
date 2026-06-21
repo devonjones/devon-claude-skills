@@ -1331,7 +1331,7 @@ Rules:
 - **Best-effort, never blocking.** The script no-ops silently if `jq`/git are
   absent; a marker write must never interrupt the loop. Emit it alongside the
   thread reply, not instead of it — the PR thread is still the system of record.
-- Markers append to `~/.dream/<repo>/markers/pr-review-loop.jsonl` (outside the
+- Markers append to `~/.dream/<slug>/markers/pr-review-loop.jsonl` (outside the
   repo). Schema: the dream plugin's `references/MARKER-CONTRACT.md`.
 
 This makes the per-flagger acceptance telemetry the validator section refers to

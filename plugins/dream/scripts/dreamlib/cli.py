@@ -335,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--include-live", action="store_true", help="don't skip newest")
     d.add_argument("--model", default=os.environ.get("DREAM_MODEL", "qwen2.5:7b"))
     d.add_argument("--url", default=os.environ.get("WYRD_OLLAMA_URL",
-                                                   "http://10.5.2.31:11434"))
+                                                   "http://localhost:11434"))
     d.set_defaults(func=cmd_distill)
 
     s = sub.add_parser("stats", help="summarize existing digests")

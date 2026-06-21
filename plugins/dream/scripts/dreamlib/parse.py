@@ -178,7 +178,6 @@ def load_session(path: str) -> Session:
             else:
                 ev.text = content
 
-        # An assistant text turn is "real" prose if it has text blocks.
         events.append(ev)
 
     return Session(
