@@ -60,7 +60,11 @@ the OPERATOR made — only markers carry this).
 
 Read `reviews/scorecards.json` + `coverage.json` + the reviewer definitions
 (`AGENT-REVIEWERS.md` at root and in subtrees; the 6 pr-review-loop plugin
-defaults are config-only, not file-editable). For each reviewer decide:
+defaults are config-only, not file-editable). If the project has `DECISIONS.md`
+file(s), read them too: a low-fix reviewer that enforces a *documented invariant*
+(cite the decision) is a **guardian KEEP**, not noise — and if a reviewer's rule
+contradicts a current decision, that is `DECISIONS.md` drift worth flagging
+(propose-only, alongside the roster). For each reviewer decide:
 
 - **KEEP** — earning its keep (high value, healthy fix rate). Note: high-value /
   low-fix "guardian" reviewers (invariant confirmations that get *acknowledged*,

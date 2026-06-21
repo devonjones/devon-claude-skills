@@ -173,7 +173,8 @@ _ROUTE_LABEL = {
     "claude_md": "CLAUDE.md (propose)",
     "doc": "DOC (propose)",
     "skill": "SKILL (propose)",
-    "product_decision": "PRODUCT-DECISION → wyrd beads",
+    "decisions_log": "DECISIONS.md (propose entry / drift)",
+    "product_decision": "PRODUCT-DECISION → issue tracker",
 }
 
 

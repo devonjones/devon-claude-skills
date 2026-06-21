@@ -85,10 +85,22 @@ def repo_slug(cwd: str | None = None) -> str:
     return m.group(1) if m else ""
 
 
+# Dirs never worth scanning for a project DECISIONS.md (vendored / VCS / build).
+_CORPUS_SKIP_DIRS = frozenset(
+    {".git", ".venv", "venv", "node_modules", "__pycache__", ".tox", ".mypy_cache", "dist", "build"}
+)
+
+
 def known_corpus_files(cwd: str | None = None) -> list[str]:
-    """CLAUDE.md / AGENTS.md the dedup pass treats as 'already known'. Walk up
-    from the project dir to the git root, plus ~/.claude/CLAUDE.md, plus any
-    paths in $DREAM_EXTRA_CORPUS (colon-separated — e.g. a project DECISIONS.md)."""
+    """Files the dedup pass treats as 'already known'. Walk up from the project
+    dir to the git root collecting CLAUDE.md / AGENTS.md, plus ~/.claude/CLAUDE.md,
+    plus EVERY DECISIONS.md under the git root (a project's authoritative
+    architectural record), plus any paths in $DREAM_EXTRA_CORPUS (colon-separated).
+
+    DECISIONS.md auto-discovery is presence-gated: repos without one are
+    unaffected. The deterministic synth pre-flag already routes a strong
+    DECISIONS.md match to a product/decision bucket, so recorded decisions get
+    flagged without any per-project config."""
     cwd = os.path.abspath(cwd or project_dir())
     root = git_root(cwd) or cwd
     files: list[str] = []
@@ -101,10 +113,16 @@ def known_corpus_files(cwd: str | None = None) -> list[str]:
         if d == root or os.path.dirname(d) == d:
             break
         d = os.path.dirname(d)
+    # Every DECISIONS.md under the git root (skip vendored / VCS / build dirs).
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [dn for dn in dirnames if dn not in _CORPUS_SKIP_DIRS]
+        if "DECISIONS.md" in filenames:
+            files.append(os.path.join(dirpath, "DECISIONS.md"))
     for extra in (os.environ.get("DREAM_EXTRA_CORPUS", "").split(":")):
         if extra and os.path.exists(extra):
             files.append(extra)
     home_claude = os.path.expanduser("~/.claude/CLAUDE.md")
     if os.path.exists(home_claude):
         files.append(home_claude)
-    return files
+    # De-dup, preserving first-seen order (DREAM_EXTRA_CORPUS may repeat a walk hit).
+    return list(dict.fromkeys(files))

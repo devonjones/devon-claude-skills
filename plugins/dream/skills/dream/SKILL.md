@@ -2,9 +2,10 @@
 name: dream
 description: |
   Mine this project's Claude Code session logs into durable improvements —
-  proposed memories, CLAUDE.md rules, docs, and skills. Async "AI dreaming":
-  distill raw sessions into friction-focused digests, then consolidate across
-  sessions (dedup vs what's already captured, frequency-gated promotion).
+  proposed memories, CLAUDE.md rules, docs, skills, and decision-log
+  (DECISIONS.md) entries. Async "AI dreaming": distill raw sessions into
+  friction-focused digests, then consolidate across sessions (dedup vs what's
+  already captured, including any project DECISIONS.md, frequency-gated promotion).
 
   Use when: (1) the user asks to mine/learn-from past sessions, "dream over my
   logs", or improve project memory/docs from experience; (2) a nightly/periodic
@@ -31,7 +32,8 @@ Glob: **/plugins/dream/scripts/dream      (clone)   OR   **/dream/*/scripts/drea
 Run everything from the **target project directory** (so paths derive correctly),
 or pass `DREAM_PROJECT_DIR=/path/to/project`. The tool needs nothing wyrd-specific
 — it derives the log dir, repo, `~/.dream/<slug>/` home, and the known-corpus
-(CLAUDE.md/AGENTS.md + the project's memory dir) from context.
+(CLAUDE.md/AGENTS.md + the project's memory dir + **every `DECISIONS.md` under the
+git root**, auto-discovered) from context. `$DREAM_EXTRA_CORPUS` still appends more.
 
 ## 1. Distill (stage 1 — deterministic + local model)
 
@@ -62,18 +64,35 @@ consolidation next.
 Local embeddings/lexical clustering are too weak for semantic dedup, so the
 judgment is yours. Read `review/queue.json` + the known corpus
 (`<scripts>/dream` derives it; it's the project's `memory/`, CLAUDE.md/AGENTS.md
-up to the git root, and any `$DREAM_EXTRA_CORPUS` decision log). Then:
+up to the git root, every auto-discovered `DECISIONS.md`, and any
+`$DREAM_EXTRA_CORPUS` path).
+
+**If the project has `DECISIONS.md` file(s), read each one IN FULL before
+consolidating** — start to finish, do NOT skim or sample despite their length.
+They are the authoritative architectural record and your single best dedup
+reference: most "new architecture insight" candidates are already a numbered
+decision (with its motivating example and a regression test), and you can only
+see that — and spot when the log has drifted from shipped behavior — by holding
+the whole log. Then:
 
 1. **Cluster** the candidates into distinct lessons; count DISTINCT sessions per
    cluster (frequency).
-2. **Dedup** against the known corpus — drop anything already captured (cite what).
+2. **Dedup** against the known corpus — drop anything already captured (cite what,
+   e.g. `DECISIONS.md:NNNN` / the decision number).
 3. **Route** each surviving cluster:
    - `memory` — one-off preference, OR any lesson seen in only 1 session.
    - `CLAUDE.md` — a behavior rule recurring across **≥2 sessions** (frequency gates this).
    - `doc` / `skill` — deeper explanation / repeatable procedure.
-   - `product-decision` — a decision about the PRODUCT, not agent behavior →
-     route to the project's issue tracker (e.g. a `bd` decision), NEVER to agent
-     instructions.
+   - `decisions-log` — a PRODUCT/architecture decision that belongs in a project
+     `DECISIONS.md`, in one of two flavors: **(a)** a decision made or shipped in a
+     session but never recorded, or **(b)** an existing entry now **stale or
+     contradicted** by what shipped (drift). Cite the commits/code that prove it.
+     **Anti-manufacture bar:** propose one ONLY when a session shows a real
+     decision or reversal — never because something merely "looks undocumented."
+     A well-maintained log (inline supersession tombstones) legitimately yields
+     **zero** here; that is the correct, honest output, not a gap to fill.
+   - `product-decision` — a product decision better tracked as an issue/ticket
+     (e.g. a `bd` decision) than a `DECISIONS.md` entry. NEVER agent instructions.
 4. Write a `SYNTHESIS.md` to `~/.dream/<slug>/review/` with the routed buckets.
 
 For a large backlog, spawn this as a Task to keep main context lean.
@@ -81,7 +100,10 @@ For a large backlog, spawn this as a Task to keep main context lean.
 ## 4. Promote (copy-on-write gate)
 
 - **memory** candidates → write to the project memory dir (low-stakes, reversible).
-- **CLAUDE.md / doc / skill / product-decision** → **propose only**: open issues /
-  a review queue for the user. These are shared and load-bearing; never auto-edit.
+- **CLAUDE.md / doc / skill / decisions-log / product-decision** → **propose only**:
+  open issues / a review queue for the user. These are shared and load-bearing;
+  never auto-edit — and `DECISIONS.md` especially is append-with-supersession by
+  hand, so route every `decisions-log` proposal to the review file, never an edit.
 
-Report what you auto-wrote and what you propose. Done.
+Report what you auto-wrote and what you propose (with a per-bucket count, including
+a `decisions-log` count even when it is 0). Done.
