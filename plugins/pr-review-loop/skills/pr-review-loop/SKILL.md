@@ -1241,6 +1241,10 @@ Agent reviewers run as C3 — the last step of the COLLECT phase, after C1 (Gemi
    with that agent's name BEFORE committing the fix, and tighten the
    agent's prompt next round.
 
+   **Emit a dream marker for each finding+disposition** (see "Dream Markers"
+   below) — this is the durable, unbiased telemetry that survives even when a
+   finding never gets posted, and the only record of *who* dispositioned it.
+
 3. **Update per-agent tracking** based on results (productive / final-verification / retired)
 
 4. **In F4–F6**, commit + push the batched fixes once, wait for CI, and trigger the next review.
@@ -1299,6 +1303,40 @@ During the review loop, if you identify guidance that would improve review quali
 
 **How to suggest it:** Present the recommendation to the user with the proposed content. Do not create or modify AGENT-REVIEWERS.md without user approval.
 
+## Dream Markers (reviewer telemetry)
+
+The companion `dream` plugin mines reviewer performance into per-reviewer
+scorecards (acceptance rate, false-positive rate, retire/refine candidates). It
+needs a durable, complete, attributable record of every finding and its
+disposition. The PR threads can't provide that — a finding that's fixed without
+being posted leaves no trace, and every disposition is authored under one GitHub
+token, so the threads can't say whether *you* or the orchestrator made the call.
+
+So **emit one dream marker per finding+disposition**, best-effort, as you
+disposition each thread in F3 (and for Gemini/bot findings too):
+
+```bash
+scripts/emit-dream-marker.sh reviewer-finding \
+  pr=<PR> round=<N> reviewer=<agent-name> severity=<P1|P2|P3> \
+  file=<path> line=<n> disposition=<fixed|addressed|acknowledged|out_of_scope|wont_fix|withdrawn> \
+  disposition_by=<orchestrator|user> finding="<one-line issue>" reason="<why, esp. won't-fix>" \
+  validator=<valid|invalid|uncertain>   # omit if no independent validator ran
+```
+
+Rules:
+- **`disposition_by=user`** whenever the operator made the call (overruled a
+  finding, signed off a P1/P2 carry-forward, resolved a self-contradiction). This
+  is the single most valuable signal dream gets — default to `orchestrator`, set
+  `user` only when the human actually weighed in.
+- **Best-effort, never blocking.** The script no-ops silently if `jq`/git are
+  absent; a marker write must never interrupt the loop. Emit it alongside the
+  thread reply, not instead of it — the PR thread is still the system of record.
+- Markers append to `~/.dream/<repo>/markers/pr-review-loop.jsonl` (outside the
+  repo). Schema: the dream plugin's `references/MARKER-CONTRACT.md`.
+
+This makes the per-flagger acceptance telemetry the validator section refers to
+real and durable, instead of something reconstructed from lossy logs after the fact.
+
 ## Rate Limit Detection
 
 The scripts automatically detect Gemini quota limits by checking for:
@@ -1326,6 +1364,7 @@ When detected, the script suggests:
 | `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post line comment with agent signature |
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |
 | `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |
+| `emit-dream-marker.sh <kind> key=value ...` | Emit a dream marker (reviewer telemetry) — best-effort, never blocks. See "Dream Markers" |
 | `discover-agents.sh <PR>` | Discover + merge agent reviewers (defaults + user agents per C+E); emits `configuration` block with `stale_pin` and (when no AGENT-REVIEWERS.md exists) the `language_detection` block driving the Language Template Offer |
 | `detect-language.sh [--repo-root <path>]` | Scan repo for language manifests (go.mod, pyproject.toml, etc.); emits `[{language, subtree, manifest}, ...]`. Deterministic; called by discover-agents.sh |
 | `install-template.sh [--repo-root <path>] <lang>:<subtree> [...]` | Install language template(s) at the given subtrees + merged # Configuration at root. Transactional; refuses existing AGENT-REVIEWERS.md. Bumps `defaults_version_checked` to current plugin version |
@@ -1346,6 +1385,7 @@ Bash(scripts/reopen-comment.sh:*)
 Bash(scripts/discover-agents.sh:*)
 Bash(scripts/get-pr-comments.sh:*)
 Bash(scripts/install-template.sh:*)
+Bash(scripts/emit-dream-marker.sh:*)
 ```
 
 ## Prerequisites
