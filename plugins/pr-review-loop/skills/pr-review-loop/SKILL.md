@@ -1156,6 +1156,15 @@ Spawn non-retired agents **in parallel** at C3 of each round. Track per-agent st
 
 For each agent in the merged list from `discover-agents.sh` (defaults + user agents per C+E), spawn a Task. Use the agent's declared `model` field if present; otherwise default to `sonnet`. The `instructions` field is the agent body — same shape for defaults (from `plugins/pr-review-loop/agents/*.md`) and user agents (from `AGENT-REVIEWERS.md`).
 
+> **One Task per reviewer, and the description MUST be exactly
+> `<agent-name> review for PR #<PR>`.** The dream firing-coverage log is mined
+> from these descriptions (`reviews.coverage_from_logs`), so they are the only
+> attribution surface for "this reviewer fired N times". Do NOT bundle several
+> reviewers into one Task (`Spawn the ~15 diff-relevant reviewers (…)`) and do
+> NOT freestyle the wording (`test-coverage review (rework)`) — a bundled or
+> off-shape description is unattributable, and the reviewer silently drops out of
+> its keep/refine/retire scorecard (devon-claude-skills-c6k).
+
 ```yaml
 Task tool:
   subagent_type: general-purpose
