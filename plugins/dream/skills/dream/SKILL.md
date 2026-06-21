@@ -44,7 +44,7 @@ git root**, auto-discovered) from context. `$DREAM_EXTRA_CORPUS` still appends m
 ```
 
 Distillation extracts **friction** (denials, corrections, tool errors) and runs a
-local ollama model (`WYRD_OLLAMA_URL`, default `http://10.5.2.31:11434`;
+local ollama model (`WYRD_OLLAMA_URL`, default `http://localhost:11434`;
 `DREAM_MODEL`, default `qwen2.5:7b`) to emit per-session candidate insights. The
 live (most-recent) session is skipped unless `--include-live`. Digests are cached
 in `~/.dream/<slug>/digests/` — only new sessions re-distill.
