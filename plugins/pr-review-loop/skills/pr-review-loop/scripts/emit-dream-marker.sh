@@ -31,11 +31,11 @@ _emit() {
   local kv k v
   for kv in "$@"; do
     k="${kv%%=*}"; v="${kv#*=}"
-    # only accept identifier-shaped keys (jq --arg requirement)
-    case "$k" in
-      [a-zA-Z_]*) : ;;
-      *) continue ;;
-    esac
+    # Only accept jq-identifier-shaped keys: a hyphen (or other non-identifier
+    # char) anywhere would make the jq filter `{a-b:$a-b}` a parse error and
+    # silently drop the marker. Anchored regex rejects it fully (a glob like
+    # [a-zA-Z_]* only checks the first char).
+    [[ "$k" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || continue
     jqargs+=(--arg "$k" "$v")
     filter="$filter + {$k:\$$k}"
   done

@@ -118,7 +118,7 @@ def known_corpus_files(cwd: str | None = None) -> list[str]:
         dirnames[:] = [dn for dn in dirnames if dn not in _CORPUS_SKIP_DIRS]
         if "DECISIONS.md" in filenames:
             files.append(os.path.join(dirpath, "DECISIONS.md"))
-    for extra in (os.environ.get("DREAM_EXTRA_CORPUS", "").split(":")):
+    for extra in (os.environ.get("DREAM_EXTRA_CORPUS", "").split(os.pathsep)):
         if extra and os.path.exists(extra):
             files.append(extra)
     home_claude = os.path.expanduser("~/.claude/CLAUDE.md")
