@@ -117,3 +117,18 @@ run's proposals in its own file and never write into `review/reviewed/` yourself
 
 Report what you auto-wrote and what you propose (with a per-bucket count, including
 a `decisions-log` count even when it is 0). Done.
+
+## Running on a schedule (nightly, unattended)
+
+To mine the corpus automatically, run this skill headlessly on a timer:
+`claude -p "<the dream prompt>" --permission-mode auto`, fired by your OS
+scheduler. `--permission-mode auto` lets the classifier gate each tool call and
+fail closed when unattended (the pipeline shells out, so stricter modes stall).
+Because the skill needs local session logs + `~/.dream/` state + a reachable
+ollama, it must run on your machine, not a cloud scheduler.
+
+See [`references/SCHEDULING.md`](../../references/SCHEDULING.md) for copy-paste
+setups: **Linux** (systemd user timer — survives logout via `loginctl
+enable-linger`, catches missed runs), **macOS** (launchd LaunchAgent), and a
+portable **cron** fallback. Stagger `dream` and `dream-reviewers` a few minutes
+apart; both land per-run files in `review/pending/` for the SessionStart hook.
