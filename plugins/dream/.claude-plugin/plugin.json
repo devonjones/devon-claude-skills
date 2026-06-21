@@ -1,0 +1,8 @@
+{
+  "name": "dream",
+  "description": "Mine Claude Code session logs and PR review history into durable project improvements (memories, CLAUDE.md, docs, reviewer-roster tuning) — async 'AI dreaming'.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Devon Jones"
+  }
+}

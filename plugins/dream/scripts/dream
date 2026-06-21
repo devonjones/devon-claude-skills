@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Entry point for the dream pipeline CLI. Pure-stdlib, so system python is fine.
+# Derives the target project from $DREAM_PROJECT_DIR or the current directory.
+DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHONPATH="$DIR" exec /usr/bin/env python3 -m dreamlib.cli "$@"
