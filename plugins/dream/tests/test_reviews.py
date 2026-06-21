@@ -96,6 +96,34 @@ def test_synth_scorecard_math():
     assert card["taste_user"] == 1
 
 
+def test_discover_reviewer_finds_custom_names():
+    # explicit <name>-reviewer token, anywhere
+    assert (reviews._discover_reviewer("morpheme-surface-identity-reviewer review for PR #5")
+            == "morpheme-surface-identity-reviewer")
+    assert reviews._discover_reviewer("clarity-reviewer review (rework)") == "clarity-reviewer"
+    # legacy '<name> review ...' shape -> normalized to the -reviewer suffix
+    assert reviews._discover_reviewer("test-coverage review PR 610") == "test-coverage-reviewer"
+    # unattributable (bundled spawn / generic prose) -> None
+    assert reviews._discover_reviewer("Spawn the diff-relevant reviewers (a, b)") is None
+    assert reviews._discover_reviewer("just some discussion") is None
+
+
+def test_resolve_reviewer_breaks_the_canon_circularity():
+    # A custom reviewer that never posted a finding is NOT in canon...
+    canon = {"code-reviewer", "pr-test-analyzer"}
+    desc = "generator-contract-reviewer review for PR #33"
+    assert reviews._match_reviewer(desc, canon) is None
+    # ...but _resolve_reviewer (used by coverage/harvest) still finds it.
+    assert reviews._resolve_reviewer(desc, canon) == "generator-contract-reviewer"
+
+
+def test_resolve_reviewer_prefers_canon_for_irregular_defaults():
+    # pr-test-analyzer doesn't end in -reviewer; canon must win so discovery
+    # doesn't mangle it into 'pr-test-analyzer-reviewer'.
+    canon = {"pr-test-analyzer"}
+    assert reviews._resolve_reviewer("pr-test-analyzer review for PR #1", canon) == "pr-test-analyzer"
+
+
 def test_read_markers_enforces_kind_contract(markers_home):
     lines = [
         {"ts": "t", "skill": "prl", "kind": "reviewer-finding", "pr": 33,

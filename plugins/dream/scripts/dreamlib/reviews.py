@@ -304,6 +304,39 @@ def _match_reviewer(desc: str, canon: set[str]) -> str | None:
     return best[0] if best else None
 
 
+# Self-discovery (devon-claude-skills-c6k). Matching only against a canon built
+# from scorecards is circular: the firing log is meant to be the UNBIASED
+# "fired N times" record, but a canon seeded from posted GitHub findings can't
+# see any reviewer that never posted one — exactly the "fires a lot, rarely
+# useful" case coverage most needs to catch. So fall back to reading the name
+# straight out of the Agent description.
+_REVIEWER_TOKEN = re.compile(r"\b([a-z][a-z0-9]*(?:-[a-z0-9]+)*-reviewer)\b", re.I)
+_REVIEW_SHAPE = re.compile(r"^\W*([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\s+review\b", re.I)
+
+
+def _discover_reviewer(desc: str) -> str | None:
+    """Pull a reviewer name out of a free-text Agent description without needing
+    it to pre-exist in canon. Prefers an explicit ``<name>-reviewer`` token;
+    falls back to the ``<name> review …`` spawn shape, normalized to the
+    ``-reviewer`` suffix the roster convention uses."""
+    m = _REVIEWER_TOKEN.search(desc)
+    if m:
+        return m.group(1).lower()
+    m = _REVIEW_SHAPE.match(desc)
+    if m:
+        base = m.group(1).lower()
+        return base if base.endswith("-reviewer") else f"{base}-reviewer"
+    return None
+
+
+def _resolve_reviewer(desc: str, canon: set[str]) -> str | None:
+    """Canon match first — it handles the irregular default names that don't end
+    in ``-reviewer`` (pr-test-analyzer, code-simplifier, silent-failure-hunter,
+    comment-analyzer, type-design-analyzer) — then self-discovery for the long
+    tail of custom reviewers that never reached the canon."""
+    return _match_reviewer(desc, canon) or _discover_reviewer(desc)
+
+
 def _pr_of(desc: str) -> str | None:
     m = _PR_IN_DESC.search(desc)
     if m:
@@ -345,7 +378,7 @@ def coverage_from_logs() -> dict:
             if b.get("name") not in ("Agent", "Task"):
                 continue
             desc = (b.get("input", {}) or {}).get("description", "") or ""
-            rev = _match_reviewer(desc, canon)
+            rev = _resolve_reviewer(desc, canon)
             if not rev:
                 continue
             e = per[rev]
@@ -408,7 +441,7 @@ def harvest(echo=lambda *_: None) -> dict:
         sm = _NOTIF_SUMMARY.search(txt)
         if not sm:
             continue
-        rev = _match_reviewer(sm.group(1), canon)
+        rev = _resolve_reviewer(sm.group(1), canon)
         if not rev:
             continue
         tid_m = _NOTIF_TASKID.search(txt)
