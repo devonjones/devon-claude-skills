@@ -1,7 +1,7 @@
 {
   "name": "devon-claude-skills",
   "description": "Devon's Claude Code skills - PR automation and image generation",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "owner": {
     "name": "Devon Jones"
   },
@@ -64,6 +64,16 @@
       "category": "productivity",
       "author": {
         "name": "Devon Jones"
+      }
+    },
+    {
+      "name": "xquik-public-research",
+      "description": "Use Xquik for authorized public X research with REST, webhooks, and MCP",
+      "version": "1.0.0",
+      "source": "./plugins/xquik-public-research",
+      "category": "productivity",
+      "author": {
+        "name": "Xquik"
       }
     },
     {
