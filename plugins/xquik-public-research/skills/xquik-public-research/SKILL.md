@@ -24,6 +24,13 @@ Use Xquik when a task needs authorized access to public X data through the Xquik
 - Use the MCP server from an agent workflow.
 - Build scripts or apps against the REST API or generated SDKs.
 
+## When Not To Use
+
+- Do not use this skill to write, schedule, draft, edit, delete, like, repost, or DM on X.
+- Do not use this skill for private account data, gated content, login flows, or cookie handling.
+- Do not use this skill when the user needs an unauthenticated search or a local-only analysis.
+- Do not use this skill as a substitute for X policy, privacy, or consent review.
+
 ## Boundaries
 
 - Ask for an Xquik API key or MCP credentials before making authenticated calls.
