@@ -13,6 +13,26 @@
 # ~/.dream/<git-root-basename>/markers/pr-review-loop.jsonl (or $DREAM_HOME).
 # See the dream plugin's references/MARKER-CONTRACT.md for the schema.
 
+# Fold an off-contract disposition onto the MARKER-CONTRACT enum so the durable
+# stream stays contract-clean (dream's acceptance math buckets exact enum
+# values; anything else is silently invisible). Mirrors
+# dreamlib/reviews.py:_normalize_disposition. Normalize first (lowercase, drop
+# apostrophes, runs of space/hyphen -> _), so `wont-fix` / `won't fix` fold to
+# the contract `wont_fix` without a case arm.
+_normalize_disposition() {
+  local d
+  d="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d "'" \
+        | sed -E 's/[[:space:]-]+/_/g')"
+  case "$d" in
+    verified|approved) printf 'acknowledged' ;;
+    adopted)           printf 'fixed' ;;
+    declined|wontfix)  printf 'wont_fix' ;;
+    deferred)          printf 'out_of_scope' ;;
+    abandoned)         printf 'unresolved' ;;
+    *)                 printf '%s' "$d" ;;
+  esac
+}
+
 _emit() {
   command -v jq >/dev/null 2>&1 || return 0
   [ "$#" -ge 1 ] || return 0
@@ -36,6 +56,8 @@ _emit() {
     # silently drop the marker. Anchored regex rejects it fully (a glob like
     # [a-zA-Z_]* only checks the first char).
     [[ "$k" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || continue
+    # Keep the disposition on the MARKER-CONTRACT enum at the source.
+    [ "$k" = "disposition" ] && v="$(_normalize_disposition "$v")"
     jqargs+=(--arg "$k" "$v")
     filter="$filter + {$k:\$$k}"
   done

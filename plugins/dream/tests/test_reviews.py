@@ -20,6 +20,46 @@ def test_disposition_precedence_reject_beats_anchored_fixed():
     assert reviews._disposition_of("Fixed the typo but won't fix the design") == "wont_fix"
 
 
+def test_normalize_disposition_contract_values_passthrough():
+    for v in ("fixed", "addressed", "acknowledged", "out_of_scope",
+              "wont_fix", "withdrawn", "unresolved"):
+        assert reviews._normalize_disposition(v) == v
+
+
+def test_normalize_disposition_folds_off_contract_aliases():
+    assert reviews._normalize_disposition("verified") == "acknowledged"
+    assert reviews._normalize_disposition("approved") == "acknowledged"
+    assert reviews._normalize_disposition("adopted") == "fixed"
+    assert reviews._normalize_disposition("declined") == "wont_fix"
+    assert reviews._normalize_disposition("deferred") == "out_of_scope"
+    assert reviews._normalize_disposition("abandoned") == "unresolved"
+
+
+def test_normalize_disposition_folds_separators_and_case():
+    assert reviews._normalize_disposition("wont-fix") == "wont_fix"
+    assert reviews._normalize_disposition("won't fix") == "wont_fix"
+    assert reviews._normalize_disposition("Verified") == "acknowledged"
+    assert reviews._normalize_disposition("out of scope") == "out_of_scope"
+    assert reviews._normalize_disposition(None) == "unresolved"
+    assert reviews._normalize_disposition("") == "unresolved"
+
+
+def test_read_markers_normalizes_off_contract_disposition(markers_home):
+    # A guardian marker written as the off-contract "verified" must reach the
+    # acceptance math as "acknowledged" (a VALUE_ACCEPT bucket), not fall through.
+    lines = [
+        {"ts": "t", "skill": "prl", "kind": "reviewer-finding", "pr": 863,
+         "reviewer": "morpheme-surface-identity-reviewer", "disposition": "verified"},
+        {"ts": "t", "skill": "prl", "kind": "reviewer-finding", "pr": 850,
+         "reviewer": "gemini", "disposition": "declined"},
+    ]
+    (markers_home / "prl.jsonl").write_text(
+        "\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8")
+    out = {f["reviewer"]: f["disposition"] for f in reviews.read_markers()}
+    assert out["morpheme-surface-identity-reviewer"] == "acknowledged"
+    assert out["gemini"] == "wont_fix"
+
+
 def test_reviewer_of_agent_signature():
     c = {"body": "<!-- Agent: code-reviewer --> bug: foo", "user": {"login": "dev"}}
     assert reviews._reviewer_of(c) == "code-reviewer"

@@ -1333,10 +1333,19 @@ scripts/emit-dream-marker.sh reviewer-finding \
 ```
 
 Rules:
+- **`disposition` must be one of the seven enum values above**
+  (`fixed | addressed | acknowledged | out_of_scope | wont_fix | withdrawn | unresolved`).
+  Do NOT invent synonyms — a guardian confirm is `acknowledged` (not `verified`/`approved`),
+  a suggestion you took is `fixed` (not `adopted`), a decline-for-parity is `wont_fix`
+  (not `declined`), a filed follow-up is `out_of_scope` (not `deferred`). The emitter
+  now folds these known aliases defensively, but off-contract values that slip past it
+  fall through dream's acceptance math entirely — keep the durable stream clean at the source.
 - **`disposition_by=user`** whenever the operator made the call (overruled a
   finding, signed off a P1/P2 carry-forward, resolved a self-contradiction). This
   is the single most valuable signal dream gets — default to `orchestrator`, set
-  `user` only when the human actually weighed in.
+  `user` only when the human actually weighed in. (Historically this is ~always
+  `orchestrator`; the moment the operator overrides a reviewer, stamp `user` — that
+  lone signal outweighs dozens of orchestrator dispositions in the roster math.)
 - **Best-effort, never blocking.** The script no-ops silently if `jq`/git are
   absent; a marker write must never interrupt the loop. Emit it alongside the
   thread reply, not instead of it — the PR thread is still the system of record.

@@ -67,6 +67,35 @@ VALUE_ACCEPT = {"fixed", "addressed", "acknowledged", "out_of_scope"}
 FIXSTRICT_ACCEPT = {"fixed", "addressed"}
 REJECT = {"wont_fix", "withdrawn"}
 
+# Off-contract disposition values the pr-review-loop orchestrator emits in
+# practice, mapped onto the MARKER-CONTRACT enum. Without this, a marker whose
+# disposition is e.g. "verified" or "adopted" falls through every bucket above
+# and is invisible to acceptance/wont_fix math — the 2026-06-27..30
+# dream-reviewers runs measured ~52% of the marker stream landing off-contract,
+# biasing every guardian reviewer's scorecard toward the GitHub sample. Keyed in
+# normalized form (lowercased, apostrophes dropped, runs of space/hyphen -> _),
+# so "wont-fix" / "won't fix" fold to the contract "wont_fix" without an entry.
+_DISPOSITION_ALIASES = {
+    "verified": "acknowledged",   # guardian confirmed the invariant holds, unchanged
+    "approved": "acknowledged",   # reviewer signed off on the change
+    "adopted": "fixed",           # reviewer's suggestion was taken
+    "declined": "wont_fix",       # finding declined (e.g. decline-for-parity)
+    "wontfix": "wont_fix",        # separator-less variant
+    "deferred": "out_of_scope",   # valid finding, follow-up filed
+    "abandoned": "unresolved",    # thread abandoned — not a refutation, so NOT withdrawn
+}
+
+
+def _normalize_disposition(raw: str | None) -> str:
+    """Fold a marker's raw disposition onto the MARKER-CONTRACT enum. Separator
+    and apostrophe variants (``wont-fix`` / ``won't fix`` -> ``wont_fix``) and the
+    off-contract aliases above are normalized; already-contract values pass
+    through unchanged; empty/None -> ``unresolved``."""
+    if not raw:
+        return "unresolved"
+    key = re.sub(r"[\s-]+", "_", str(raw).strip().lower().replace("'", ""))
+    return _DISPOSITION_ALIASES.get(key, key)
+
 
 def _gh(path: str) -> list:
     out = subprocess.run(
@@ -518,7 +547,7 @@ def read_markers() -> list[dict]:
                         "path": m.get("file"),
                         "line": m.get("line"),
                         "created_at": m.get("ts"),
-                        "disposition": m.get("disposition", "unresolved"),
+                        "disposition": _normalize_disposition(m.get("disposition")),
                         "disposition_by": m.get("disposition_by"),
                         "reopened": bool(m.get("reopened")),
                         "n_replies": 0,
