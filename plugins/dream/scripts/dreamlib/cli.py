@@ -53,9 +53,11 @@ def _digest_path(session_id: str) -> str:
 
 
 def _cache_fresh(path: str, input_hash: str, want_model: bool) -> bool:
-    """A digest is fresh if the source is unchanged AND it has the model
-    enrichment when one was requested (a prior heuristic-only digest is stale
-    for a model run)."""
+    """A digest is fresh if the source is unchanged AND it carries a SUCCESSFUL
+    model enrichment when one was requested. A prior heuristic-only digest — or
+    one that only recorded a ``model_error`` (a transient failure like the model
+    host being offline) — is stale for a model run and must be retried; else a
+    blip permanently poisons the digest and no later run ever re-enriches it."""
     if not os.path.exists(path):
         return False
     try:
@@ -65,7 +67,7 @@ def _cache_fresh(path: str, input_hash: str, want_model: bool) -> bool:
         return False
     if d.get("input_hash") != input_hash:
         return False
-    if want_model and "model" not in d and "model_error" not in d:
+    if want_model and "model" not in d:
         return False
     return True
 
