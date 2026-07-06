@@ -25,6 +25,27 @@ _CORRECTION = re.compile(
     re.I,
 )
 
+# A session whose opening human turn is a dream / dream-reviewers invocation is
+# the tool observing itself: its extracted "insights" are the skill's own prompt
+# and scorecards echoed back, not project lessons. distill skips these so
+# consolidation isn't spent re-litigating the tool's own echo (they were always
+# dropped downstream, but they added noise to every run's candidate pool).
+_SELF_RUN_RE = re.compile(
+    r"^\s*(?:/dream(?:-reviewers)?\b|run\s+(?:the\s+)?dream(?:-reviewers)?\s+skill)",
+    re.I,
+)
+
+
+def is_self_run(session: Session) -> bool:
+    """True when the session's first genuine human turn invokes the dream or
+    dream-reviewers skill. Keys on the OPENING turn only, so a real work session
+    that merely runs the skill partway through is not skipped."""
+    for ev in session.events:
+        if getattr(ev, "is_real_user", False) and ev.text.strip():
+            return bool(_SELF_RUN_RE.match(ev.text.strip()))
+    return False
+
+
 # Caps to keep the model input bounded even for an 85MB session.
 MAX_USER_TURNS = 50
 MAX_FRICTION = 80

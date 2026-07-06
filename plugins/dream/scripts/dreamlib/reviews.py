@@ -233,12 +233,30 @@ def _rate(num: int, den: int) -> float | None:
     return round(num / den, 3) if den else None
 
 
+def _canonical_reviewer_map(findings: list[dict]) -> dict[str, str]:
+    """Fold trailing-``-reviewer`` suffix drift so one reviewer isn't split across
+    scorecard rows. A name and that name + ``-reviewer`` are the same reviewer
+    (``-reviewer`` is a naming-convention suffix, not identity); when BOTH forms
+    appear in the finding set, canonicalize to the ``-reviewer`` form (the
+    AGENT-REVIEWERS.md convention). Folds ONLY when both variants are actually
+    present — e.g. ``test-coverage`` (7) → ``test-coverage-reviewer`` (483),
+    ``api-correctness`` ↔ ``api-correctness-reviewer`` — so genuinely-distinct
+    one-off names are never merged into a canonical they don't belong to."""
+    names = {f["reviewer"] for f in findings if f.get("reviewer")}
+    out: dict[str, str] = {}
+    for n in names:
+        suffixed = n if n.endswith("-reviewer") else n + "-reviewer"
+        out[n] = suffixed if suffixed in names else n
+    return out
+
+
 def synth(findings: list[dict]) -> dict:
     per = defaultdict(lambda: defaultdict(int))
     prs = defaultdict(set)
     sev = defaultdict(lambda: defaultdict(int))
+    canon = _canonical_reviewer_map(findings)
     for f in findings:
-        r = f["reviewer"]
+        r = canon.get(f["reviewer"], f["reviewer"])
         per[r]["findings"] += 1
         per[r][f["disposition"]] += 1
         if f["reopened"]:
