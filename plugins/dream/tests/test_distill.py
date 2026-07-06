@@ -1,6 +1,33 @@
-"""distill.py — friction routing + occurrence dedupe."""
+"""distill.py — friction routing + occurrence dedupe + self-run detection."""
 
 from dreamlib import distill, parse
+
+
+def _user(uid, text):
+    return {"type": "user", "uuid": uid, "message": {"role": "user", "content": text}}
+
+
+def test_is_self_run_detects_dream_invocation_as_opening_turn(session_jsonl):
+    for opener in (
+        "Run the dream skill on my logs",
+        "run the dream-reviewers skill",
+        "/dream",
+        "/dream-reviewers please",
+    ):
+        path = session_jsonl([_user("u1", opener)])
+        assert distill.is_self_run(parse.load_session(path)) is True, opener
+
+
+def test_is_self_run_false_for_real_work_and_midsession_invocation(session_jsonl):
+    # Opening turn is real work; a later "run the dream skill" turn must NOT flip it.
+    path = session_jsonl([
+        _user("u1", "read the kenning docs and summarize DECISIONS.md"),
+        _user("u2", "run the dream skill"),
+    ])
+    assert distill.is_self_run(parse.load_session(path)) is False
+    # An unrelated opener is also not a self-run.
+    p2 = session_jsonl([_user("u1", "fix the failing test in reviews.py")])
+    assert distill.is_self_run(parse.load_session(p2)) is False
 
 
 def test_dedupe_friction_collapses_identical_with_occurrences():

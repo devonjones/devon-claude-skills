@@ -20,7 +20,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from .distill import build_model_input, heuristic_digest
+from .distill import build_model_input, heuristic_digest, is_self_run
 from .parse import load_session
 from .synth import REVIEW_DIR, synthesize
 from . import reviews as rv
@@ -89,7 +89,7 @@ def cmd_distill(args: argparse.Namespace) -> int:
 
         enrich = _enrich
 
-    done = skipped = failed = 0
+    done = skipped = failed = selfrun = 0
     t0 = time.time()
     for i, f in enumerate(files, 1):
         # Fast hash precheck: skip unchanged before full parse when possible.
@@ -98,6 +98,12 @@ def cmd_distill(args: argparse.Namespace) -> int:
         except Exception as e:  # noqa: BLE001
             failed += 1
             _echo(f"  [{i}/{total}] PARSE-FAIL {os.path.basename(f)}: {e}")
+            continue
+
+        # Skip the tool's own self-runs (opening turn = dream/dream-reviewers
+        # invocation) — their insights are the skill's echo, not project lessons.
+        if is_self_run(session):
+            selfrun += 1
             continue
 
         dpath = _digest_path(session.session_id)
@@ -130,11 +136,11 @@ def cmd_distill(args: argparse.Namespace) -> int:
             rate = (time.time() - t0) / i
             _echo(
                 f"  [{i}/{total}]  done={done} skipped={skipped} "
-                f"failed={failed} ({rate:.1f}s/entry)"
+                f"selfrun={selfrun} failed={failed} ({rate:.1f}s/entry)"
             )
     _echo(
-        f"distill complete: {done} written, {skipped} cached, {failed} failed "
-        f"in {time.time()-t0:.0f}s"
+        f"distill complete: {done} written, {skipped} cached, "
+        f"{selfrun} self-runs skipped, {failed} failed in {time.time()-t0:.0f}s"
     )
     return 0
 

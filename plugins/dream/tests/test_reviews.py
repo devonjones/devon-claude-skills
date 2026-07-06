@@ -60,6 +60,36 @@ def test_read_markers_normalizes_off_contract_disposition(markers_home):
     assert out["gemini"] == "wont_fix"
 
 
+def test_canonical_reviewer_map_folds_suffix_variants_only_when_both_present():
+    findings = [
+        {"reviewer": "test-coverage"}, {"reviewer": "test-coverage-reviewer"},
+        {"reviewer": "api-correctness"}, {"reviewer": "api-correctness-reviewer"},
+        {"reviewer": "pr-test-analyzer"},      # lone plugin default, no -reviewer twin
+        {"reviewer": "spa-parity-reviewer"},   # lone -reviewer, no bare twin
+    ]
+    m = reviews._canonical_reviewer_map(findings)
+    assert m["test-coverage"] == "test-coverage-reviewer"
+    assert m["test-coverage-reviewer"] == "test-coverage-reviewer"
+    assert m["api-correctness"] == "api-correctness-reviewer"
+    assert m["pr-test-analyzer"] == "pr-test-analyzer"        # untouched
+    assert m["spa-parity-reviewer"] == "spa-parity-reviewer"  # untouched (no bare twin)
+
+
+def test_synth_merges_suffix_variant_reviewers_into_one_row():
+    findings = [
+        {"reviewer": "test-coverage", "disposition": "fixed",
+         "reopened": False, "severity": None, "pr": "1"},
+        {"reviewer": "test-coverage-reviewer", "disposition": "fixed",
+         "reopened": False, "severity": None, "pr": "2"},
+    ]
+    out = reviews.synth(findings)
+    assert out["reviewer_count"] == 1  # not split into two rows
+    card = out["scorecards"][0]
+    assert card["reviewer"] == "test-coverage-reviewer"  # canonical form wins
+    assert card["findings"] == 2
+    assert card["prs"] == 2
+
+
 def test_reviewer_of_agent_signature():
     c = {"body": "<!-- Agent: code-reviewer --> bug: foo", "user": {"login": "dev"}}
     assert reviews._reviewer_of(c) == "code-reviewer"
