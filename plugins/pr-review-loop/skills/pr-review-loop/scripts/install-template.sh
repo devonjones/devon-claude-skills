@@ -88,7 +88,7 @@ LANGS=()
 SUBTREES=()
 TEMPLATES=()
 TARGETS=()
-declare -A SUBTREE_SEEN
+PAIR_COUNT=0
 
 for pair in "${PAIRS[@]}"; do
     if [[ "$pair" != *:* ]]; then
@@ -143,16 +143,20 @@ for pair in "${PAIRS[@]}"; do
         exit 1
     fi
 
-    if [[ -n "${SUBTREE_SEEN[$norm_subtree]:-}" ]]; then
-        echo "Error: multiple packs targeting subtree '$norm_subtree' — same-directory polyglot must be resolved manually (agent names collide)" >&2
-        exit 1
+    if [[ "$PAIR_COUNT" -gt 0 ]]; then
+        for seen_subtree in "${SUBTREES[@]}"; do
+            if [[ "$seen_subtree" == "$norm_subtree" ]]; then
+                echo "Error: multiple packs targeting subtree '$norm_subtree' — same-directory polyglot must be resolved manually (agent names collide)" >&2
+                exit 1
+            fi
+        done
     fi
-    SUBTREE_SEEN[$norm_subtree]=1
 
     LANGS+=("$lang")
     SUBTREES+=("$norm_subtree")
     TEMPLATES+=("$template_path")
     TARGETS+=("$target")
+    PAIR_COUNT=$((PAIR_COUNT + 1))
 done
 
 # Also check that the root AGENT-REVIEWERS.md doesn't exist (unless one of
