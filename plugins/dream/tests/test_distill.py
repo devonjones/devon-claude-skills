@@ -18,6 +18,22 @@ def test_is_self_run_detects_dream_invocation_as_opening_turn(session_jsonl):
         assert distill.is_self_run(parse.load_session(path)) is True, opener
 
 
+def test_is_self_run_detects_dream_review_triage_opener(session_jsonl):
+    # The dream-review triage cron opens with this — previously fell through the
+    # guard and got distilled as if it were wyrd engineering work.
+    triage = ("Triage the pending dream recommendation files in "
+              "~/.dream/wyrd/review/pending/. Only consider files matching *-dream.md")
+    path = session_jsonl([_user("u1", triage)])
+    assert distill.is_self_run(parse.load_session(path)) is True
+
+
+def test_is_self_run_dir_reference_catches_novel_dream_job(session_jsonl):
+    # Belt-and-braces: an opener steering at the ~/.dream home is a self-run even
+    # with a prompt shape not in the explicit alternation.
+    path = session_jsonl([_user("u1", "Summarize everything under ~/.dream/wyrd/reviews and report")])
+    assert distill.is_self_run(parse.load_session(path)) is True
+
+
 def test_is_self_run_false_for_real_work_and_midsession_invocation(session_jsonl):
     # Opening turn is real work; a later "run the dream skill" turn must NOT flip it.
     path = session_jsonl([
