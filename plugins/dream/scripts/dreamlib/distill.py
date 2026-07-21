@@ -30,19 +30,37 @@ _CORRECTION = re.compile(
 # and scorecards echoed back, not project lessons. distill skips these so
 # consolidation isn't spent re-litigating the tool's own echo (they were always
 # dropped downstream, but they added noise to every run's candidate pool).
+# Opening-turn signatures of the scheduled self-run jobs — dream, dream-reviewers,
+# AND the dream-review triage cron — plus the interactive /dream commands. These
+# are all `claude -p` runs with fixed prompts we control; keep in sync with the
+# dream-*/dream-review systemd unit prompts.
 _SELF_RUN_RE = re.compile(
-    r"^\s*(?:/dream(?:-reviewers)?\b|run\s+(?:the\s+)?dream(?:-reviewers)?\s+skill)",
+    r"^\s*(?:"
+    r"/dream(?:-reviewers)?\b"
+    r"|run\s+(?:the\s+)?dream(?:-reviewers)?\s+skill"
+    r"|triage\s+the\s+pending\s+dream\b"
+    r")",
     re.I,
+)
+# Belt-and-braces: an opening prompt that steers the run at the ~/.dream/<slug>/
+# home (review/markers/digests/reviews) is the tool acting on itself, even if a
+# future dream-tooling job uses a prompt shape not listed above. Note the triage
+# job reads repo CLAUDE.md/DECISIONS.md for dedup, so an "all files under ~/.dream"
+# heuristic would NOT catch it — the opening prompt is the reliable signal.
+_SELF_RUN_DIR_RE = re.compile(
+    r"\.dream/[a-z0-9._-]+/(?:review|markers|digests|reviews)\b", re.I
 )
 
 
 def is_self_run(session: Session) -> bool:
-    """True when the session's first genuine human turn invokes the dream or
-    dream-reviewers skill. Keys on the OPENING turn only, so a real work session
-    that merely runs the skill partway through is not skipped."""
+    """True when the session's first genuine human turn is a dream / dream-reviewers
+    / dream-review-triage invocation (or otherwise steers the run at the ~/.dream
+    home). Keys on the OPENING turn only, so a real work session that merely runs
+    the skill partway through is not skipped."""
     for ev in session.events:
         if getattr(ev, "is_real_user", False) and ev.text.strip():
-            return bool(_SELF_RUN_RE.match(ev.text.strip()))
+            t = ev.text.strip()
+            return bool(_SELF_RUN_RE.match(t) or _SELF_RUN_DIR_RE.search(t))
     return False
 
 
