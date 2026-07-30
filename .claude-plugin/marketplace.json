@@ -1,9 +1,7 @@
 {
   "name": "devon-claude-skills",
+  "description": "Devon's Claude Code skills - PR automation and image generation",
   "version": "1.0.0",
-  "metadata": {
-    "description": "Devon's Claude Code skills - PR automation and image generation"
-  },
   "owner": {
     "name": "Devon Jones"
   },
@@ -11,8 +9,18 @@
     {
       "name": "pr-review-loop",
       "description": "Autonomous PR review automation with multi-bot support (Gemini, Cursor, Claude)",
-      "version": "1.2.0",
+      "version": "1.6.0",
       "source": "./plugins/pr-review-loop",
+      "category": "productivity",
+      "author": {
+        "name": "Devon Jones"
+      }
+    },
+    {
+      "name": "dream",
+      "description": "Mine Claude Code session logs and PR review history into durable project improvements (memories, CLAUDE.md, docs, reviewer-roster tuning) — async 'AI dreaming'.",
+      "version": "0.1.0",
+      "source": "./plugins/dream",
       "category": "productivity",
       "author": {
         "name": "Devon Jones"
@@ -53,6 +61,16 @@
       "description": "Turn a YouTube video into a faithful-capture literature note in an Obsidian vault (transcript + canonical visual scenes + structured extraction)",
       "version": "1.0.0",
       "source": "./plugins/youtube-synthesizer",
+      "category": "productivity",
+      "author": {
+        "name": "Devon Jones"
+      }
+    },
+    {
+      "name": "handoff",
+      "description": "Compact the current conversation into a handoff document for another agent (new session, teammate, different agent) to pick up the work without ramping from zero.",
+      "version": "1.0.0",
+      "source": "./plugins/handoff",
       "category": "productivity",
       "author": {
         "name": "Devon Jones"

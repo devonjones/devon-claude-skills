@@ -24,8 +24,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Get repo info
-REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//') || {
+# Get repo info via gh's own detection (doesn't depend on a remote named "origin").
+# Hard-exit on failure: this script can't query comments without a known repo.
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
     echo "Error: Could not determine repository. Run from within a git repository." >&2
     exit 1
 }

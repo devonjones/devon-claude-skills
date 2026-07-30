@@ -1,0 +1,25 @@
+name: dream tests
+
+on:
+  pull_request:
+    paths:
+      - "plugins/dream/**"
+      - ".github/workflows/dream-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "plugins/dream/**"
+      - ".github/workflows/dream-tests.yml"
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - name: Run dream plugin tests
+        working-directory: plugins/dream
+        run: python -m pytest tests

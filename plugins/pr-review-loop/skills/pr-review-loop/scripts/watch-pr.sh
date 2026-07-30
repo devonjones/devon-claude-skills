@@ -10,9 +10,9 @@
 set -euo pipefail
 
 PR_NUMBER="${1:?Usage: watch-pr.sh <pr-number> [repo]}"
-# Accept repo as optional arg; otherwise derive from origin (consistent with other scripts).
-# This ensures -R works on forks with both origin and upstream remotes.
-REPO="${2:-$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//')}"
+# Accept repo as optional arg; otherwise let gh's own detection handle it
+# (consistent with other scripts; doesn't depend on a remote named "origin").
+REPO="${2:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || { echo "Warning: Could not determine repository." >&2; })}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 REPO_FLAG=""

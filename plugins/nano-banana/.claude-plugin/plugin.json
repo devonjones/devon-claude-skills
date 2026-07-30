@@ -1,0 +1,8 @@
+{
+  "name": "nano-banana",
+  "description": "Image generation, editing, and composition using Google's Gemini 3 Pro Image model",
+  "version": "1.0.0",
+  "author": {
+    "name": "Devon Jones"
+  }
+}

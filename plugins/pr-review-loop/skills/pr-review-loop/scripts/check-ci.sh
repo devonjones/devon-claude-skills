@@ -46,8 +46,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Derive repo slug from origin so -R works on forks with both origin and upstream remotes
-REPO=$(git remote get-url origin 2>/dev/null | sed 's/.*github\.com[:\/]//' | sed 's/\.git$//') || REPO=""
+# Get repo info via gh's own detection (doesn't require a remote named "origin").
+# Empty REPO is OK — REPO_FLAG below skips -R when unset.
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || { echo "Warning: Could not determine repository." >&2; })
 REPO_FLAG=""
 if [[ -n "$REPO" ]]; then
     REPO_FLAG="-R $REPO"
