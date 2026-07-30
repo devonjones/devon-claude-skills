@@ -32,8 +32,11 @@ Install the plugins you want to use:
 # Install YouTube synthesizer (recommended: install all three YouTube plugins together)
 /plugin install youtube-synthesizer@devon-claude-skills
 
+# Install article synthesizer
+/plugin install article-synthesizer@devon-claude-skills
+
 # Or install all
-/plugin install pr-review-loop@devon-claude-skills nano-banana@devon-claude-skills youtube-transcript@devon-claude-skills youtube-screenshotter@devon-claude-skills youtube-synthesizer@devon-claude-skills
+/plugin install pr-review-loop@devon-claude-skills nano-banana@devon-claude-skills youtube-transcript@devon-claude-skills youtube-screenshotter@devon-claude-skills youtube-synthesizer@devon-claude-skills article-synthesizer@devon-claude-skills
 ```
 
 ### Step 3: Verify Installation
@@ -190,6 +193,33 @@ https://www.youtube.com/watch?v=VIDEO_ID into ~/Obsidian/woodworking
 
 Optional flags interpreted by the skill: `--rerun` to overwrite an existing entry, `--why "<reason>"` to seed the `why_ingested` frontmatter field.
 
+### article-synthesizer
+
+Ingest a web article as a faithful-capture literature note in an Obsidian vault. The article sibling of `youtube-synthesizer` — same vault conventions and shared frontmatter base schema, no frame pipeline. Fetches via the WebFetch tool (curl fallback), refuses paywalled/login-walled/unfetchable pages rather than fabricating content.
+
+**Install:**
+```bash
+/plugin install article-synthesizer@devon-claude-skills
+```
+
+**Features:**
+- Faithful capture, no editorializing — TL;DR, key takeaways, reflowed article prose preserving the author's own section headings, code blocks verbatim
+- Per-note folder under `<vault>/sources/articles/<sanitized-domain>/<ingested-date>-<sanitized-title>/`, grouping a site's articles the way youtube-synthesizer groups a channel's videos
+- Frontmatter follows the same base schema as youtube-synthesizer plus article extras (`site_name`, `fetched_via`, `word_count`, `canonical_url`)
+- References extracted from the article's outbound links with keep/drop filtering
+- Images linked at their remote URLs, not downloaded (no image pipeline in v1)
+- Skip-by-default if entry already exists; `--rerun` to overwrite
+- Headless-invocable by cryo's drain worker (`DRAIN-DONE:` / `DRAIN-FAILED:` protocol)
+
+**Usage:**
+
+```
+Use the article-synthesizer skill to ingest
+https://example.com/some-article into ~/ObsidianVaults/Programming
+```
+
+Optional flags interpreted by the skill: `--rerun` to overwrite an existing entry, `--why "<reason>"` to seed the `why_ingested` frontmatter field.
+
 ## Migration Notice
 
 These skills were previously hosted in separate repositories:
@@ -221,6 +251,10 @@ These skills were previously hosted in separate repositories:
 - `youtube-transcript` and `youtube-screenshotter` plugins installed (transitively requires `uv` and `ffmpeg`)
 - Network access to YouTube
 - A target Obsidian vault path (writable). Per-note folder convention; the skill writes only under `<vault>/sources/videos/`.
+
+### article-synthesizer
+- Network access to the article's host; `curl` for the fallback fetch path
+- A target Obsidian vault path (writable). Per-note folder convention; the skill writes only under `<vault>/sources/articles/`.
 
 ## License
 
