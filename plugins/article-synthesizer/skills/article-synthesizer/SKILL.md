@@ -210,7 +210,7 @@ The domain directory is created on-demand if it doesn't exist yet.
 If the entry directory already exists and the user did not pass `--rerun`:
 
 - Print a clear message: *"Entry already exists at `<path>`. Pass --rerun to overwrite."*
-- Stop. Do not modify existing content.
+- Stop. Do not modify existing content. (Interactive mode only — headless runs treat an existing entry as idempotent success; see Headless invocation.)
 
 If `--rerun`, remove the existing directory's contents before writing (preserve nothing — full regeneration).
 
@@ -281,7 +281,8 @@ This skill is driven by cryo's drain worker (like `youtube-synthesizer`), so it 
   DRAIN-DONE: <path of the written .md file relative to ~/ObsidianVaults>
   ```
   e.g. `DRAIN-DONE: Programming/sources/articles/martinfowler-com/2026-07-29-patterns-of-distributed-systems/patterns-of-distributed-systems.md`
-- On unrecoverable error (any Phase A failure mode, missing vault, existing entry without `--rerun`), the final line must be:
+- **Existing entry without `--rerun` is idempotent success**, not failure: skip the fetch/extraction entirely and emit `DRAIN-DONE: <path of the existing .md file relative to ~/ObsidianVaults>`. The drain worker treats an already-ingested article as done and needs its path back. D.2's *"Entry already exists... Pass --rerun to overwrite"* refusal message is interactive-mode behavior only.
+- On unrecoverable error (any Phase A failure mode, missing vault), the final line must be:
   ```
   DRAIN-FAILED: <one-line reason>
   ```
