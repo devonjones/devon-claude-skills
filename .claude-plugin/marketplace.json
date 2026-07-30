@@ -75,6 +75,16 @@
       "author": {
         "name": "Devon Jones"
       }
+    },
+    {
+      "name": "article-synthesizer",
+      "description": "Turn a web article into a faithful-capture literature note in an Obsidian vault (fetch + structured extraction; the article sibling of youtube-synthesizer)",
+      "version": "1.0.0",
+      "source": "./plugins/article-synthesizer",
+      "category": "productivity",
+      "author": {
+        "name": "Devon Jones"
+      }
     }
   ]
 }
