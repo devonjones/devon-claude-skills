@@ -234,6 +234,23 @@ printf '# Configuration\n\n```json\n{"disabled": []}\n```\n\n# Agents\n\n# Confi
 check_contains "duplicate Configuration sections warn" "only the first is read" \
     "$(cd "$repo" && "$PARSE_CONFIG" AGENT-REVIEWERS.md 2>&1 >/dev/null || true)"
 
+# Two ```json fences under ONE heading. The duplicate-heading warning tells
+# users to merge their sections, so this is the shape that advice produces —
+# it must not be the silent one.
+repo="$(mktemp -d -p "$TMP_ROOT")"
+git -C "$repo" init -q
+printf '# Configuration\n\n```json\n{"disabled": []}\n```\n\nProse.\n\n```json\n{"bots": {"gemini": false}}\n```\n' \
+    > "$repo/AGENT-REVIEWERS.md"
+check "two json fences, one heading -> exit 2, not silent 0" "2" "$(bot_status "$repo" gemini)"
+check_contains "two json fences warn" "more than one \`\`\`json block" "$(bot_stderr "$repo" gemini)"
+
+# The config is found from the repo root, not the current directory.
+repo="$(make_repo '{"bots": {"gemini": false}}')"
+mkdir -p "$repo/nested/deeper"
+SUBDIR_RC=0
+(cd "$repo/nested/deeper" && "$BOT_ENABLED" gemini >/dev/null 2>&1) || SUBDIR_RC=$?
+check "disabled bot resolves from a subdirectory" "1" "$SUBDIR_RC"
+
 # A UTF-8 BOM ahead of the heading must not silently drop the whole config.
 repo="$(mktemp -d -p "$TMP_ROOT")"
 git -C "$repo" init -q
@@ -372,6 +389,10 @@ check "unreadable config -> exit 2" "2" "$(bot_status "$repo" gemini)"
 
 run_stubbed "$repo" "$TRIGGER_REVIEW" 42 --gemini
 check_gh_posted "undetermined: trigger-review still triggers" "yes"
+# Triggering silently is the harm: the off switch didn't take and nothing said
+# so. Adding 2>/dev/null to the bot-enabled.sh call would pass every other
+# assertion here.
+check_contains "undetermined: trigger-review surfaces the warning" "could not read the .bots block" "$RUN_OUT"
 if [[ "$RUN_OUT" == *"disabled for this repo"* ]]; then
     echo "FAIL: undetermined: trigger-review must not claim the user disabled it"
     FAILED=$((FAILED + 1))
@@ -388,6 +409,7 @@ git -C "$repo" push -q -u origin HEAD
 echo "change" > "$repo/file.txt"
 run_stubbed "$repo" "$COMMIT_PUSH" "test commit" --trigger-review
 check_gh_posted "undetermined: commit-and-push still triggers" "yes"
+check_contains "undetermined: commit-and-push surfaces the warning" "could not read the .bots block" "$RUN_OUT"
 
 # --- the third call site ----------------------------------------------------
 #
@@ -423,6 +445,7 @@ else
     echo "PASS: undetermined: get-review-comments does not claim the bots are disabled"
     PASSED=$((PASSED + 1))
 fi
+check_contains "undetermined: get-review-comments surfaces the warning" "could not read the .bots block" "$RUN_OUT"
 
 # Skipping the wait has to mean skipping it, not just announcing it: with no
 # threads to find, the mutant that only prints the message polls for 5 minutes.

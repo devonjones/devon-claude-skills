@@ -81,15 +81,25 @@ RAW_JSON="$(awk '
     # Track every fence open/close so heading detection stays accurate even
     # when prose preceding the json block contains fenced `^# ` examples.
     /^```/ {
-        # Close the captured json fence.
+        # Close the captured json fence. Deliberately NOT `exit`: stopping here
+        # made a SECOND ```json fence under the same heading invisible — the
+        # capture was non-empty so the empty-extraction backstop stayed quiet,
+        # and one heading meant the duplicate-heading warning stayed quiet too,
+        # so the later block simply vanished. Reading on means both blocks land
+        # in the capture and the single-document check downstream rejects them
+        # loudly. This matters because the duplicate-heading warning tells users
+        # to merge their sections, which walks them straight into this shape.
         if (in_json && /^```[[:space:]]*$/) {
             in_json = 0
             in_fence = 0
-            in_config = 0
-            exit
+            json_done = 1
+            next
         }
         # Opening the json fence inside the Configuration section.
         if (in_config && !in_fence && /^```json[[:space:]]*$/) {
+            if (json_done) {
+                print "Warning: more than one ```json block in the # Configuration section of " FILENAME "; they must be merged into one." > "/dev/stderr"
+            }
             in_fence = 1
             in_json = 1
             next
