@@ -32,10 +32,28 @@ def git_root(cwd: str | None = None) -> str:
     return _run(["git", "rev-parse", "--show-toplevel"], cwd=cwd or project_dir())
 
 
+def main_checkout(cwd: str | None = None) -> str:
+    """The MAIN checkout's root, even when called from a linked worktree.
+
+    `--show-toplevel` returns the *worktree* dir, so a review round run from
+    `wyrd-tombstone/` used to key its own `~/.dream/wyrd-tombstone/` — a slug that
+    dies with the worktree, taking its markers with it. The common dir is shared by
+    every worktree of a repo, so its parent is the one stable identity. Falls back
+    to the worktree root on old git (no `--path-format`) or a bare/odd layout."""
+    common = _run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        cwd=cwd or project_dir(),
+    )
+    if common.endswith("/.git"):
+        return os.path.dirname(common)
+    return git_root(cwd)
+
+
 def project_slug(cwd: str | None = None) -> str:
-    """Stable per-project key: the git-root basename (so a sibling producer like
-    pr-review-loop computes the SAME markers path with one `git rev-parse`)."""
-    root = git_root(cwd)
+    """Stable per-project key: the MAIN checkout's basename (so a sibling producer
+    like pr-review-loop computes the SAME markers path, and every worktree of a repo
+    writes to one stream)."""
+    root = main_checkout(cwd)
     return os.path.basename(root or os.path.abspath(cwd or project_dir()))
 
 

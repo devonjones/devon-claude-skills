@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import json
 import os
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -88,6 +90,15 @@ def cmd_distill(args: argparse.Namespace) -> int:
         from .model import enrich as _enrich
 
         enrich = _enrich
+        # Say which box is doing the thinking. With $WYRD_OLLAMA_URL unset (an
+        # interactive run, or a cron unit missing the Environment= line) this
+        # silently defaults to localhost — which on some hosts is a weak-GPU box
+        # capped well below the intended model. Degrading quietly is worse than
+        # a loud line at the top of the run.
+        if not os.environ.get("WYRD_OLLAMA_URL"):
+            _echo(f"WARN: WYRD_OLLAMA_URL unset — distilling against {args.url}")
+        else:
+            _echo(f"distill model: {args.model} @ {args.url}")
 
     done = skipped = failed = selfrun = 0
     t0 = time.time()
@@ -290,25 +301,66 @@ def cmd_reviews_synth(args: argparse.Namespace) -> int:
     s = rv.synth(findings)
     s["source"] = args.source
     s["generated_at"] = _now()
-    with open(os.path.join(rv.REVIEW_OUT, "scorecards.json"), "w") as fh:
-        json.dump(s, fh, indent=2)
-    md = _render_scorecards(s)
-    with open(os.path.join(rv.REVIEW_OUT, "SCORECARDS.md"), "w") as fh:
-        fh.write(md)
+    # Suffix by source: both `--source markers` and `--source all` used to write
+    # the same two filenames, so running both left only the second — the markers
+    # scorecard (the only one carrying operator taste) was silently destroyed.
+    for name, blob in (
+        (f"scorecards-{args.source}.json", json.dumps(s, indent=2)),
+        (f"SCORECARDS-{args.source}.md", _render_scorecards(s)),
+    ):
+        with open(os.path.join(rv.REVIEW_OUT, name), "w") as fh:
+            fh.write(blob)
     _echo(
         f"reviews-synth: {s['reviewer_count']} scorecards "
-        f"→ {rv.REVIEW_OUT}/SCORECARDS.md"
+        f"→ {rv.REVIEW_OUT}/SCORECARDS-{args.source}.md"
     )
     return 0
 
 
+def _merge_coverage(old: dict, new: dict) -> dict:
+    """Cumulative max-by-reviewer merge.
+
+    Coverage is computed from the Claude Code session-log window, which is pruned:
+    the wyrd record went 1,360 spawns → 0 across six weeks with no reviewer actually
+    going quiet. Recomputing from the live window therefore *destroys* history, and
+    a naive reader would retire a productive reviewer for showing zero. Merging
+    forward makes the count a high-water mark instead of a snapshot."""
+    merged: dict[str, dict] = {r["reviewer"]: dict(r) for r in old.get("reviewers", [])}
+    for r in new.get("reviewers", []):
+        prev = merged.get(r["reviewer"])
+        if prev is None:
+            merged[r["reviewer"]] = dict(r)
+            continue
+        prev["spawns"] = max(prev.get("spawns") or 0, r.get("spawns") or 0)
+        prev["prs"] = max(prev.get("prs") or 0, r.get("prs") or 0)
+        seens = [s for s in (prev.get("first_seen"), r.get("first_seen")) if s]
+        prev["first_seen"] = min(seens) if seens else None
+        seens = [s for s in (prev.get("last_seen"), r.get("last_seen")) if s]
+        prev["last_seen"] = max(seens) if seens else None
+    out = dict(new)
+    out["reviewers"] = sorted(
+        merged.values(), key=lambda r: (-(r.get("spawns") or 0), r["reviewer"])
+    )
+    out["total_spawns"] = sum(r.get("spawns") or 0 for r in out["reviewers"])
+    out["live_window_spawns"] = new.get("total_spawns", 0)
+    return out
+
+
 def cmd_reviews_coverage(args: argparse.Namespace) -> int:
     cov = rv.coverage_from_logs()
-    cov["generated_at"] = _now()
     os.makedirs(rv.REVIEW_OUT, exist_ok=True)
-    with open(os.path.join(rv.REVIEW_OUT, "coverage.json"), "w") as fh:
+    path = os.path.join(rv.REVIEW_OUT, "coverage.json")
+    if not args.no_merge and os.path.exists(path):
+        try:
+            with open(path) as fh:
+                cov = _merge_coverage(json.load(fh), cov)
+        except Exception as e:  # noqa: BLE001 — a corrupt prior file must not
+            _echo(f"reviews-coverage: prior coverage unreadable ({e}) — not merged")
+    cov["generated_at"] = _now()
+    with open(path, "w") as fh:
         json.dump(cov, fh, indent=2)
-    lines = ["# Reviewer firing coverage (from logs — complete, unbiased)", ""]
+    lines = ["# Reviewer firing coverage (cumulative high-water mark, merged "
+             "forward across runs — the live log window is pruned)", ""]
     lines.append(f"{cov['total_spawns']} reviewer spawns\n")
     lines.append("| reviewer | spawns | PRs | first seen | last seen |")
     lines.append("|---|--:|--:|---|---|")
@@ -321,13 +373,94 @@ def cmd_reviews_coverage(args: argparse.Namespace) -> int:
         fh.write("\n".join(lines))
     _echo(
         f"reviews-coverage: {len(cov['reviewers'])} reviewers, "
-        f"{cov['total_spawns']} spawns → {rv.REVIEW_OUT}/COVERAGE.md"
+        f"{cov['total_spawns']} spawns cumulative "
+        f"({cov.get('live_window_spawns', cov['total_spawns'])} in the live window) "
+        f"→ {rv.REVIEW_OUT}/COVERAGE.md"
     )
     return 0
 
 
 def cmd_reviews_harvest(args: argparse.Namespace) -> int:
     rv.harvest(_echo)
+    return 0
+
+
+GATE_STATE = os.path.join(config.dream_home(), "gate.json")
+
+
+def _gate_state() -> dict:
+    try:
+        with open(GATE_STATE) as fh:
+            return json.load(fh)
+    except Exception:  # noqa: BLE001 — missing/corrupt state means "never ran"
+        return {}
+
+
+def _sessions_fingerprint() -> str:
+    """Content fingerprint of the minable corpus: the sorted input_hashes of every
+    non-self-run session. Content-keyed, never mtime — dream's own reads and the
+    log pruner both touch mtimes without changing what there is to mine.
+
+    Unlike distill this does NOT skip the newest (possibly still-live) session.
+    Skipping it deadlocks: with every job gated off, no new log is ever written,
+    so the last real work session stays "newest" forever and never becomes
+    eligible. Counting it can only cost an extra run — and an extra run on a day
+    real work happened is the correct outcome. The hash changes again as the
+    session grows, which simply re-arms the gate."""
+    hashes = []
+    for f in _session_files(PROJECT_LOGS, skip_live=False):
+        try:
+            session = load_session(f)
+        except Exception:  # noqa: BLE001 — an unparseable log is not new input
+            continue
+        if not is_self_run(session):
+            hashes.append(session.input_hash)
+    if not hashes:
+        return "unavailable"
+    return hashlib.sha256("".join(sorted(hashes)).encode()).hexdigest()
+
+
+def _prs_fingerprint() -> str:
+    """Most recently touched PR (number + updatedAt). Catches a merge, a new PR, and
+    new review comments on an existing one — the three things that give the reviewer
+    roster new evidence."""
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "list", "--state", "all", "--limit", "1",
+             "--search", "sort:updated-desc", "--json", "number,updatedAt"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except Exception:  # noqa: BLE001
+        return "unavailable"
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else "unavailable"
+
+
+def cmd_gate(args: argparse.Namespace) -> int:
+    """Exit 0 when there is new input since the last passing gate, 1 when there is
+    not. Built for systemd ``ExecCondition=``, which skips the unit — without
+    marking it failed — on a 1-254 exit. A quiet day then produces no run, and so
+    no review/pending/ file for the triage job to turn into a digest.
+
+    Fails OPEN: when the signal can't be computed (gh down, no readable logs) the
+    run proceeds, so a broken probe never silently stalls the pipeline.
+    """
+    key = args.check
+    current = _sessions_fingerprint() if key == "sessions" else _prs_fingerprint()
+    if current == "unavailable":
+        _echo(f"gate[{key}]: signal unavailable — failing open, run proceeds")
+        return 0
+
+    state = _gate_state()
+    if state.get(key) == current:
+        _echo(f"gate[{key}]: no new input since last run — skipping")
+        return 1
+
+    if not args.peek:
+        state[key] = current
+        state[f"{key}_at"] = _now()
+        with open(GATE_STATE, "w") as fh:
+            json.dump(state, fh, indent=2)
+    _echo(f"gate[{key}]: new input since last run — run proceeds")
     return 0
 
 
@@ -362,10 +495,19 @@ def main(argv: list[str] | None = None) -> int:
     rs.set_defaults(func=cmd_reviews_synth)
 
     rc = sub.add_parser("reviews-coverage", help="reviewer firing coverage from logs")
+    rc.add_argument("--no-merge", action="store_true",
+                    help="live log window only; do not merge the prior cumulative file")
     rc.set_defaults(func=cmd_reviews_coverage)
 
     rh = sub.add_parser("reviews-harvest", help="capture durable + /tmp reviewer findings")
     rh.set_defaults(func=cmd_reviews_harvest)
+
+    g = sub.add_parser("gate", help="exit 1 when there is no new input since last run")
+    g.add_argument("--check", choices=["sessions", "prs"], default="sessions",
+                   help="sessions = new minable session content; prs = PR activity")
+    g.add_argument("--peek", action="store_true",
+                   help="report without advancing the watermark")
+    g.set_defaults(func=cmd_gate)
 
     args = p.parse_args(argv)
     return args.func(args)
