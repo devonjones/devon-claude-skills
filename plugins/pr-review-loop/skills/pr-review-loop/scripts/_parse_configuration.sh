@@ -30,20 +30,27 @@
 # Usage: _parse_configuration.sh <path-to-AGENT-REVIEWERS.md> [--bots-only]
 #
 # --bots-only answers the narrow question "is this bot on?" (bot-enabled.sh)
-# rather than "is this whole config sound?" (the pre-loop check). It validates
-# the `bots` block and nothing else, so a broken `overlap_acknowledged` entry
-# can't discard a perfectly readable `bots.gemini: false` and silently switch
-# the bot back on. It also treats malformed JSON as a hard failure (exit 1)
-# instead of degrading to `{}`, because for this caller "I couldn't read your
-# config" and "your config says the bot is on" are not the same answer.
+# rather than "is this whole config sound?" (the pre-loop check). Only failures
+# that make the answer untrustworthy are fatal: a broken `overlap_acknowledged`
+# entry, or another bot's non-boolean value, can't discard a perfectly readable
+# `bots.gemini: false` and silently switch the bot back on. Warnings that DO
+# bear on the answer — unknown top-level keys (a misspelled `bots`), unknown bot
+# names, dropped entries — still print. It also treats an unreadable config as a
+# hard failure (exit 1) instead of degrading to `{}`, because for this caller
+# "I couldn't read your config" and "your config says the bot is on" are not the
+# same answer.
 
 set -euo pipefail
 
 FILE="${1:?Usage: _parse_configuration.sh <path-to-AGENT-REVIEWERS.md> [--bots-only]}"
 BOTS_ONLY=false
+# The bot the caller is actually asking about, when it named one. Entries for
+# OTHER bots can be dropped when unreadable; this one cannot — "I can't read
+# your setting for gemini" must not come back as "gemini is on".
+BOTS_ONLY_FOR=""
 case "${2:-}" in
     "")          ;;
-    --bots-only) BOTS_ONLY=true ;;
+    --bots-only) BOTS_ONLY=true; BOTS_ONLY_FOR="${3:-}" ;;
     # Silently ignoring a typo'd flag would fall back to full-config gating —
     # the exact behavior --bots-only exists to prevent.
     *) echo "Error: unknown argument '$2' (expected --bots-only)" >&2; exit 1 ;;
@@ -108,11 +115,19 @@ RAW_JSON="$(awk '
 
 if [[ -z "$RAW_JSON" ]]; then
     # "No # Configuration section at all" is a legitimate empty config. "The
-    # section is there but nothing could be extracted from it" is not — an
-    # unclosed prose fence swallows the whole json block, and under --bots-only
-    # that would silently report a disabled bot as enabled.
-    if [[ "$BOTS_ONLY" == "true" ]] && grep -qE '^#[[:space:]]+Configuration[[:space:]]*$' "$FILE"; then
-        echo "Warning: # Configuration in $FILE has no readable json block (unclosed code fence?)" >&2
+    # user clearly meant to write one and it didn't parse" is not — under
+    # --bots-only that would silently report a disabled bot as enabled.
+    #
+    # This pattern is deliberately LOOSER than the awk's heading rule above:
+    # matching it exactly would only ever fire for headings the awk already
+    # accepted, so every heading-shape mistake (`## Configuration`,
+    # `# Configuration:`, an indented heading) would sail past into the silent
+    # default. Anything heading-shaped enough to signal intent lands on the
+    # loud path instead.
+    if [[ "$BOTS_ONLY" == "true" ]] \
+        && grep -qiE '^[[:space:]]*#{1,6}[[:space:]]*Configuration[[:space:]]*:?[[:space:]]*$' "$FILE"; then
+        echo "Warning: $FILE looks like it has a # Configuration section, but no json block could be read from it." >&2
+        echo "Warning:   Expected an H1 '# Configuration' heading followed by a closed, lowercase \`\`\`json fence." >&2
         exit 1
     fi
     echo "{}"
@@ -156,22 +171,46 @@ fi
 # Validate the `bots` block: map of KNOWN bot name -> boolean. Bots default to
 # enabled, so both a mistyped value (`"false"` as a string) and a mistyped key
 # (`gemni`) would leave the bot running while the user believes they turned it
-# off. Values are a hard error; unknown names are a warning, matching how the
-# `disabled` list treats names that match no known reviewer.
+# off. Unknown names are a warning, matching how the `disabled` list treats
+# names that match no known reviewer.
+
+# A non-object `bots` is unrecoverable in both modes: there are no per-bot
+# settings to salvage, so no answer about any bot can be trusted.
+BOTS_TYPE_BAD="$(printf '%s\n' "$RAW_JSON" | jq -r '
+    if has("bots") and (.bots | type) != "object"
+        then "must be an object (got " + (.bots | type) + ")"
+        else empty end
+')"
+if [[ -n "$BOTS_TYPE_BAD" ]]; then
+    echo "Error: # Configuration .bots in $FILE: $BOTS_TYPE_BAD" >&2
+    exit 1
+fi
+
+# Non-boolean VALUES are per-entry, so they're a hard error only for the
+# config-wide check. Under --bots-only, failing the whole map would let one
+# bot's typo (`"cursor": "no"`) discard another's perfectly readable
+# `"gemini": false` and quietly switch Gemini back on — the same
+# unrelated-entry-defeats-the-off-switch shape as the block-level fix above.
+# Drop the unreadable entries instead, loudly, and answer from the rest.
 BOTS_BAD="$(printf '%s\n' "$RAW_JSON" | jq -r '
-    if has("bots") then
-        if (.bots | type) != "object" then "must be an object (got " + (.bots | type) + ")"
-        else
-            (.bots | to_entries | map(select(.value | type != "boolean")) | map(.key)) as $bad
-            | if ($bad | length) > 0
-                then "values must be booleans: " + ($bad | join(", "))
-                else empty end
-        end
-    else empty end
+    (.bots // {}) | to_entries | map(select(.value | type != "boolean")) | map(.key) | join(", ")
 ')"
 if [[ -n "$BOTS_BAD" ]]; then
-    echo "Error: # Configuration .bots in $FILE: $BOTS_BAD" >&2
-    exit 1
+    if [[ "$BOTS_ONLY" == "true" ]]; then
+        # ...unless the unreadable entry IS the bot being asked about, in which
+        # case there is no readable answer to give and exit 0 would be a lie.
+        if [[ -n "$BOTS_ONLY_FOR" && ",${BOTS_BAD// /}," == *",$BOTS_ONLY_FOR,"* ]]; then
+            echo "Error: # Configuration .bots.$BOTS_ONLY_FOR in $FILE is not a boolean" >&2
+            exit 1
+        fi
+        echo "Warning: # Configuration .bots in $FILE: values must be booleans: $BOTS_BAD" >&2
+        echo "Warning:   Ignoring those entries; the bots they name stay enabled." >&2
+        RAW_JSON="$(printf '%s\n' "$RAW_JSON" \
+            | jq -c '.bots |= with_entries(select(.value | type == "boolean"))')"
+    else
+        echo "Error: # Configuration .bots in $FILE: values must be booleans: $BOTS_BAD" >&2
+        exit 1
+    fi
 fi
 
 # Known external review bots. Keep in sync with SKILL.md "Supported Review Bots"

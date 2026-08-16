@@ -36,12 +36,14 @@ CONFIG="$REPO_ROOT/AGENT-REVIEWERS.md"
 # default, so this stays exit 0 rather than exit 2.
 [[ -f "$CONFIG" ]] || exit 0
 
-# --bots-only validates the `bots` block and nothing else, so an unrelated
-# broken entry elsewhere in # Configuration can't discard a readable
-# `bots.<name>: false` and quietly switch the bot back on. Its stderr is NOT
+# --bots-only fails only on what makes the bot answer untrustworthy, so an
+# unrelated broken entry elsewhere in # Configuration — or another bot's typo'd
+# value — can't discard a readable `bots.<name>: false` and quietly switch this
+# bot back on. It still warns about anything that bears on the answer (a
+# misspelled `bots` key, unknown bot names, dropped entries). Its stderr is NOT
 # swallowed — those warnings are the only signal the user gets that their off
 # switch didn't take.
-if ! CONFIG_JSON="$("$SCRIPT_DIR/_parse_configuration.sh" "$CONFIG" --bots-only)"; then
+if ! CONFIG_JSON="$("$SCRIPT_DIR/_parse_configuration.sh" "$CONFIG" --bots-only "$BOT")"; then
     echo "Warning: bot-enabled.sh: could not read the .bots block in $CONFIG (see above) — treating $BOT as enabled" >&2
     exit 2
 fi

@@ -154,6 +154,33 @@ repo="$(make_repo '{"bot": {"gemini": false}}')"
 MISSPELLED_ERR="$(cd "$repo" && "$PARSE_CONFIG" AGENT-REVIEWERS.md --bots-only 2>&1 >/dev/null || true)"
 check_contains "misspelled bots key warns under --bots-only" "unknown top-level keys" "$MISSPELLED_ERR"
 
+# Heading-shape mistakes: the awk won't recognize these as the Configuration
+# section, so the block is never extracted. They must land on the loud path
+# rather than the silent "no config, everything enabled" default.
+for heading in '## Configuration' '# Configuration:' '  # Configuration'; do
+    repo="$(mktemp -d -p "$TMP_ROOT")"
+    git -C "$repo" init -q
+    printf '%s\n\n```json\n{"bots": {"gemini": false}}\n```\n' "$heading" > "$repo/AGENT-REVIEWERS.md"
+    check "heading '$heading' -> exit 2, not silent 0" "2" "$(bot_status "$repo" gemini)"
+done
+
+# Negative control for all of the above: a file with no Configuration section at
+# all is a legitimately empty config — exit 0, and silent.
+repo="$(mktemp -d -p "$TMP_ROOT")"
+git -C "$repo" init -q
+printf '# Agents\n\n## my-reviewer\n\nSomething.\n' > "$repo/AGENT-REVIEWERS.md"
+check "no Configuration section -> exit 0" "0" "$(bot_status "$repo" gemini)"
+check "no Configuration section -> no warnings" "" "$(bot_stderr "$repo" gemini)"
+
+# One bot's unreadable value must not discard another's readable one...
+repo="$(make_repo '{"bots": {"gemini": false, "cursor": "no"}}')"
+check "sibling bad value still honors explicit disable" "1" "$(bot_status "$repo" gemini)"
+check_contains "sibling bad value warns" "values must be booleans: cursor" "$(bot_stderr "$repo" gemini)"
+# ...but the bot whose OWN value is unreadable has no answer: undetermined,
+# not "enabled". Both end up enabled at the call site; only one of them claims
+# the config said so.
+check "own bad value -> exit 2, not 0" "2" "$(bot_status "$repo" cursor)"
+
 # A typo'd flag must not quietly fall back to full-config gating.
 repo="$(make_repo '{"bots": {"gemini": false}}')"
 check "unknown parser flag rejected" "1" "$(rc_in "$repo" "$PARSE_CONFIG" AGENT-REVIEWERS.md --bots_only)"
@@ -161,7 +188,9 @@ check "unknown parser flag rejected" "1" "$(rc_in "$repo" "$PARSE_CONFIG" AGENT-
 # A typo'd bot name leaves the bot running, so it has to be called out.
 repo="$(make_repo '{"bots": {"gemni": false}}')"
 UNKNOWN_ERR="$(cd "$repo" && "$PARSE_CONFIG" AGENT-REVIEWERS.md 2>&1 >/dev/null)"
-check_contains "unknown bot name warns" "unknown bots" "$UNKNOWN_ERR"
+# Name the offending key, not just the category — otherwise the assertion holds
+# even if the warning stops reporting which name was wrong.
+check_contains "unknown bot name warns" "unknown bots (likely typos): gemni" "$UNKNOWN_ERR"
 check "unknown bot name does not disable gemini" "0" "$(bot_status "$repo" gemini)"
 
 # Negative control: without this, the closed-set check could warn on every
@@ -247,6 +276,39 @@ git -C "$repo" push -q -u origin HEAD
 echo "change" > "$repo/file.txt"
 run_stubbed "$repo" "$COMMIT_PUSH" "test commit" --trigger-review
 check_gh_posted "enabled gemini: commit-and-push DOES post /gemini review" "yes"
+
+# --- exit 2 at the call sites -----------------------------------------------
+#
+# Undetermined must behave as ENABLED and must not be announced as the user's
+# choice. Without these, every call-site fixture is rc 0 or rc 1, and widening
+# a guard from `-eq 1` to `-ge 1` passes the whole suite while turning "I can't
+# read your config" into "you turned this off".
+UNREADABLE='{"bots": {'   # malformed on purpose: parser can't recover
+repo="$(mktemp -d -p "$TMP_ROOT")"
+git -C "$repo" init -q
+printf '# Configuration\n\n```json\n%s\n```\n' "$UNREADABLE" > "$repo/AGENT-REVIEWERS.md"
+git -C "$repo" add -A
+git -C "$repo" -c user.email=test@example.com -c user.name=test commit -qm fixture
+check "unreadable config -> exit 2" "2" "$(bot_status "$repo" gemini)"
+
+run_stubbed "$repo" "$TRIGGER_REVIEW" 42 --gemini
+check_gh_posted "undetermined: trigger-review still triggers" "yes"
+if [[ "$RUN_OUT" == *"disabled for this repo"* ]]; then
+    echo "FAIL: undetermined: trigger-review must not claim the user disabled it"
+    FAILED=$((FAILED + 1))
+else
+    echo "PASS: undetermined: trigger-review does not claim the user disabled it"
+    PASSED=$((PASSED + 1))
+fi
+
+git -C "$repo" config user.email test@example.com
+git -C "$repo" config user.name test
+git init -q --bare "$TMP_ROOT/origin3.git"
+git -C "$repo" remote add origin "$TMP_ROOT/origin3.git"
+git -C "$repo" push -q -u origin HEAD
+echo "change" > "$repo/file.txt"
+run_stubbed "$repo" "$COMMIT_PUSH" "test commit" --trigger-review
+check_gh_posted "undetermined: commit-and-push still triggers" "yes"
 
 echo "---"
 echo "Passed: $PASSED, Failed: $FAILED"
