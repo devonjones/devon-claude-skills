@@ -100,6 +100,10 @@ Streamline the push-review-fix cycle for PRs with automated reviewers.
 
 Priority detection automatically parses all formats when summarizing and fetching comments.
 
+Gemini and Cursor can each be turned off per repo via `# Configuration .bots`
+in the root `AGENT-REVIEWERS.md` — see "Disabling an External Review Bot". A
+disabled bot is never triggered and never waited for.
+
 ### Priority to Exit-Condition Mapping
 
 The quality-weighted exit condition (see ONE MORE LOOP Rule) depends on classifying findings as P1/P2 vs P3/nitpick. Use this table:
@@ -680,6 +684,9 @@ Project-level config lives in a `# Configuration` H1 section in the **root** `AG
     "enabled": true,
     "skip_for": ["code-simplifier"],
     "uncertain_action": "post_with_annotation"
+  },
+  "bots": {
+    "gemini": false
   }
 }
 ```
@@ -691,6 +698,26 @@ Fields:
 - **`disabled`** — list of default agent names the user does NOT want spawned. Per-name opt-out.
 - **`overlap_acknowledged`** — map from a user agent name to `{ overlaps_with, reason }`. Both agents continue to spawn; this entry documents intentional duplication so the audit tool doesn't recommend renaming. **`reason` is REQUIRED** — the parser rejects entries without it, so future readers see why both agents are intentionally running.
 - **`independent_validator`** — controls the per-finding validation step (see "Independent Validator Pipeline" below). All three nested fields are optional; defaults are `enabled: true`, `skip_for: []`, `uncertain_action: "post_with_annotation"`.
+- **`bots`** — map of external review bot name (`gemini`, `cursor`) to boolean. Bots default to enabled; an explicit `false` turns one off for the repo. See "Disabling an External Review Bot" below.
+
+### Disabling an External Review Bot
+
+Not every repo has Gemini Code Assist or Cursor installed (or wants to pay for
+them). Turn one off with `# Configuration .bots`:
+
+```json
+{ "bots": { "gemini": false } }
+```
+
+A disabled bot means, for the whole loop:
+
+- **Do NOT post `/gemini review`** or any other manual trigger comment for it — not via a script, not via `gh pr comment`.
+- **Do NOT wait for its review.** `trigger-review.sh <PR> --gemini` exits immediately, `commit-and-push.sh --trigger-review` skips the trigger, and `get-review-comments.sh --wait` skips its 5-minute poll when every external bot is disabled.
+- **Skip its COLLECT step.** With Gemini off, C1 becomes a plain fetch of existing line comments (agent-posted threads from prior rounds) with no `--wait`; the round's real reviewers are C2 bots and the C3 agent reviewers.
+- **Do not fall back "because Gemini is missing."** Disabled is not rate-limited; there is no quota to wait out and no substitute round to run.
+
+The exit conditions, batching, and reply discipline are unchanged — they just
+operate over the reviewers that are actually enabled.
 
 ### Language Template Offer
 

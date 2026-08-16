@@ -7,6 +7,7 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MESSAGE="${1:?Usage: commit-and-push.sh \"commit message\" [--trigger-review]}"
 TRIGGER_REVIEW=false
 
@@ -58,6 +59,10 @@ echo "Pushing to origin..."
 git push
 
 # Optionally trigger new review
+if [[ "$TRIGGER_REVIEW" == "true" ]] && ! "$SCRIPT_DIR/bot-enabled.sh" gemini; then
+    echo "Gemini is disabled for this repo (# Configuration .bots.gemini = false). Not triggering."
+    TRIGGER_REVIEW=false
+fi
 if [[ "$TRIGGER_REVIEW" == "true" ]]; then
     # Get repo info via gh's own detection (handles non-default remote names + forks).
     REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || { echo "Warning: Could not determine repository." >&2; })

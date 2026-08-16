@@ -114,12 +114,29 @@ UNKNOWN_KEYS="$(printf '%s\n' "$RAW_JSON" | jq -r '
         and . != "disabled"
         and . != "overlap_acknowledged"
         and . != "independent_validator"
+        and . != "bots"
     )]
     | join(", ")
 ')"
 if [[ -n "$UNKNOWN_KEYS" ]]; then
     echo "Warning: # Configuration in $FILE has unknown top-level keys (likely typos): $UNKNOWN_KEYS" >&2
-    echo "Warning:   Allowed keys: defaults_version_checked, disabled, overlap_acknowledged, independent_validator" >&2
+    echo "Warning:   Allowed keys: defaults_version_checked, disabled, overlap_acknowledged, independent_validator, bots" >&2
+fi
+
+# Validate the `bots` block: map of bot name -> boolean. Bots default to
+# enabled, so a mistyped value (e.g. "false" as a string) would silently
+# leave a bot on — reject it loudly instead.
+BOTS_BAD="$(printf '%s\n' "$RAW_JSON" | jq -r '
+    if has("bots") then
+        if (.bots | type) != "object" then "must be an object (got " + (.bots | type) + ")"
+        elif (.bots | to_entries | any(.value | type != "boolean"))
+            then "values must be booleans: " + (.bots | to_entries | map(select(.value | type != "boolean")) | map(.key) | join(", "))
+        else empty end
+    else empty end
+')"
+if [[ -n "$BOTS_BAD" ]]; then
+    echo "Error: # Configuration .bots in $FILE: $BOTS_BAD" >&2
+    exit 1
 fi
 
 # Validate overlap_acknowledged entries have a non-empty `reason`.

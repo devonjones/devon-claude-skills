@@ -3,6 +3,9 @@
 ```json
 {
   "defaults_version_checked": "1.5.0",
+  "bots": {
+    "gemini": false
+  },
   "overlap_acknowledged": {
     "shell-script-reviewer": {
       "overlaps_with": "code-reviewer",
