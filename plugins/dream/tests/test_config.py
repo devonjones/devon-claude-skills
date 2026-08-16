@@ -54,3 +54,30 @@ def test_known_corpus_dedups_extra_corpus(tmp_path, monkeypatch):
     monkeypatch.setenv("DREAM_EXTRA_CORPUS", str(d))
     files = config.known_corpus_files(str(tmp_path))
     assert files.count(str(d)) == 1  # walk hit + extra-corpus hit deduped
+
+
+def test_project_slug_uses_main_checkout_from_worktree(monkeypatch):
+    """A linked worktree must key the SAME slug as its main checkout — otherwise
+    every worktree-based review round writes markers to an orphan dir."""
+    def fake_run(cmd, cwd=None):
+        if "--git-common-dir" in cmd:
+            return "/home/dev/proj/.git"
+        if "--show-toplevel" in cmd:
+            return "/home/dev/proj-feature"
+        return ""
+
+    monkeypatch.setattr(config, "_run", fake_run)
+    assert config.project_slug() == "proj"
+
+
+def test_project_slug_falls_back_when_no_common_dir(monkeypatch):
+    """Old git (no --path-format) or a bare layout: keep the previous behavior."""
+    def fake_run(cmd, cwd=None):
+        if "--git-common-dir" in cmd:
+            return ""
+        if "--show-toplevel" in cmd:
+            return "/home/dev/proj"
+        return ""
+
+    monkeypatch.setattr(config, "_run", fake_run)
+    assert config.project_slug() == "proj"
