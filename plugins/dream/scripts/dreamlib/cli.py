@@ -399,9 +399,16 @@ def _gate_state() -> dict:
 def _sessions_fingerprint() -> str:
     """Content fingerprint of the minable corpus: the sorted input_hashes of every
     non-self-run session. Content-keyed, never mtime — dream's own reads and the
-    log pruner both touch mtimes without changing what there is to mine."""
+    log pruner both touch mtimes without changing what there is to mine.
+
+    Unlike distill this does NOT skip the newest (possibly still-live) session.
+    Skipping it deadlocks: with every job gated off, no new log is ever written,
+    so the last real work session stays "newest" forever and never becomes
+    eligible. Counting it can only cost an extra run — and an extra run on a day
+    real work happened is the correct outcome. The hash changes again as the
+    session grows, which simply re-arms the gate."""
     hashes = []
-    for f in _session_files(PROJECT_LOGS, skip_live=True):
+    for f in _session_files(PROJECT_LOGS, skip_live=False):
         try:
             session = load_session(f)
         except Exception:  # noqa: BLE001 — an unparseable log is not new input
