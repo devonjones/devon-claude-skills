@@ -33,6 +33,11 @@ make_repo() {
     if [[ -n "$json" ]]; then
         printf '# Configuration\n\n```json\n%s\n```\n' "$json" > "$repo/AGENT-REVIEWERS.md"
     fi
+    # trigger-review.sh resolves HEAD, so the fixture needs a commit. -c keeps
+    # this independent of whatever identity the machine has configured.
+    git -C "$repo" add -A
+    git -C "$repo" -c user.email=test@example.com -c user.name=test \
+        commit -qm "fixture" --allow-empty
     echo "$repo"
 }
 
@@ -100,11 +105,25 @@ check "no AGENT-REVIEWERS.md -> enabled (not an error)" "0" "$(bot_status "$repo
 
 # --- exit 2: undetermined, never silently 0 or 1 ----------------------------
 
-# A config the parser rejects must NOT come back as a clean "enabled" — the
-# user may well have disabled the bot in the part that failed to parse.
+# An unreadable `bots` block must NOT come back as a clean "enabled" — the user
+# may well have disabled the bot in the part that failed to parse.
 repo="$(make_repo '{"bots": {"gemini": "false"}}')"
-check "unparseable config -> exit 2, not 0" "2" "$(bot_status "$repo" gemini)"
-check_contains "exit 2 warns on stderr" "could not parse" "$(bot_stderr "$repo" gemini)"
+check "invalid bot value -> exit 2, not 0" "2" "$(bot_status "$repo" gemini)"
+check_contains "exit 2 warns on stderr" "could not read the .bots block" "$(bot_stderr "$repo" gemini)"
+
+# Genuinely malformed JSON, not just a schema violation. The full parser
+# degrades to `{}` here so the loop can proceed; --bots-only must not, or
+# "your config is unreadable" silently becomes "the bot is on".
+repo="$(mktemp -d -p "$TMP_ROOT")"
+git -C "$repo" init -q
+printf '# Configuration\n\n```json\n{"bots": {"gemini": false\n```\n' > "$repo/AGENT-REVIEWERS.md"
+check "malformed JSON -> exit 2, not 0" "2" "$(bot_status "$repo" gemini)"
+
+# A broken entry in an UNRELATED block must not discard a readable bots block:
+# the user asked for gemini off, and an overlap_acknowledged typo is not a
+# reason to start posting /gemini review again.
+repo="$(make_repo '{"bots": {"gemini": false}, "overlap_acknowledged": {"x": {"overlaps_with": "y"}}}')"
+check "unrelated config error still honors explicit disable" "1" "$(bot_status "$repo" gemini)"
 
 NON_REPO="$(mktemp -d -p "$TMP_ROOT")"
 check "outside a git repo -> exit 2" "2" "$(rc_in "$NON_REPO" "$BOT_ENABLED" gemini)"
@@ -123,37 +142,64 @@ UNKNOWN_ERR="$(cd "$repo" && "$PARSE_CONFIG" AGENT-REVIEWERS.md 2>&1 >/dev/null)
 check_contains "unknown bot name warns" "unknown bots" "$UNKNOWN_ERR"
 check "unknown bot name does not disable gemini" "0" "$(bot_status "$repo" gemini)"
 
+# Negative control: without this, the closed-set check could warn on every
+# config — including the valid ones — and the assertion above would still pass.
+repo="$(make_repo '{"bots": {"gemini": false, "cursor": true}}')"
+KNOWN_ERR="$(cd "$repo" && "$PARSE_CONFIG" AGENT-REVIEWERS.md 2>&1 >/dev/null)"
+check "known bot names do not warn" "" "$KNOWN_ERR"
+
 # --- call site: a disabled bot must never be triggered ----------------------
 
 # trigger-review.sh talks to GitHub through `gh`. Stub it so the test can assert
 # the one thing that matters: `gh pr comment ... /gemini review` is never run.
 STUB_BIN="$TMP_ROOT/bin"
 mkdir -p "$STUB_BIN"
+# Each arm must return something the caller can actually parse: the quota check
+# and the already-reviewed check both pipe this through jq under `set -e`, so a
+# bare echo makes trigger-review.sh die before it reaches the guard under test —
+# which is precisely how the disabled-case assertion could pass for free.
 cat > "$STUB_BIN/gh" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >> "$GH_CALL_LOG"
 case "$*" in
-    "repo view"*) echo "acme/widgets" ;;
-    "pr view"*)   echo "42" ;;
-    *)            echo "" ;;
+    "repo view"*)             echo "acme/widgets" ;;
+    "pr view"*--json\ comments*) echo '{"body":"looks good","createdAt":"2020-01-01T00:00:00Z"}' ;;
+    "pr view"*)               echo "42" ;;
+    "api"*)                   echo "[]" ;;
+    *)                        echo "" ;;
 esac
 STUB
 chmod +x "$STUB_BIN/gh"
 
-repo="$(make_repo '{"bots": {"gemini": false}}')"
+# Run trigger-review.sh under the stub in $1, echoing its output; the gh call
+# log lands in $GH_CALL_LOG.
+run_trigger() {
+    local repo="$1"
+    : > "$GH_CALL_LOG"
+    (cd "$repo" && PATH="$STUB_BIN:$PATH" GH_CALL_LOG="$GH_CALL_LOG" "$TRIGGER_REVIEW" 42 --gemini 2>&1) || true
+}
+
+check_gh_posted() {
+    local name="$1" want="$2" got=no
+    grep -q "gemini review" "$GH_CALL_LOG" && got=yes
+    check "$name" "$want" "$got"
+}
+
 GH_CALL_LOG="$TMP_ROOT/gh-calls.log"
-: > "$GH_CALL_LOG"
+
+repo="$(make_repo '{"bots": {"gemini": false}}')"
 TRIGGER_RC=0
 TRIGGER_OUT="$(cd "$repo" && PATH="$STUB_BIN:$PATH" GH_CALL_LOG="$GH_CALL_LOG" "$TRIGGER_REVIEW" 42 --gemini 2>&1)" || TRIGGER_RC=$?
 check "disabled gemini: trigger-review exits 0" "0" "$TRIGGER_RC"
 check_contains "disabled gemini: says so" "disabled for this repo" "$TRIGGER_OUT"
-if grep -q "gemini review" "$GH_CALL_LOG"; then
-    echo "FAIL: disabled gemini: posted a /gemini review comment"
-    FAILED=$((FAILED + 1))
-else
-    echo "PASS: disabled gemini: no /gemini review comment posted"
-    PASSED=$((PASSED + 1))
-fi
+check_gh_posted "disabled gemini: no /gemini review comment posted" "no"
+
+# Positive control. Without it the assertion above is vacuous: it also passes
+# when trigger-review.sh bails for some unrelated reason (or when the guard is
+# deleted outright and the script dies earlier in the stubbed environment).
+repo="$(make_repo '{"bots": {"gemini": true}}')"
+run_trigger "$repo" >/dev/null
+check_gh_posted "enabled gemini: /gemini review IS posted" "yes"
 
 echo "---"
 echo "Passed: $PASSED, Failed: $FAILED"

@@ -66,19 +66,17 @@ if [[ "$TRIGGER_REVIEW" == "true" ]]; then
     "$SCRIPT_DIR/bot-enabled.sh" gemini || GEMINI_RC=$?
     if [[ "$GEMINI_RC" -eq 1 ]]; then
         echo "Gemini is disabled for this repo (# Configuration .bots.gemini = false). Not triggering."
-        TRIGGER_REVIEW=false
-    fi
-fi
-if [[ "$TRIGGER_REVIEW" == "true" ]]; then
-    # Get repo info via gh's own detection (handles non-default remote names + forks).
-    REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || { echo "Warning: Could not determine repository." >&2; })
-    # Get PR number from current branch
-    PR_NUMBER=$(gh pr view -R "$REPO" --json number --jq '.number' 2>/dev/null || echo "")
-    if [[ -n "$PR_NUMBER" ]]; then
-        echo "Triggering Gemini review on PR #$PR_NUMBER..."
-        gh pr comment "$PR_NUMBER" -R "$REPO" --body "/gemini review"
     else
-        echo "Warning: Could not determine PR number to trigger review"
+        # Get repo info via gh's own detection (handles non-default remote names + forks).
+        REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || { echo "Warning: Could not determine repository." >&2; })
+        # Get PR number from current branch
+        PR_NUMBER=$(gh pr view -R "$REPO" --json number --jq '.number' 2>/dev/null || echo "")
+        if [[ -n "$PR_NUMBER" ]]; then
+            echo "Triggering Gemini review on PR #$PR_NUMBER..."
+            gh pr comment "$PR_NUMBER" -R "$REPO" --body "/gemini review"
+        else
+            echo "Warning: Could not determine PR number to trigger review"
+        fi
     fi
 fi
 

@@ -14,8 +14,10 @@
 #   2 — could not determine; a warning naming the reason goes to stderr
 #
 # Callers must treat 2 as "enabled" (a config we can't read must never
-# silently switch a bot off) but must NOT report it as a config decision —
-# see the `bot_disabled` helpers at the call sites. Exit 2 is deliberately
+# silently switch a bot off) but must NOT report it as a config decision, so
+# they compare the return code against 1 rather than testing for success:
+# inline in commit-and-push.sh and trigger-review.sh, via a `bot_disabled`
+# helper in get-review-comments.sh (which asks twice). Exit 2 is deliberately
 # distinct from 0 so "your config is broken" can't masquerade as "you turned
 # this off", which is exactly the failure a silent `|| exit 0` would hide.
 
@@ -34,11 +36,13 @@ CONFIG="$REPO_ROOT/AGENT-REVIEWERS.md"
 # default, so this stays exit 0 rather than exit 2.
 [[ -f "$CONFIG" ]] || exit 0
 
-# Do NOT swallow the parser's stderr — its warnings (unknown keys, unknown bot
-# names, malformed JSON) are the only signal the user gets that their off
+# --bots-only validates the `bots` block and nothing else, so an unrelated
+# broken entry elsewhere in # Configuration can't discard a readable
+# `bots.<name>: false` and quietly switch the bot back on. Its stderr is NOT
+# swallowed — those warnings are the only signal the user gets that their off
 # switch didn't take.
-if ! CONFIG_JSON="$("$SCRIPT_DIR/_parse_configuration.sh" "$CONFIG")"; then
-    echo "Warning: bot-enabled.sh: could not parse # Configuration in $CONFIG — treating $BOT as enabled" >&2
+if ! CONFIG_JSON="$("$SCRIPT_DIR/_parse_configuration.sh" "$CONFIG" --bots-only)"; then
+    echo "Warning: bot-enabled.sh: could not read the .bots block in $CONFIG (see above) — treating $BOT as enabled" >&2
     exit 2
 fi
 

@@ -27,11 +27,23 @@
 # `reason` field (per bd memory bfd-design-locked) — error to stderr,
 # exit non-zero.
 #
-# Usage: _parse_configuration.sh <path-to-AGENT-REVIEWERS.md>
+# Usage: _parse_configuration.sh <path-to-AGENT-REVIEWERS.md> [--bots-only]
+#
+# --bots-only answers the narrow question "is this bot on?" (bot-enabled.sh)
+# rather than "is this whole config sound?" (the pre-loop check). It validates
+# the `bots` block and nothing else, so a broken `overlap_acknowledged` entry
+# can't discard a perfectly readable `bots.gemini: false` and silently switch
+# the bot back on. It also treats malformed JSON as a hard failure (exit 1)
+# instead of degrading to `{}`, because for this caller "I couldn't read your
+# config" and "your config says the bot is on" are not the same answer.
 
 set -euo pipefail
 
-FILE="${1:?Usage: _parse_configuration.sh <path-to-AGENT-REVIEWERS.md>}"
+FILE="${1:?Usage: _parse_configuration.sh <path-to-AGENT-REVIEWERS.md> [--bots-only]}"
+BOTS_ONLY=false
+if [[ "${2:-}" == "--bots-only" ]]; then
+    BOTS_ONLY=true
+fi
 
 if [[ ! -f "$FILE" ]]; then
     echo "{}"
@@ -101,6 +113,9 @@ fi
 # diagnostic surfaces instead of the script crashing.
 if ! JQ_PARSE_ERR="$(printf '%s\n' "$RAW_JSON" | jq -e . 2>&1 > /dev/null)"; then
     echo "Warning: # Configuration section in $FILE contains invalid JSON: $JQ_PARSE_ERR" >&2
+    if [[ "$BOTS_ONLY" == "true" ]]; then
+        exit 1
+    fi
     echo "{}"
     exit 0
 fi
@@ -118,7 +133,9 @@ UNKNOWN_KEYS="$(printf '%s\n' "$RAW_JSON" | jq -r '
     )]
     | join(", ")
 ')"
-if [[ -n "$UNKNOWN_KEYS" ]]; then
+# Suppressed under --bots-only: bot-enabled.sh runs per bot per script, and the
+# pre-loop config check already reports this once where the user will see it.
+if [[ -n "$UNKNOWN_KEYS" && "$BOTS_ONLY" == "false" ]]; then
     echo "Warning: # Configuration in $FILE has unknown top-level keys (likely typos): $UNKNOWN_KEYS" >&2
     echo "Warning:   Allowed keys: defaults_version_checked, disabled, overlap_acknowledged, independent_validator, bots" >&2
 fi
@@ -153,6 +170,14 @@ BOTS_UNKNOWN="$(printf '%s\n' "$RAW_JSON" | jq -r '
 if [[ -n "$BOTS_UNKNOWN" ]]; then
     echo "Warning: # Configuration .bots in $FILE names unknown bots (likely typos): $BOTS_UNKNOWN" >&2
     echo "Warning:   Known bots: gemini, cursor. Unknown names have no effect — the bot stays enabled." >&2
+fi
+
+# --bots-only stops here: the `bots` block is validated, and the remaining
+# checks belong to config-wide soundness, not to "is this bot on?". Letting
+# them fail here would throw away a readable bots block over an unrelated typo.
+if [[ "$BOTS_ONLY" == "true" ]]; then
+    printf '%s\n' "$RAW_JSON" | jq -c .
+    exit 0
 fi
 
 # Validate overlap_acknowledged entries have a non-empty `reason`.
