@@ -41,9 +41,13 @@ set -euo pipefail
 
 FILE="${1:?Usage: _parse_configuration.sh <path-to-AGENT-REVIEWERS.md> [--bots-only]}"
 BOTS_ONLY=false
-if [[ "${2:-}" == "--bots-only" ]]; then
-    BOTS_ONLY=true
-fi
+case "${2:-}" in
+    "")          ;;
+    --bots-only) BOTS_ONLY=true ;;
+    # Silently ignoring a typo'd flag would fall back to full-config gating —
+    # the exact behavior --bots-only exists to prevent.
+    *) echo "Error: unknown argument '$2' (expected --bots-only)" >&2; exit 1 ;;
+esac
 
 if [[ ! -f "$FILE" ]]; then
     echo "{}"
@@ -103,6 +107,14 @@ RAW_JSON="$(awk '
 ' "$FILE")"
 
 if [[ -z "$RAW_JSON" ]]; then
+    # "No # Configuration section at all" is a legitimate empty config. "The
+    # section is there but nothing could be extracted from it" is not — an
+    # unclosed prose fence swallows the whole json block, and under --bots-only
+    # that would silently report a disabled bot as enabled.
+    if [[ "$BOTS_ONLY" == "true" ]] && grep -qE '^#[[:space:]]+Configuration[[:space:]]*$' "$FILE"; then
+        echo "Warning: # Configuration in $FILE has no readable json block (unclosed code fence?)" >&2
+        exit 1
+    fi
     echo "{}"
     exit 0
 fi
@@ -133,9 +145,10 @@ UNKNOWN_KEYS="$(printf '%s\n' "$RAW_JSON" | jq -r '
     )]
     | join(", ")
 ')"
-# Suppressed under --bots-only: bot-enabled.sh runs per bot per script, and the
-# pre-loop config check already reports this once where the user will see it.
-if [[ -n "$UNKNOWN_KEYS" && "$BOTS_ONLY" == "false" ]]; then
+# Not suppressed under --bots-only, even though it repeats per bot per script: a
+# misspelled `bots` key ("bot", "Bots") is invisible to the .bots-name check
+# below, so this warning is the only signal that an off switch didn't take.
+if [[ -n "$UNKNOWN_KEYS" ]]; then
     echo "Warning: # Configuration in $FILE has unknown top-level keys (likely typos): $UNKNOWN_KEYS" >&2
     echo "Warning:   Allowed keys: defaults_version_checked, disabled, overlap_acknowledged, independent_validator, bots" >&2
 fi

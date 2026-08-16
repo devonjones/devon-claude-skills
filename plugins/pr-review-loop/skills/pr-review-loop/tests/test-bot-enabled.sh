@@ -135,6 +135,28 @@ check "string bot value rejected by parser" "1" "$(rc_in "$repo" "$PARSE_CONFIG"
 
 repo="$(make_repo '{"bots": ["gemini"]}')"
 check "non-object bots rejected by parser" "1" "$(rc_in "$repo" "$PARSE_CONFIG" AGENT-REVIEWERS.md)"
+# Assert the type check specifically: an array also trips the value check, so a
+# bare exit-code assertion passes even with the type branch deleted.
+NONOBJ_ERR="$(cd "$repo" && "$PARSE_CONFIG" AGENT-REVIEWERS.md 2>&1 >/dev/null || true)"
+check_contains "non-object bots names the type error" "must be an object" "$NONOBJ_ERR"
+
+# An unclosed prose fence swallows the whole json block, leaving nothing to
+# extract — which must not read as "no config, bot enabled".
+repo="$(mktemp -d -p "$TMP_ROOT")"
+git -C "$repo" init -q
+printf '# Configuration\n\n```text\nunclosed prose fence\n\n```json\n{"bots": {"gemini": false}}\n```\n' \
+    > "$repo/AGENT-REVIEWERS.md"
+check "swallowed json block -> exit 2, not 0" "2" "$(bot_status "$repo" gemini)"
+
+# A misspelled `bots` key is invisible to the bot-name check, so the top-level
+# unknown-key warning has to survive --bots-only.
+repo="$(make_repo '{"bot": {"gemini": false}}')"
+MISSPELLED_ERR="$(cd "$repo" && "$PARSE_CONFIG" AGENT-REVIEWERS.md --bots-only 2>&1 >/dev/null || true)"
+check_contains "misspelled bots key warns under --bots-only" "unknown top-level keys" "$MISSPELLED_ERR"
+
+# A typo'd flag must not quietly fall back to full-config gating.
+repo="$(make_repo '{"bots": {"gemini": false}}')"
+check "unknown parser flag rejected" "1" "$(rc_in "$repo" "$PARSE_CONFIG" AGENT-REVIEWERS.md --bots_only)"
 
 # A typo'd bot name leaves the bot running, so it has to be called out.
 repo="$(make_repo '{"bots": {"gemni": false}}')"
@@ -171,12 +193,15 @@ esac
 STUB
 chmod +x "$STUB_BIN/gh"
 
-# Run trigger-review.sh under the stub in $1, echoing its output; the gh call
-# log lands in $GH_CALL_LOG.
-run_trigger() {
-    local repo="$1"
+GH_CALL_LOG="$TMP_ROOT/gh-calls.log"
+
+# Run a script under the stub from inside $1, resetting the gh call log.
+# Sets RUN_RC and RUN_OUT.
+run_stubbed() {
+    local repo="$1"; shift
     : > "$GH_CALL_LOG"
-    (cd "$repo" && PATH="$STUB_BIN:$PATH" GH_CALL_LOG="$GH_CALL_LOG" "$TRIGGER_REVIEW" 42 --gemini 2>&1) || true
+    RUN_RC=0
+    RUN_OUT="$(cd "$repo" && PATH="$STUB_BIN:$PATH" GH_CALL_LOG="$GH_CALL_LOG" "$@" 2>&1)" || RUN_RC=$?
 }
 
 check_gh_posted() {
@@ -185,21 +210,43 @@ check_gh_posted() {
     check "$name" "$want" "$got"
 }
 
-GH_CALL_LOG="$TMP_ROOT/gh-calls.log"
-
 repo="$(make_repo '{"bots": {"gemini": false}}')"
-TRIGGER_RC=0
-TRIGGER_OUT="$(cd "$repo" && PATH="$STUB_BIN:$PATH" GH_CALL_LOG="$GH_CALL_LOG" "$TRIGGER_REVIEW" 42 --gemini 2>&1)" || TRIGGER_RC=$?
-check "disabled gemini: trigger-review exits 0" "0" "$TRIGGER_RC"
-check_contains "disabled gemini: says so" "disabled for this repo" "$TRIGGER_OUT"
+run_stubbed "$repo" "$TRIGGER_REVIEW" 42 --gemini
+check "disabled gemini: trigger-review exits 0" "0" "$RUN_RC"
+check_contains "disabled gemini: says so" "disabled for this repo" "$RUN_OUT"
 check_gh_posted "disabled gemini: no /gemini review comment posted" "no"
 
 # Positive control. Without it the assertion above is vacuous: it also passes
 # when trigger-review.sh bails for some unrelated reason (or when the guard is
 # deleted outright and the script dies earlier in the stubbed environment).
 repo="$(make_repo '{"bots": {"gemini": true}}')"
-run_trigger "$repo" >/dev/null
+run_stubbed "$repo" "$TRIGGER_REVIEW" 42 --gemini
 check_gh_posted "enabled gemini: /gemini review IS posted" "yes"
+
+# The second call site. commit-and-push.sh carries its own copy of the guard, so
+# it needs its own coverage — it pushes first, hence the local bare origin.
+COMMIT_PUSH="$SCRIPT_DIR/../scripts/commit-and-push.sh"
+BARE="$TMP_ROOT/origin.git"
+git init -q --bare "$BARE"
+repo="$(make_repo '{"bots": {"gemini": false}}')"
+git -C "$repo" config user.email test@example.com
+git -C "$repo" config user.name test
+git -C "$repo" remote add origin "$BARE"
+git -C "$repo" push -q -u origin HEAD
+echo "change" > "$repo/file.txt"
+run_stubbed "$repo" "$COMMIT_PUSH" "test commit" --trigger-review
+check "disabled gemini: commit-and-push exits 0" "0" "$RUN_RC"
+check_gh_posted "disabled gemini: commit-and-push posts no /gemini review" "no"
+
+repo="$(make_repo '{"bots": {"gemini": true}}')"
+git -C "$repo" config user.email test@example.com
+git -C "$repo" config user.name test
+git -C "$repo" remote add origin "$TMP_ROOT/origin2.git"
+git init -q --bare "$TMP_ROOT/origin2.git"
+git -C "$repo" push -q -u origin HEAD
+echo "change" > "$repo/file.txt"
+run_stubbed "$repo" "$COMMIT_PUSH" "test commit" --trigger-review
+check_gh_posted "enabled gemini: commit-and-push DOES post /gemini review" "yes"
 
 echo "---"
 echo "Passed: $PASSED, Failed: $FAILED"
