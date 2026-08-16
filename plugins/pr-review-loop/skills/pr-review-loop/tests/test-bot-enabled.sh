@@ -157,7 +157,7 @@ check_contains "misspelled bots key warns under --bots-only" "unknown top-level 
 # Heading-shape mistakes: the awk won't recognize these as the Configuration
 # section, so the block is never extracted. They must land on the loud path
 # rather than the silent "no config, everything enabled" default.
-for heading in '## Configuration' '# Configuration:' '  # Configuration'; do
+for heading in '## Configuration' '# Configuration:' '  # Configuration' '# CONFIGURATION'; do
     repo="$(mktemp -d -p "$TMP_ROOT")"
     git -C "$repo" init -q
     printf '%s\n\n```json\n{"bots": {"gemini": false}}\n```\n' "$heading" > "$repo/AGENT-REVIEWERS.md"
@@ -171,6 +171,29 @@ git -C "$repo" init -q
 printf '# Agents\n\n## my-reviewer\n\nSomething.\n' > "$repo/AGENT-REVIEWERS.md"
 check "no Configuration section -> exit 0" "0" "$(bot_status "$repo" gemini)"
 check "no Configuration section -> no warnings" "" "$(bot_stderr "$repo" gemini)"
+
+# Two top-level values in one block. Every fence balances, so the awk never
+# warns, and a stream-tolerant parse re-emits both documents — after which the
+# lookup compares against "false\ntrue" and quietly answers "enabled".
+repo="$(mktemp -d -p "$TMP_ROOT")"
+git -C "$repo" init -q
+printf '# Configuration\n\n```json\n{"bots": {"gemini": false}}\n{"bots": {"gemini": true}}\n```\n' \
+    > "$repo/AGENT-REVIEWERS.md"
+check "two top-level JSON values -> exit 2, not 0" "2" "$(bot_status "$repo" gemini)"
+
+# null is the value the enabled-by-default logic is most likely to mishandle,
+# and the only bad-value fixture that isn't a string.
+repo="$(make_repo '{"bots": {"gemini": null}}')"
+check "null bot value -> exit 2, not 0" "2" "$(bot_status "$repo" gemini)"
+
+# Two bad entries: with one, any join-separator handling is a no-op.
+repo="$(make_repo '{"bots": {"gemini": "x", "cursor": "y"}}')"
+check "two bad values: asked bot -> exit 2" "2" "$(bot_status "$repo" cursor)"
+
+# A key that differs from the asked bot only by trailing space must not be
+# mistaken for it — the readable `gemini: false` still governs.
+repo="$(make_repo '{"bots": {"gemini": false, "gemini ": "no"}}')"
+check "lookalike key does not clobber the real one" "1" "$(bot_status "$repo" gemini)"
 
 # One bot's unreadable value must not discard another's readable one...
 repo="$(make_repo '{"bots": {"gemini": false, "cursor": "no"}}')"
@@ -216,6 +239,16 @@ case "$*" in
     "repo view"*)             echo "acme/widgets" ;;
     "pr view"*--json\ comments*) echo '{"body":"looks good","createdAt":"2020-01-01T00:00:00Z"}' ;;
     "pr view"*)               echo "42" ;;
+    # One unresolved thread, so get-review-comments.sh short-circuits its poll
+    # instead of sleeping through the timeout.
+    "api graphql"*) cat <<'JSON'
+{"data":{"repository":{"pullRequest":{"reviewThreads":{
+  "nodes":[{"isResolved":false,"comments":{"nodes":[
+    {"id":"PRRC_x","databaseId":1,"path":"f.txt","line":1,"body":"note","author":{"login":"tester"},"createdAt":"2020-01-01T00:00:00Z"}
+  ]}}],
+  "pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
+JSON
+    ;;
     "api"*)                   echo "[]" ;;
     *)                        echo "" ;;
 esac
@@ -309,6 +342,41 @@ git -C "$repo" push -q -u origin HEAD
 echo "change" > "$repo/file.txt"
 run_stubbed "$repo" "$COMMIT_PUSH" "test commit" --trigger-review
 check_gh_posted "undetermined: commit-and-push still triggers" "yes"
+
+# --- the third call site ----------------------------------------------------
+#
+# get-review-comments.sh was never executed by this suite, so its copy of the
+# guard was unpinned: widening it to `-ge 1` made an unreadable config print
+# "All external review bots are disabled" and skip the wait.
+GET_COMMENTS="$SCRIPT_DIR/../scripts/get-review-comments.sh"
+SKIP_MSG="All external review bots are disabled"
+
+repo="$(make_repo '{"bots": {"gemini": false, "cursor": false}}')"
+run_stubbed "$repo" "$GET_COMMENTS" 42 --wait
+check_contains "all bots off: get-review-comments skips the wait" "$SKIP_MSG" "$RUN_OUT"
+
+# Gemini off, Cursor on: Cursor still auto-reviews on push, so the wait stays.
+repo="$(make_repo '{"bots": {"gemini": false}}')"
+run_stubbed "$repo" "$GET_COMMENTS" 42 --wait
+if [[ "$RUN_OUT" == *"$SKIP_MSG"* ]]; then
+    echo "FAIL: partial disable: must not skip the wait while Cursor is enabled"
+    FAILED=$((FAILED + 1))
+else
+    echo "PASS: partial disable: does not skip the wait while Cursor is enabled"
+    PASSED=$((PASSED + 1))
+fi
+
+repo="$(mktemp -d -p "$TMP_ROOT")"
+git -C "$repo" init -q
+printf '# Configuration\n\n```json\n{"bots": {\n```\n' > "$repo/AGENT-REVIEWERS.md"
+run_stubbed "$repo" "$GET_COMMENTS" 42 --wait
+if [[ "$RUN_OUT" == *"$SKIP_MSG"* ]]; then
+    echo "FAIL: undetermined: get-review-comments must not claim the bots are disabled"
+    FAILED=$((FAILED + 1))
+else
+    echo "PASS: undetermined: get-review-comments does not claim the bots are disabled"
+    PASSED=$((PASSED + 1))
+fi
 
 echo "---"
 echo "Passed: $PASSED, Failed: $FAILED"

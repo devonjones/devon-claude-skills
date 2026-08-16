@@ -27,7 +27,7 @@
 # `reason` field (per bd memory bfd-design-locked) — error to stderr,
 # exit non-zero.
 #
-# Usage: _parse_configuration.sh <path-to-AGENT-REVIEWERS.md> [--bots-only]
+# Usage: _parse_configuration.sh <path-to-AGENT-REVIEWERS.md> [--bots-only <bot-name>]
 #
 # --bots-only answers the narrow question "is this bot on?" (bot-enabled.sh)
 # rather than "is this whole config sound?" (the pre-loop check). Only failures
@@ -39,10 +39,13 @@
 # hard failure (exit 1) instead of degrading to `{}`, because for this caller
 # "I couldn't read your config" and "your config says the bot is on" are not the
 # same answer.
+#
+# Name the bot you're asking about: without it, an unreadable value for THAT bot
+# degrades to the softer warn-and-continue path instead of a hard failure.
 
 set -euo pipefail
 
-FILE="${1:?Usage: _parse_configuration.sh <path-to-AGENT-REVIEWERS.md> [--bots-only]}"
+FILE="${1:?Usage: _parse_configuration.sh <path-to-AGENT-REVIEWERS.md> [--bots-only <bot-name>]}"
 BOTS_ONLY=false
 # The bot the caller is actually asking about, when it named one. Entries for
 # OTHER bots can be dropped when unreadable; this one cannot — "I can't read
@@ -124,11 +127,16 @@ if [[ -z "$RAW_JSON" ]]; then
     # `# Configuration:`, an indented heading) would sail past into the silent
     # default. Anything heading-shaped enough to signal intent lands on the
     # loud path instead.
-    if [[ "$BOTS_ONLY" == "true" ]] \
-        && grep -qiE '^[[:space:]]*#{1,6}[[:space:]]*Configuration[[:space:]]*:?[[:space:]]*$' "$FILE"; then
+    # The warning is unconditional: in full-config mode an unread section means
+    # discover-agents.sh silently ignores the user's `disabled` list and runs
+    # reviewers they retired, which deserves a diagnostic just as much. Only the
+    # hard failure is mode-gated, since the pre-loop check has to keep going.
+    if grep -qiE '^[[:space:]]*#{1,6}[[:space:]]*Configuration[[:space:]]*:?[[:space:]]*$' "$FILE"; then
         echo "Warning: $FILE looks like it has a # Configuration section, but no json block could be read from it." >&2
         echo "Warning:   Expected an H1 '# Configuration' heading followed by a closed, lowercase \`\`\`json fence." >&2
-        exit 1
+        if [[ "$BOTS_ONLY" == "true" ]]; then
+            exit 1
+        fi
     fi
     echo "{}"
     exit 0
@@ -138,7 +146,18 @@ fi
 # the user can see WHERE the malformed JSON is, then fall back to {} so the
 # loop can proceed. The `if !` form suppresses `set -e` abort so the
 # diagnostic surfaces instead of the script crashing.
-if ! JQ_PARSE_ERR="$(printf '%s\n' "$RAW_JSON" | jq -e . 2>&1 > /dev/null)"; then
+#
+# `-s` is load-bearing: bare `jq -e .` accepts a JSON *stream*, so a block
+# holding two top-level objects (a forgotten closing fence between two ```json
+# blocks leaves every fence balanced, so the awk never warns) validates fine and
+# then gets re-emitted as two documents. Downstream, `.bots.gemini` yields one
+# line per document and a `== "false"` comparison against "false\ntrue" quietly
+# fails — a disabled bot switching itself back on with nothing on stderr.
+if ! JQ_PARSE_ERR="$(printf '%s\n' "$RAW_JSON" | jq -se '
+    if length == 1 and (.[0] | type) == "object" then .[0]
+    elif length != 1 then error("expected one top-level JSON object, got \(length)")
+    else error("top-level value must be an object, got \(.[0] | type)") end
+' 2>&1 > /dev/null)"; then
     echo "Warning: # Configuration section in $FILE contains invalid JSON: $JQ_PARSE_ERR" >&2
     if [[ "$BOTS_ONLY" == "true" ]]; then
         exit 1
@@ -146,6 +165,8 @@ if ! JQ_PARSE_ERR="$(printf '%s\n' "$RAW_JSON" | jq -e . 2>&1 > /dev/null)"; the
     echo "{}"
     exit 0
 fi
+# Normalize to that single document so every filter below sees one object.
+RAW_JSON="$(printf '%s\n' "$RAW_JSON" | jq -sc '.[0]')"
 
 # Warn on unknown top-level keys. The schema is closed: a typo like
 # "diabled" instead of "disabled" would otherwise be silently dropped.
@@ -199,14 +220,21 @@ if [[ -n "$BOTS_BAD" ]]; then
     if [[ "$BOTS_ONLY" == "true" ]]; then
         # ...unless the unreadable entry IS the bot being asked about, in which
         # case there is no readable answer to give and exit 0 would be a lie.
-        if [[ -n "$BOTS_ONLY_FOR" && ",${BOTS_BAD// /}," == *",$BOTS_ONLY_FOR,"* ]]; then
+        # The membership test runs in jq against the real keys: string-munging
+        # the joined list would conflate a key like "gemini " with "gemini".
+        ASKED_BAD="$(printf '%s\n' "$RAW_JSON" | jq -r --arg b "$BOTS_ONLY_FOR" '
+            if $b != "" and ((.bots // {}) | has($b)) and ((.bots[$b] | type) != "boolean")
+                then "yes" else "" end
+        ')"
+        if [[ -n "$ASKED_BAD" ]]; then
             echo "Error: # Configuration .bots.$BOTS_ONLY_FOR in $FILE is not a boolean" >&2
             exit 1
         fi
+        # No filtering of the emitted map: a dropped entry and a non-boolean one
+        # both read as "not false" at the lookup, so stripping them changes
+        # nothing observable. The warning is the whole point.
         echo "Warning: # Configuration .bots in $FILE: values must be booleans: $BOTS_BAD" >&2
         echo "Warning:   Ignoring those entries; the bots they name stay enabled." >&2
-        RAW_JSON="$(printf '%s\n' "$RAW_JSON" \
-            | jq -c '.bots |= with_entries(select(.value | type == "boolean"))')"
     else
         echo "Error: # Configuration .bots in $FILE: values must be booleans: $BOTS_BAD" >&2
         exit 1
