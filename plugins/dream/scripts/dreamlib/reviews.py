@@ -241,13 +241,44 @@ def _canonical_reviewer_map(findings: list[dict]) -> dict[str, str]:
     AGENT-REVIEWERS.md convention). Folds ONLY when both variants are actually
     present — e.g. ``test-coverage`` (7) → ``test-coverage-reviewer`` (483),
     ``api-correctness`` ↔ ``api-correctness-reviewer`` — so genuinely-distinct
-    one-off names are never merged into a canonical they don't belong to."""
+    one-off names are never merged into a canonical they don't belong to.
+
+    The known-variant set is seeded from the ROSTER as well as from this finding
+    set. Seeding from the findings alone made the fold source-dependent: in a
+    ``--source markers`` run ``clarity`` had no ``clarity-reviewer`` sibling to
+    fold onto (the suffixed form only appears in the GitHub sample), so the same
+    reviewer scored as two rows there and one row under ``--source all`` — 80
+    scorecards for a ~30 reviewer roster. The roster is the naming authority, so
+    a bare name that matches a roster reviewer folds regardless of source."""
     names = {f["reviewer"] for f in findings if f.get("reviewer")}
+    known = names | roster_reviewers()
     out: dict[str, str] = {}
     for n in names:
         suffixed = n if n.endswith("-reviewer") else n + "-reviewer"
-        out[n] = suffixed if suffixed in names else n
+        out[n] = suffixed if suffixed in known else n
     return out
+
+
+def roster_reviewers() -> set[str]:
+    """Reviewer names declared by the repo: every ``.reviewers/<name>.md`` spec and
+    every ``## <name>`` heading in an AGENT-REVIEWERS.md. Empty set when the repo
+    has no roster — callers must treat that as "no extra knowledge", never as
+    "this reviewer is unknown, drop it"."""
+    names: set[str] = set()
+    root = config.git_root() or config.project_dir()
+    for spec in _glob.glob(os.path.join(root, "**", ".reviewers", "*.md"),
+                           recursive=True):
+        names.add(os.path.basename(spec)[:-3])
+    for roster in _glob.glob(os.path.join(root, "**", "AGENT-REVIEWERS.md"),
+                             recursive=True):
+        try:
+            with open(roster, encoding="utf-8") as fh:
+                for line in fh:
+                    if line.startswith("## "):
+                        names.add(line[3:].strip())
+        except OSError:
+            continue
+    return {n for n in names if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", n)}
 
 
 def synth(findings: list[dict]) -> dict:

@@ -210,3 +210,41 @@ def test_read_markers_enforces_kind_contract(markers_home):
     assert out[0]["reviewer"] == "code-reviewer"
     assert out[0]["disposition_by"] == "user"
     assert out[0]["pr"] == "33"
+
+
+# --- roster-seeded reviewer canonicalization -------------------------------
+# Seeding the fold from the finding set alone made it source-dependent: under
+# `--source markers`, `clarity` had no `clarity-reviewer` sibling to fold onto,
+# so one reviewer scored as two rows there and one row under `--source all`.
+
+
+def test_canonical_map_folds_bare_name_onto_roster_name(monkeypatch):
+    monkeypatch.setattr(reviews, "roster_reviewers", lambda: {"clarity-reviewer"})
+    findings = [{"reviewer": "clarity"}]  # suffixed form absent from THIS set
+    assert reviews._canonical_reviewer_map(findings)["clarity"] == "clarity-reviewer"
+
+
+def test_canonical_map_leaves_non_roster_names_alone(monkeypatch):
+    monkeypatch.setattr(reviews, "roster_reviewers", lambda: {"clarity-reviewer"})
+    findings = [{"reviewer": "gemini"}, {"reviewer": "both"}]
+    m = reviews._canonical_reviewer_map(findings)
+    assert m["gemini"] == "gemini" and m["both"] == "both"
+
+
+def test_canonical_map_still_folds_within_finding_set(monkeypatch):
+    """Original behavior survives when the roster is empty (non-roster repo)."""
+    monkeypatch.setattr(reviews, "roster_reviewers", lambda: set())
+    findings = [{"reviewer": "test-coverage"}, {"reviewer": "test-coverage-reviewer"}]
+    m = reviews._canonical_reviewer_map(findings)
+    assert m["test-coverage"] == "test-coverage-reviewer"
+
+
+def test_roster_reviewers_reads_specs_and_headings(tmp_path, monkeypatch):
+    (tmp_path / ".reviewers").mkdir()
+    (tmp_path / ".reviewers" / "spec-reviewer.md").write_text("x", encoding="utf-8")
+    (tmp_path / "AGENT-REVIEWERS.md").write_text(
+        "# Agents\n\n## heading-reviewer\n\n## Not A Name\n", encoding="utf-8")
+    monkeypatch.setattr(reviews.config, "git_root", lambda cwd=None: str(tmp_path))
+    names = reviews.roster_reviewers()
+    assert "spec-reviewer" in names and "heading-reviewer" in names
+    assert "Not A Name" not in names  # prose heading, not a reviewer slug
