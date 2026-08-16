@@ -45,6 +45,10 @@ cleanup_temp_paths() {
     for p in "${TEMP_PATHS[@]}"; do
         [[ -n "$p" && -e "$p" ]] && rm -rf -- "$p"
     done
+    # An EXIT trap whose last command fails takes the script's exit status with
+    # it: without this the suite reported failure on a clean run (the last path
+    # is usually already gone, so the `&&` returns 1).
+    return 0
 }
 trap cleanup_temp_paths EXIT
 
@@ -871,12 +875,15 @@ assert_stderr_contains "unclosed-fence warning in stderr" "$t35_err" "unclosed c
 rm -rf "$repo"
 
 echo
-echo "=== Test 33: multiple json blocks under # Configuration — first block wins ==="
-# The awk in _parse_configuration.sh exits on the first json fence close. If a
-# user writes an annotated "example" json block before the real config block
-# under the same heading, the EXAMPLE wins and the real block is silently
-# ignored. Documents current behavior so a regression (e.g., switching to
-# last-wins or merging) would be caught.
+echo "=== Test 33: multiple json blocks under # Configuration — rejected loudly ==="
+# CONTRACT CHANGE (was: "first block wins"). The awk used to exit at the first
+# json fence close, so an annotated "example" block ahead of the real config
+# silently won and the user's actual settings vanished — for `disabled` that
+# means retired reviewers quietly start running again, and for `bots` it means a
+# disabled review bot quietly starts getting triggered (and billed). The awk now
+# reads on, so both blocks land in the capture and the single-document check
+# rejects them. Full-config mode still degrades to {} + exit 0 so the loop can
+# start; the difference is that the user is told.
 repo="$(make_temp_repo)"
 cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
 # Configuration
@@ -901,12 +908,10 @@ And the real config:
 EOF
 run_discover "$repo" "src/foo.py" t33
 assert_exit "exit 0" "$t33_exit" "0"
-# First json block wins: "example-only-not-real" makes it into the parsed config,
-# and "code-simplifier" does NOT. This is current behavior — if it ever changes
-# to last-wins or merge-all, this test will fail and the contract change is
-# explicit.
-assert_jq "first json block parsed (example-only-not-real present)" "$t33" '.configuration.disabled_defaults == ["example-only-not-real"]'
-assert_jq "second json block not merged (code-simplifier absent)" "$t33" '(.configuration.disabled_defaults | index("code-simplifier")) == null'
+# Neither block governs now: silently applying the wrong one was the bug.
+assert_jq "example block does not win" "$t33" '(.configuration.disabled_defaults | index("example-only-not-real")) == null'
+assert_jq "real block does not silently win either" "$t33" '(.configuration.disabled_defaults | index("code-simplifier")) == null'
+assert_stderr_contains "multiple json blocks warned" "$t33_err" "more than one"
 rm -rf "$repo"
 
 echo

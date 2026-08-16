@@ -81,6 +81,17 @@ if [[ "$BOT_TYPE" == "claude" ]]; then
     exec "$SCRIPT_DIR/claude-review.sh" "$PR_NUMBER"
 fi
 
+# Bail out if this bot is turned off for the repo (# Configuration .bots).
+# Only exit 1 means "explicitly disabled"; exit 2 means the config couldn't be
+# read (bot-enabled.sh already warned) and must not be reported as the user's
+# choice, so we fall through and trigger the review as normal.
+BOT_ENABLED_RC=0
+"$SCRIPT_DIR/bot-enabled.sh" "$BOT_TYPE" || BOT_ENABLED_RC=$?
+if [[ "$BOT_ENABLED_RC" -eq 1 ]]; then
+    echo "$BOT_TYPE is disabled for this repo (# Configuration .bots.$BOT_TYPE = false). Skipping."
+    exit 0
+fi
+
 # Handle Cursor - it auto-reviews on push, so we just wait for comments
 if [[ "$BOT_TYPE" == "cursor" ]]; then
     echo "Cursor Bugbot auto-reviews on push. Checking for existing comments..."

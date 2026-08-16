@@ -34,6 +34,10 @@ cleanup_temp_paths() {
     for p in "${TEMP_PATHS[@]}"; do
         [[ -n "$p" && -e "$p" ]] && rm -rf -- "$p"
     done
+    # An EXIT trap whose last command fails takes the script's exit status with
+    # it: without this the suite reported failure on a clean run (the last path
+    # is usually already gone, so the `&&` returns 1).
+    return 0
 }
 trap cleanup_temp_paths EXIT
 

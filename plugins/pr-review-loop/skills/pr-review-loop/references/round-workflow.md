@@ -19,6 +19,11 @@ scripts/get-review-comments.sh <PR> --with-ids --wait
 
 The `--wait` flag polls every 30s for up to 5 minutes, waiting for Gemini to respond. Do NOT skip this or use a shorter timeout.
 
+**If Gemini is disabled** (`# Configuration .bots.gemini: false` — see `SKILL.md`), never post `/gemini review`. Whether to still wait depends on the *other* external bots:
+
+- **Every external bot disabled** (gemini and cursor): drop `--wait` — run `get-review-comments.sh <PR> --with-ids` to pick up existing threads and move straight to C2/C3. (`get-review-comments.sh` enforces this itself: it only skips the poll when both are off.)
+- **Gemini off, Cursor on**: keep `--wait` — Cursor still auto-reviews on push, so there is a real review to wait for.
+
 The `--with-ids` flag outputs comment IDs needed for replies. Example output:
 ```
 === Comment ID: 2710906366 | Node ID: PRRC_kwDOD3ZsRc6hlSX- ===

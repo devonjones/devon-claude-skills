@@ -11,7 +11,24 @@
 set -euo pipefail
 
 # Load shared jq helpers
-source "$(dirname "${BASH_SOURCE[0]}")/_jq_helpers.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/_jq_helpers.sh"
+
+# Which external bots are on for this repo (# Configuration .bots)? Nothing to
+# wait for — and no quota to check — when they're all disabled.
+#
+# Only exit 1 counts as disabled. Exit 2 means bot-enabled.sh couldn't read the
+# config (it warned on stderr); treating that as "disabled" would skip the
+# quota check and print a config claim the user never made.
+bot_disabled() {
+    local rc=0
+    "$SCRIPT_DIR/bot-enabled.sh" "$1" || rc=$?
+    [[ "$rc" -eq 1 ]]
+}
+GEMINI_ENABLED=true
+if bot_disabled gemini; then GEMINI_ENABLED=false; fi
+CURSOR_ENABLED=true
+if bot_disabled cursor; then CURSOR_ENABLED=false; fi
 
 PR_NUMBER="${1:?Usage: get-review-comments.sh <pr-number> [--latest] [--with-ids] [--all]}"
 shift
@@ -102,6 +119,13 @@ get_comment_count() {
     echo "$count"
 }
 
+# No external bot is going to post, so --wait would just burn 5 minutes.
+if [[ "$WAIT_FOR_COMMENTS" == "true" && "$GEMINI_ENABLED" == "false" && "$CURSOR_ENABLED" == "false" ]]; then
+    echo "All external review bots are disabled (# Configuration .bots) — not waiting."
+    echo ""
+    WAIT_FOR_COMMENTS=false
+fi
+
 # If --wait, poll until comments exist or timeout
 if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
     INITIAL_COUNT=$(get_comment_count)
@@ -129,12 +153,14 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
             fi
 
             # Check for Gemini quota exceeded
-            QUOTA_CHECK=$(gh pr view "$PR_NUMBER" -R "$REPO" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist[bot]" or .author.login == "gemini-code-assist") | .body' 2>/dev/null | tail -1 || echo "")
-            if echo "$QUOTA_CHECK" | grep -qi "daily quota limit"; then
-                echo "Gemini is rate-limited. Use Claude fallback:"
-                echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
-                echo ""
-                exit 1
+            if [[ "$GEMINI_ENABLED" == "true" ]]; then
+                QUOTA_CHECK=$(gh pr view "$PR_NUMBER" -R "$REPO" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist[bot]" or .author.login == "gemini-code-assist") | .body' 2>/dev/null | tail -1 || echo "")
+                if echo "$QUOTA_CHECK" | grep -qi "daily quota limit"; then
+                    echo "Gemini is rate-limited. Use Claude fallback:"
+                    echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
+                    echo ""
+                    exit 1
+                fi
             fi
 
             echo "Still waiting... (${ELAPSED}s/${WAIT_TIMEOUT}s, $CURRENT_COUNT unresolved comments)"
@@ -143,7 +169,7 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
         if [[ $ELAPSED -ge $WAIT_TIMEOUT ]]; then
             FINAL_COUNT=$(get_comment_count)
             if [[ "$FINAL_COUNT" -eq 0 ]]; then
-                echo "No comments after ${WAIT_TIMEOUT}s. Gemini may not have feedback on this change."
+                echo "No comments after ${WAIT_TIMEOUT}s. The bots may not have feedback on this change."
                 echo ""
             fi
         fi
@@ -151,7 +177,10 @@ if [[ "$WAIT_FOR_COMMENTS" == "true" ]]; then
 fi
 
 # Check for Gemini rate-limit in PR comments
-RATE_LIMITED=$(gh pr view "$PR_NUMBER" -R "$REPO" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist[bot]" or .author.login == "gemini-code-assist") | .body' 2>/dev/null | grep -q "daily quota limit" && echo "true" || echo "false")
+RATE_LIMITED=false
+if [[ "$GEMINI_ENABLED" == "true" ]]; then
+    RATE_LIMITED=$(gh pr view "$PR_NUMBER" -R "$REPO" --json comments --jq '.comments[] | select(.author.login == "gemini-code-assist[bot]" or .author.login == "gemini-code-assist") | .body' 2>/dev/null | grep -q "daily quota limit" && echo "true" || echo "false")
+fi
 if [[ "$RATE_LIMITED" == "true" ]]; then
     echo "⚠️  Gemini is rate-limited. Use Claude fallback:"
     echo "   ~/.claude/skills/pr-review-loop/scripts/claude-review.sh $PR_NUMBER"
