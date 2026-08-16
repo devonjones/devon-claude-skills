@@ -16,10 +16,19 @@ source "$SCRIPT_DIR/_jq_helpers.sh"
 
 # Which external bots are on for this repo (# Configuration .bots)? Nothing to
 # wait for — and no quota to check — when they're all disabled.
+#
+# Only exit 1 counts as disabled. Exit 2 means bot-enabled.sh couldn't read the
+# config (it warned on stderr); treating that as "disabled" would skip the
+# quota check and print a config claim the user never made.
+bot_disabled() {
+    local rc=0
+    "$SCRIPT_DIR/bot-enabled.sh" "$1" || rc=$?
+    [[ "$rc" -eq 1 ]]
+}
 GEMINI_ENABLED=true
-"$SCRIPT_DIR/bot-enabled.sh" gemini || GEMINI_ENABLED=false
+if bot_disabled gemini; then GEMINI_ENABLED=false; fi
 CURSOR_ENABLED=true
-"$SCRIPT_DIR/bot-enabled.sh" cursor || CURSOR_ENABLED=false
+if bot_disabled cursor; then CURSOR_ENABLED=false; fi
 
 PR_NUMBER="${1:?Usage: get-review-comments.sh <pr-number> [--latest] [--with-ids] [--all]}"
 shift

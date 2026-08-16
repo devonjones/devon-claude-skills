@@ -58,10 +58,16 @@ EOF
 echo "Pushing to origin..."
 git push
 
-# Optionally trigger new review
-if [[ "$TRIGGER_REVIEW" == "true" ]] && ! "$SCRIPT_DIR/bot-enabled.sh" gemini; then
-    echo "Gemini is disabled for this repo (# Configuration .bots.gemini = false). Not triggering."
-    TRIGGER_REVIEW=false
+# Optionally trigger new review. Only exit 1 from bot-enabled.sh means the user
+# turned Gemini off; exit 2 means its config couldn't be read (already warned),
+# which must not be silently reported as a deliberate opt-out.
+if [[ "$TRIGGER_REVIEW" == "true" ]]; then
+    GEMINI_RC=0
+    "$SCRIPT_DIR/bot-enabled.sh" gemini || GEMINI_RC=$?
+    if [[ "$GEMINI_RC" -eq 1 ]]; then
+        echo "Gemini is disabled for this repo (# Configuration .bots.gemini = false). Not triggering."
+        TRIGGER_REVIEW=false
+    fi
 fi
 if [[ "$TRIGGER_REVIEW" == "true" ]]; then
     # Get repo info via gh's own detection (handles non-default remote names + forks).

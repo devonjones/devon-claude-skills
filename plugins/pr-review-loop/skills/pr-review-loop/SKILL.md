@@ -713,7 +713,7 @@ A disabled bot means, for the whole loop:
 
 - **Do NOT post `/gemini review`** or any other manual trigger comment for it — not via a script, not via `gh pr comment`.
 - **Do NOT wait for its review.** `trigger-review.sh <PR> --gemini` exits immediately, `commit-and-push.sh --trigger-review` skips the trigger, and `get-review-comments.sh --wait` skips its 5-minute poll when every external bot is disabled.
-- **Skip its COLLECT step.** With Gemini off, C1 becomes a plain fetch of existing line comments (agent-posted threads from prior rounds) with no `--wait`; the round's real reviewers are C2 bots and the C3 agent reviewers.
+- **Skip its COLLECT step.** With Gemini off, C1 stops being a wait on Gemini. Drop `--wait` only when *every* external bot is off — if Cursor is still enabled it auto-reviews on push and C1 must keep waiting for it. With all of them off, C1 is a plain fetch of existing line comments (agent-posted threads from prior rounds) and the round's real reviewers are the C3 agents.
 - **Do not fall back "because Gemini is missing."** Disabled is not rate-limited; there is no quota to wait out and no substitute round to run.
 
 The exit conditions, batching, and reply discipline are unchanged — they just
@@ -1405,6 +1405,7 @@ When detected, the script suggests:
 | `watch-pr.sh <PR>` | Background monitor (optional, for long-running watches) |
 | `claude-review.sh <PR>` | Generate Claude agent prompt for code review |
 | `check-gemini-quota.sh <PR>` | Check if Gemini is rate-limited |
+| `bot-enabled.sh <gemini\|cursor>` | Is this bot on for the repo? Exit 0 = enabled, 1 = explicitly disabled, 2 = undetermined (warns on stderr; callers must treat as enabled, never as the user's choice) |
 | `resolve-comment.sh <node-id> [reason]` | Manually resolve a thread |
 | `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post line comment with agent signature |
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |

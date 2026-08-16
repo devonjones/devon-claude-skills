@@ -8,24 +8,47 @@
 #   { "bots": { "gemini": false } }
 #
 # Usage: bot-enabled.sh <gemini|cursor>
-# Exit: 0 = enabled (also when there's no repo/config to read), 1 = disabled
+# Exit:
+#   0 — enabled (explicitly true, or no `bots` entry / no config file at all)
+#   1 — explicitly disabled
+#   2 — could not determine; a warning naming the reason goes to stderr
+#
+# Callers must treat 2 as "enabled" (a config we can't read must never
+# silently switch a bot off) but must NOT report it as a config decision —
+# see the `bot_disabled` helpers at the call sites. Exit 2 is deliberately
+# distinct from 0 so "your config is broken" can't masquerade as "you turned
+# this off", which is exactly the failure a silent `|| exit 0` would hide.
 
 set -euo pipefail
 
 BOT="${1:?Usage: bot-enabled.sh <bot-name>}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+if ! REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    echo "Warning: bot-enabled.sh: not inside a git repository — cannot read # Configuration .bots.$BOT" >&2
+    exit 2
+fi
+
 CONFIG="$REPO_ROOT/AGENT-REVIEWERS.md"
+# No AGENT-REVIEWERS.md is not an error: it's the documented "all bots on"
+# default, so this stays exit 0 rather than exit 2.
 [[ -f "$CONFIG" ]] || exit 0
 
-CONFIG_JSON="$("$SCRIPT_DIR/_parse_configuration.sh" "$CONFIG" 2>/dev/null)" || exit 0
-# `// true` would swallow an explicit `false` (jq treats false as falsy), so
-# test key presence instead.
-ENABLED="$(jq -r --arg b "$BOT" '
-    (.bots // {}) as $bots
-    | if ($bots | type) == "object" and ($bots | has($b)) then $bots[$b] else true end
-' <<<"$CONFIG_JSON" 2>/dev/null || echo true)"
+# Do NOT swallow the parser's stderr — its warnings (unknown keys, unknown bot
+# names, malformed JSON) are the only signal the user gets that their off
+# switch didn't take.
+if ! CONFIG_JSON="$("$SCRIPT_DIR/_parse_configuration.sh" "$CONFIG")"; then
+    echo "Warning: bot-enabled.sh: could not parse # Configuration in $CONFIG — treating $BOT as enabled" >&2
+    exit 2
+fi
+
+# `.bots[$b] // true` would swallow an explicit `false` (jq treats false as
+# falsy), so compare against false directly. A missing `bots` map yields null,
+# and null != false, so the default stays enabled.
+if ! ENABLED="$(jq -r --arg b "$BOT" '.bots[$b] != false' <<<"$CONFIG_JSON" 2>&1)"; then
+    echo "Warning: bot-enabled.sh: could not read .bots.$BOT ($ENABLED) — treating $BOT as enabled" >&2
+    exit 2
+fi
 
 if [[ "$ENABLED" == "false" ]]; then
     exit 1

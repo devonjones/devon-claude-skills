@@ -123,20 +123,36 @@ if [[ -n "$UNKNOWN_KEYS" ]]; then
     echo "Warning:   Allowed keys: defaults_version_checked, disabled, overlap_acknowledged, independent_validator, bots" >&2
 fi
 
-# Validate the `bots` block: map of bot name -> boolean. Bots default to
-# enabled, so a mistyped value (e.g. "false" as a string) would silently
-# leave a bot on — reject it loudly instead.
+# Validate the `bots` block: map of KNOWN bot name -> boolean. Bots default to
+# enabled, so both a mistyped value (`"false"` as a string) and a mistyped key
+# (`gemni`) would leave the bot running while the user believes they turned it
+# off. Values are a hard error; unknown names are a warning, matching how the
+# `disabled` list treats names that match no known reviewer.
 BOTS_BAD="$(printf '%s\n' "$RAW_JSON" | jq -r '
     if has("bots") then
         if (.bots | type) != "object" then "must be an object (got " + (.bots | type) + ")"
-        elif (.bots | to_entries | any(.value | type != "boolean"))
-            then "values must be booleans: " + (.bots | to_entries | map(select(.value | type != "boolean")) | map(.key) | join(", "))
-        else empty end
+        else
+            (.bots | to_entries | map(select(.value | type != "boolean")) | map(.key)) as $bad
+            | if ($bad | length) > 0
+                then "values must be booleans: " + ($bad | join(", "))
+                else empty end
+        end
     else empty end
 ')"
 if [[ -n "$BOTS_BAD" ]]; then
     echo "Error: # Configuration .bots in $FILE: $BOTS_BAD" >&2
     exit 1
+fi
+
+# Known external review bots. Keep in sync with SKILL.md "Supported Review Bots"
+# and the `--gemini` / `--cursor` flags in trigger-review.sh.
+BOTS_UNKNOWN="$(printf '%s\n' "$RAW_JSON" | jq -r '
+    .bots | select(type == "object")
+    | [keys[] | select(. != "gemini" and . != "cursor")] | join(", ")
+')"
+if [[ -n "$BOTS_UNKNOWN" ]]; then
+    echo "Warning: # Configuration .bots in $FILE names unknown bots (likely typos): $BOTS_UNKNOWN" >&2
+    echo "Warning:   Known bots: gemini, cursor. Unknown names have no effect — the bot stays enabled." >&2
 fi
 
 # Validate overlap_acknowledged entries have a non-empty `reason`.
