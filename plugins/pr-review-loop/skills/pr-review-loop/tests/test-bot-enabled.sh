@@ -208,6 +208,43 @@ check "own bad value -> exit 2, not 0" "2" "$(bot_status "$repo" cursor)"
 repo="$(make_repo '{"bots": {"gemini": false}}')"
 check "unknown parser flag rejected" "1" "$(rc_in "$repo" "$PARSE_CONFIG" AGENT-REVIEWERS.md --bots_only)"
 
+# The full-config half of the mode gate: discover-agents.sh aborts the whole
+# loop on any non-zero, so an unreadable config there must stay exit 0 + {}.
+repo="$(mktemp -d -p "$TMP_ROOT")"
+git -C "$repo" init -q
+printf '# Configuration\n\n```json\n{"bots": {\n```\n' > "$repo/AGENT-REVIEWERS.md"
+check "full mode: malformed JSON degrades to exit 0" "0" "$(rc_in "$repo" "$PARSE_CONFIG" AGENT-REVIEWERS.md)"
+check "full mode: malformed JSON emits {}" "{}" "$(cd "$repo" && "$PARSE_CONFIG" AGENT-REVIEWERS.md 2>/dev/null)"
+check_contains "full mode: malformed JSON still warns" "invalid JSON" \
+    "$(cd "$repo" && "$PARSE_CONFIG" AGENT-REVIEWERS.md 2>&1 >/dev/null || true)"
+
+repo="$(mktemp -d -p "$TMP_ROOT")"
+git -C "$repo" init -q
+printf '## Configuration\n\n```json\n{"bots": {"gemini": false}}\n```\n' > "$repo/AGENT-REVIEWERS.md"
+check "full mode: heading typo degrades to exit 0" "0" "$(rc_in "$repo" "$PARSE_CONFIG" AGENT-REVIEWERS.md)"
+check_contains "full mode: heading typo still warns" "no json block could be read" \
+    "$(cd "$repo" && "$PARSE_CONFIG" AGENT-REVIEWERS.md 2>&1 >/dev/null || true)"
+
+# A second # Configuration section is silently ignored by the extractor, and
+# it's the merge users get pushed into by install-template.sh.
+repo="$(mktemp -d -p "$TMP_ROOT")"
+git -C "$repo" init -q
+printf '# Configuration\n\n```json\n{"disabled": []}\n```\n\n# Agents\n\n# Configuration\n\n```json\n{"bots": {"gemini": false}}\n```\n' \
+    > "$repo/AGENT-REVIEWERS.md"
+check_contains "duplicate Configuration sections warn" "only the first is read" \
+    "$(cd "$repo" && "$PARSE_CONFIG" AGENT-REVIEWERS.md 2>&1 >/dev/null || true)"
+
+# A UTF-8 BOM ahead of the heading must not silently drop the whole config.
+repo="$(mktemp -d -p "$TMP_ROOT")"
+git -C "$repo" init -q
+printf '\xef\xbb\xbf# Configuration\n\n```json\n{"bots": {"gemini": false}}\n```\n' > "$repo/AGENT-REVIEWERS.md"
+check "BOM before heading still reads the config" "1" "$(bot_status "$repo" gemini)"
+
+# The asked bot being ABSENT from a map that has other bad entries is not an
+# error about the asked bot.
+repo="$(make_repo '{"bots": {"cursor": "no"}}')"
+check "asked bot absent from a map with bad entries -> enabled" "0" "$(bot_status "$repo" gemini)"
+
 # A typo'd bot name leaves the bot running, so it has to be called out.
 repo="$(make_repo '{"bots": {"gemni": false}}')"
 UNKNOWN_ERR="$(cd "$repo" && "$PARSE_CONFIG" AGENT-REVIEWERS.md 2>&1 >/dev/null)"
@@ -237,18 +274,25 @@ cat > "$STUB_BIN/gh" <<'STUB'
 echo "$*" >> "$GH_CALL_LOG"
 case "$*" in
     "repo view"*)             echo "acme/widgets" ;;
-    "pr view"*--json\ comments*) echo '{"body":"looks good","createdAt":"2020-01-01T00:00:00Z"}' ;;
+    # GH_LAST_COMMENT lets a case feed back a quota-limit body.
+    "pr view"*--json\ comments*) echo "{\"body\":\"${GH_LAST_COMMENT:-looks good}\",\"createdAt\":\"2020-01-01T00:00:00Z\"}" ;;
     "pr view"*)               echo "42" ;;
-    # One unresolved thread, so get-review-comments.sh short-circuits its poll
-    # instead of sleeping through the timeout.
-    "api graphql"*) cat <<'JSON'
+    # One unresolved thread by default, so get-review-comments.sh short-circuits
+    # its poll instead of sleeping through the timeout. GH_THREADS=0 gives the
+    # empty case, where the poll would actually run.
+    "api graphql"*)
+        if [[ "${GH_THREADS:-1}" == "0" ]]; then
+            echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}'
+        else
+            cat <<'JSON'
 {"data":{"repository":{"pullRequest":{"reviewThreads":{
   "nodes":[{"isResolved":false,"comments":{"nodes":[
     {"id":"PRRC_x","databaseId":1,"path":"f.txt","line":1,"body":"note","author":{"login":"tester"},"createdAt":"2020-01-01T00:00:00Z"}
   ]}}],
   "pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}
 JSON
-    ;;
+        fi
+        ;;
     "api"*)                   echo "[]" ;;
     *)                        echo "" ;;
 esac
@@ -263,7 +307,9 @@ run_stubbed() {
     local repo="$1"; shift
     : > "$GH_CALL_LOG"
     RUN_RC=0
-    RUN_OUT="$(cd "$repo" && PATH="$STUB_BIN:$PATH" GH_CALL_LOG="$GH_CALL_LOG" "$@" 2>&1)" || RUN_RC=$?
+    RUN_OUT="$(cd "$repo" && PATH="$STUB_BIN:$PATH" GH_CALL_LOG="$GH_CALL_LOG" \
+        GH_THREADS="${GH_THREADS:-1}" GH_LAST_COMMENT="${GH_LAST_COMMENT:-looks good}" \
+        "$@" 2>&1)" || RUN_RC=$?
 }
 
 check_gh_posted() {
@@ -377,6 +423,38 @@ else
     echo "PASS: undetermined: get-review-comments does not claim the bots are disabled"
     PASSED=$((PASSED + 1))
 fi
+
+# Skipping the wait has to mean skipping it, not just announcing it: with no
+# threads to find, the mutant that only prints the message polls for 5 minutes.
+repo="$(make_repo '{"bots": {"gemini": false, "cursor": false}}')"
+GH_THREADS=0 run_stubbed "$repo" "$GET_COMMENTS" 42 --wait
+unset GH_THREADS
+if [[ "$RUN_OUT" == *"Waiting for review comments"* ]]; then
+    echo "FAIL: all bots off: announced the skip but entered the poll anyway"
+    FAILED=$((FAILED + 1))
+else
+    echo "PASS: all bots off: does not enter the poll"
+    PASSED=$((PASSED + 1))
+fi
+
+# A stale quota comment must not send the user to the Claude fallback for a bot
+# they turned off.
+repo="$(make_repo '{"bots": {"gemini": false}}')"
+GH_LAST_COMMENT="You have reached your daily quota limit" run_stubbed "$repo" "$GET_COMMENTS" 42
+unset GH_LAST_COMMENT
+if [[ "$RUN_OUT" == *"rate-limited"* ]]; then
+    echo "FAIL: disabled gemini: reported a rate limit for a disabled bot"
+    FAILED=$((FAILED + 1))
+else
+    echo "PASS: disabled gemini: no rate-limit advice for a disabled bot"
+    PASSED=$((PASSED + 1))
+fi
+
+# ...but it must still report one when Gemini is actually in use.
+repo="$(make_repo '{"bots": {"gemini": true}}')"
+GH_LAST_COMMENT="You have reached your daily quota limit" run_stubbed "$repo" "$GET_COMMENTS" 42
+unset GH_LAST_COMMENT
+check_contains "enabled gemini: rate limit still reported" "rate-limited" "$RUN_OUT"
 
 echo "---"
 echo "Passed: $PASSED, Failed: $FAILED"

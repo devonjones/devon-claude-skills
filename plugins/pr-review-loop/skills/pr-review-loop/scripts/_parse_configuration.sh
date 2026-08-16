@@ -75,6 +75,9 @@ fi
 #     until the next ``` (which is the closing of the json fence).
 RAW_JSON="$(awk '
     BEGIN { in_config = 0; in_fence = 0; in_json = 0 }
+    # A UTF-8 BOM ahead of the first `#` would defeat every heading rule below
+    # and silently drop the whole config — bots, disabled, everything.
+    NR == 1 { sub(/^\357\273\277/, "") }
     # Track every fence open/close so heading detection stays accurate even
     # when prose preceding the json block contains fenced `^# ` examples.
     /^```/ {
@@ -138,6 +141,26 @@ if [[ -z "$RAW_JSON" ]]; then
             exit 1
         fi
     fi
+fi
+
+# A SECOND `# Configuration` section is silently dropped: the awk exits at the
+# first json fence close, so nothing after it is ever scanned — no empty
+# RAW_JSON, so the backstop above never fires either. This is the merge users
+# are pushed into, because install-template.sh refuses to overwrite an existing
+# root AGENT-REVIEWERS.md and every shipped language pack opens with its own
+# `# Configuration`.
+#
+# Warn only. A hard exit here would be worse than the bug: the FIRST section
+# usually parses fine, so under --bots-only a correctly-read `"gemini": false`
+# would turn into exit 1 -> exit 2 -> treated as enabled, switching the bot back
+# on to punish a duplicate heading.
+CONFIG_HEADINGS="$(grep -cE '^[[:space:]]*#[[:space:]]+Configuration[[:space:]]*$' "$FILE" || true)"
+if [[ "${CONFIG_HEADINGS:-0}" -gt 1 ]]; then
+    echo "Warning: $FILE has $CONFIG_HEADINGS '# Configuration' sections; only the first is read." >&2
+    echo "Warning:   Merge them into one section — settings in the later ones are ignored." >&2
+fi
+
+if [[ -z "$RAW_JSON" ]]; then
     echo "{}"
     exit 0
 fi
@@ -165,8 +188,6 @@ if ! JQ_PARSE_ERR="$(printf '%s\n' "$RAW_JSON" | jq -se '
     echo "{}"
     exit 0
 fi
-# Normalize to that single document so every filter below sees one object.
-RAW_JSON="$(printf '%s\n' "$RAW_JSON" | jq -sc '.[0]')"
 
 # Warn on unknown top-level keys. The schema is closed: a typo like
 # "diabled" instead of "disabled" would otherwise be silently dropped.
@@ -223,7 +244,7 @@ if [[ -n "$BOTS_BAD" ]]; then
         # The membership test runs in jq against the real keys: string-munging
         # the joined list would conflate a key like "gemini " with "gemini".
         ASKED_BAD="$(printf '%s\n' "$RAW_JSON" | jq -r --arg b "$BOTS_ONLY_FOR" '
-            if $b != "" and ((.bots // {}) | has($b)) and ((.bots[$b] | type) != "boolean")
+            if ((.bots // {}) | has($b)) and ((.bots[$b] | type) != "boolean")
                 then "yes" else "" end
         ')"
         if [[ -n "$ASKED_BAD" ]]; then
@@ -244,8 +265,7 @@ fi
 # Known external review bots. Keep in sync with SKILL.md "Supported Review Bots"
 # and the `--gemini` / `--cursor` flags in trigger-review.sh.
 BOTS_UNKNOWN="$(printf '%s\n' "$RAW_JSON" | jq -r '
-    .bots | select(type == "object")
-    | [keys[] | select(. != "gemini" and . != "cursor")] | join(", ")
+    (.bots // {}) | [keys[] | select(. != "gemini" and . != "cursor")] | join(", ")
 ')"
 if [[ -n "$BOTS_UNKNOWN" ]]; then
     echo "Warning: # Configuration .bots in $FILE names unknown bots (likely typos): $BOTS_UNKNOWN" >&2

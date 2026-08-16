@@ -237,7 +237,7 @@ A finding is likely isolated when:
 If a reviewer flags an issue on content **not modified in recent pushes**, their initial review pass was incomplete:
 
 1. **Widen the sweep to the full original PR diff** — not just recently-changed files.
-2. **Consider an explicit full-diff review trigger**: push-triggered auto-reviews anchor on recently-changed files. Posting an explicit `/gemini review` comment (or `trigger-review.sh <PR> --wait`) prompts a review of the full PR diff and can surface remaining issues sooner.
+2. **Consider an explicit full-diff review trigger**: push-triggered auto-reviews anchor on recently-changed files. Running `trigger-review.sh <PR> --wait` prompts a review of the full PR diff and can surface remaining issues sooner. Use the script, not a hand-written `/gemini review` comment — the script is what honors `# Configuration .bots`, so posting the comment yourself triggers a bot the repo has disabled (and bills the user for it) with nothing to warn you.
 
 ### When a Finding Looks Like a Pattern
 
