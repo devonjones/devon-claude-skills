@@ -107,6 +107,7 @@ done < <(printf '%s\n' "${DIRS[@]}" | sort -u)
 
 # For each directory, walk up to repo root collecting AGENT-REVIEWERS.md paths
 AGENT_FILES=()
+AGENT_FILE_COUNT=0
 SEEN_AGENT_FILES="|"
 
 _seen() { [[ "$SEEN_AGENT_FILES" == *"|$1|"* ]]; }
@@ -118,6 +119,7 @@ for dir in "${UNIQUE_DIRS[@]}"; do
         agent_file="$REPO_ROOT/$current/AGENT-REVIEWERS.md"
         if [[ -f "$agent_file" ]] && ! _seen "$agent_file"; then
             AGENT_FILES+=("$agent_file")
+            AGENT_FILE_COUNT=$((AGENT_FILE_COUNT + 1))
             _mark "$agent_file"
         fi
 
@@ -138,7 +140,7 @@ done
 # Output per file: JSON lines with type (agent|context), name, scope, content, source
 parse_agent_file() {
     local file="$1"
-    local rel_path="${file#$REPO_ROOT/}"
+    local rel_path="${file#"$REPO_ROOT"/}"
     local scope_dir
     scope_dir="$(dirname "$rel_path")"
     if [[ "$scope_dir" == "." ]]; then
@@ -234,7 +236,7 @@ parse_agent_file() {
 # Collect all parsed sections from all files. Capturing the loop's output
 # with command substitution is O(n) vs repeated string concatenation (O(n²)).
 ALL_SECTIONS=""
-if [[ ${#AGENT_FILES[@]} -gt 0 ]]; then
+if [[ "$AGENT_FILE_COUNT" -gt 0 ]]; then
     ALL_SECTIONS=$(
         for file in "${AGENT_FILES[@]}"; do
             parse_agent_file "$file"
@@ -274,7 +276,7 @@ fi
 # the explicit root-file check to avoid a false trigger when root config
 # exists but PR has no files.
 LANGUAGE_DETECTION_JSON='null'
-if [[ ${#AGENT_FILES[@]} -eq 0 ]] && [[ ! -f "$ROOT_AGENT_REVIEWERS" ]]; then
+if [[ "$AGENT_FILE_COUNT" -eq 0 ]] && [[ ! -f "$ROOT_AGENT_REVIEWERS" ]]; then
     if [[ -x "$SCRIPT_DIR/detect-language.sh" ]]; then
         # Capture stdout; let stderr flow through so the user sees any errors.
         # Detect script is deterministic and shouldn't fail on a readable repo,
@@ -306,18 +308,20 @@ fi
 # Detection is fence-aware: a `# Configuration` inside a fenced example in an
 # agent body is content, not a heading, and shouldn't trigger the warning.
 ROOT_AGENT_REVIEWERS_CANON="$(realpath "$ROOT_AGENT_REVIEWERS" 2>/dev/null || echo "$ROOT_AGENT_REVIEWERS")"
-for f in "${AGENT_FILES[@]}"; do
-    f_canon="$(realpath "$f" 2>/dev/null || echo "$f")"
-    [[ "$f_canon" == "$ROOT_AGENT_REVIEWERS_CANON" ]] && continue
-    if awk '
-        BEGIN { in_fence = 0; found = 0 }
-        /^```/ { in_fence = !in_fence; next }
-        !in_fence && /^#[[:space:]]+Configuration[[:space:]]*$/ { found = 1; exit }
-        END { exit (found ? 0 : 1) }
-    ' "$f"; then
-        echo "Warning: # Configuration section found in $f — ignored (only the root AGENT-REVIEWERS.md's configuration is honored)" >&2
-    fi
-done
+if [[ "$AGENT_FILE_COUNT" -gt 0 ]]; then
+    for f in "${AGENT_FILES[@]}"; do
+        f_canon="$(realpath "$f" 2>/dev/null || echo "$f")"
+        [[ "$f_canon" == "$ROOT_AGENT_REVIEWERS_CANON" ]] && continue
+        if awk '
+            BEGIN { in_fence = 0; found = 0 }
+            /^```/ { in_fence = !in_fence; next }
+            !in_fence && /^#[[:space:]]+Configuration[[:space:]]*$/ { found = 1; exit }
+            END { exit (found ? 0 : 1) }
+        ' "$f"; then
+            echo "Warning: # Configuration section found in $f — ignored (only the root AGENT-REVIEWERS.md's configuration is honored)" >&2
+        fi
+    done
+fi
 
 # Warn on disabled names that don't match any default — likely typos.
 # Without this, e.g. `disabled: ["pr-test-analyser"]` (British spelling)
@@ -344,7 +348,11 @@ fi
 # Pass JSON via env (not --argjson) to avoid MAX_ARG_STRLEN (~128KB on
 # Linux). ALL_SECTIONS and DEFAULTS_JSON are the most likely to grow:
 # many user agents in AGENT-REVIEWERS.md, or many shipped defaults.
-SECTIONS_JSON="$([[ -z "$ALL_SECTIONS" ]] && echo "[]" || (printf '%s\n' "$ALL_SECTIONS" | jq -s '.'))"
+if [[ -z "$ALL_SECTIONS" ]]; then
+    SECTIONS_JSON="[]"
+else
+    SECTIONS_JSON="$(printf '%s\n' "$ALL_SECTIONS" | jq -s '.')"
+fi
 JQ_INPUT=$(
     SECTIONS_JSON="$SECTIONS_JSON" \
     DEFAULTS_JSON="$DEFAULTS_JSON" \

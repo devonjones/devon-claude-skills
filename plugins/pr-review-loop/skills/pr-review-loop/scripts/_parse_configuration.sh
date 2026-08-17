@@ -74,10 +74,15 @@ fi
 #   - Inside configuration section, when we see ```json, capture lines
 #     until the next ``` (which is the closing of the json fence).
 RAW_JSON="$(awk '
-    BEGIN { in_config = 0; in_fence = 0; in_json = 0 }
+    BEGIN {
+        in_config = 0
+        in_fence = 0
+        in_json = 0
+        utf8_bom = sprintf("%c%c%c", 239, 187, 191)
+    }
     # A UTF-8 BOM ahead of the first `#` would defeat every heading rule below
     # and silently drop the whole config — bots, disabled, everything.
-    NR == 1 { sub(/^\357\273\277/, "") }
+    NR == 1 { sub("^" utf8_bom, "") }
     # Track every fence open/close so heading detection stays accurate even
     # when prose preceding the json block contains fenced `^# ` examples.
     /^```/ {

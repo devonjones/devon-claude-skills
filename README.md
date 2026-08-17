@@ -35,8 +35,11 @@ Install the plugins you want to use:
 # Install article synthesizer
 /plugin install article-synthesizer@devon-claude-skills
 
+# Install Xquik public research
+/plugin install xquik-public-research@devon-claude-skills
+
 # Or install all
-/plugin install pr-review-loop@devon-claude-skills nano-banana@devon-claude-skills youtube-transcript@devon-claude-skills youtube-screenshotter@devon-claude-skills youtube-synthesizer@devon-claude-skills article-synthesizer@devon-claude-skills
+/plugin install pr-review-loop@devon-claude-skills nano-banana@devon-claude-skills youtube-transcript@devon-claude-skills youtube-screenshotter@devon-claude-skills youtube-synthesizer@devon-claude-skills article-synthesizer@devon-claude-skills xquik-public-research@devon-claude-skills
 ```
 
 ### Step 3: Verify Installation
@@ -220,6 +223,27 @@ https://example.com/some-article into ~/ObsidianVaults/Programming
 
 Optional flags interpreted by the skill: `--rerun` to overwrite an existing entry, `--why "<reason>"` to seed the `why_ingested` frontmatter field.
 
+### xquik-public-research
+
+Use Xquik for authorized public X research through REST, webhooks, and MCP.
+
+**Install:**
+```bash
+/plugin install xquik-public-research@devon-claude-skills
+```
+
+**Features:**
+- Public post, profile, follower, and entity research workflows
+- Account and keyword monitoring via webhooks
+- REST API, OpenAPI, SDK, and MCP setup guidance
+- API-key handling and data-boundary guardrails
+
+**Usage:**
+```
+Use the xquik-public-research skill to plan a public X account monitor
+ and identify the smallest Xquik API endpoint for the first read-only test.
+ ```
+
 ## Migration Notice
 
 These skills were previously hosted in separate repositories:
@@ -255,6 +279,12 @@ These skills were previously hosted in separate repositories:
 ### article-synthesizer
 - Network access to the article's host; `curl` for the fallback fetch path
 - A target Obsidian vault path (writable). Per-note folder convention; the skill writes only under `<vault>/sources/articles/`.
+
+### xquik-public-research
+- An Xquik API key for authenticated REST or MCP calls
+- Network access to `xquik.com` and `docs.xquik.com`
+
+Xquik is an independent third-party service. Not affiliated with X Corp. "Twitter" and "X" are trademarks of X Corp.
 
 ## License
 

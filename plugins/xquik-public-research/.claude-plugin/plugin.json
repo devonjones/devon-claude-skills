@@ -1,0 +1,8 @@
+{
+  "name": "xquik-public-research",
+  "description": "Use Xquik for authorized public X research with REST, webhooks, and MCP",
+  "version": "1.0.0",
+  "author": {
+    "name": "Xquik"
+  }
+}
