@@ -10,7 +10,7 @@ manifest to return, a bot does not.
 | Reviewer | Reported means | Not reported |
 |---|---|---|
 | **Agent reviewer (C3)** | Returned a posting manifest, including the literal "No issues found" | Task failed, returned nothing, or returned an off-shape answer that names no findings and does not say it found none |
-| **External bot (C1/C2)** | A review by that bot exists whose commit matches the current head SHA | No such review. A check that *failed* is a third case — see below. |
+| **External bot (C1/C2)** | A review by that bot exists on the commit the round reviewed | No such review. A check that *failed* is a third case — see below. |
 | **Disabled bot, disabled agent, retired agent** | Outside the denominator — deliberately not dispatched | n/a |
 
 A zero result is "not reported" — route it to "A reviewer that will not report"
@@ -26,11 +26,11 @@ configured bot:
 
 ```bash
 ( set -o pipefail
-# $SHA must be the commit the reviewers reviewed - capture it at C1 and reuse it.
-# Do not re-resolve "current head" here: by report time F4 has pushed this
-# round's fixes, so current head is a different commit and every bot reads as
-# not-reported.
-[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "check failed: no reviewed SHA" >&2; exit 2; }
+# Run this during COLLECT, alongside C1/C2 - not at report time. Head is the
+# commit the reviewers are reviewing only until F4 pushes the round's fixes.
+SHA=$(gh pr view <PR> --json headRefOid --jq .headRefOid) \
+  || { echo "check failed: no head SHA" >&2; exit 2; }
+[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "check failed: no head SHA" >&2; exit 2; }
 COUNT=$(gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/reviews" \
   | jq -s --arg sha "$SHA" \
       'add | [.[] | select((.user.login == "gemini-code-assist[bot]"
@@ -50,8 +50,8 @@ produced no usable report — whether it did not report or the check for it fail
 Two strikes stops the loop and asks the user. Do not keep them separate: an
 alternating not-reported / check-failed pattern would trip neither. Do not keep
 them in your head either — a loop has no round cap and your context does not
-survive it. The end-of-round report carries it to the PR after F7, so the count
-is re-derivable from the PR by anyone, including you after a restart.
+survive it. Both failures must happen in the same round, so nothing has to survive
+one.
 
 ## A bot whose login you cannot establish
 

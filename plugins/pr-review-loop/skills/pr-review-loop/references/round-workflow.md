@@ -10,13 +10,10 @@ This file is the operational companion to the round-structure diagram in `SKILL.
 
 ### C1. Check for unresolved Gemini line comments
 
-**First, pin the commit this round reviews.** Everything downstream that asks
-"did this reviewer report on this code" needs the SHA the reviewers saw, not
-whatever HEAD becomes after F4 pushes the round's fixes:
-
-```bash
-REVIEWED_SHA=$(gh pr view <PR> --json headRefOid --jq .headRefOid)
-```
+**Run the per-bot reported check here**, in COLLECT, while head is still the
+commit the reviewers are reviewing — see [`reviewer-reported.md`](reviewer-reported.md).
+After F4 pushes this round's fixes, head is a different commit and every bot
+reads as not-reported.
 
 
 ALWAYS use `--wait` for first check after PR creation or push:
@@ -166,10 +163,9 @@ The `--wait` flag polls every 30s for up to 5 minutes waiting for new comments. 
 
 If F6 returned new comments, start the next COLLECT PHASE. Otherwise: count `D` reviewers dispatched against `R` that reported — see [`reviewer-reported.md`](reviewer-reported.md), which is where the per-class definition and the bot check live — then apply the convergence rule. `D` and `R` must match. One clean round converges; there is no round cap.
 
-### End-of-round report — post it, after F7
+### End-of-round report
 
-This is the loop's only durable state. It must survive a restart, so it goes to
-the PR, not the conversation, and it carries a marker you can grep for:
+Post it to the PR so a restart can read the round history back:
 
 ```bash
 gh pr comment <PR> --body "$(cat <<'EOF'
@@ -177,37 +173,45 @@ gh pr comment <PR> --body "$(cat <<'EOF'
 Round N: posted X findings across Y agents (A withdrawn by validator);
 replied to Z threads (F fixed / W won't-fix / O out-of-scope).
 Reported: <reviewer>=ok|failed(<reason>) for every dispatched reviewer. D dispatched / R reported.
-Bots: <bot>=<n> comments|failed(<reason>)|disabled, per configured bot.
-Roster: disabled=<...|none> retired=<...|none> retirement-candidate=<...|none>.
-Carried-forward P1/P2 Won't-fix: <comment ids, or "none">.
+Roster: disabled=<...|none> retired=<...|none>.
 EOF
 )" || { echo "round report did not post - retry before starting the next round" >&2; exit 2; }
 ```
 
-Read the history back with:
-
 ```bash
-gh api --paginate "/repos/{owner}/{repo}/issues/<PR>/comments" \
-  --jq '.[] | select(.body | startswith("<!-- pr-review-loop:round-report -->")) | .body'
+( set -o pipefail
+  gh api --paginate "/repos/{owner}/{repo}/issues/<PR>/comments" \
+    --jq '.[] | select(.body | startswith("<!-- pr-review-loop:round-report -->")) | .body' \
+    || { echo "could not read round history - rerun it" >&2; exit 2; } )
 ```
 
-`get-pr-comments.sh` will **not** find these — it filters to bot authors and you
-are the operator. Use the query above.
+`get-pr-comments.sh` will not find these — it filters to bot authors and you are
+the operator.
 
-Why each field is there, since every one of them was a defect first:
+**Nothing the convergence rule depends on lives in this report.** That was tried
+across four rounds — a strike counter, a carried-forward list, a roster progress
+count — and every one of them needed a source, a base case and a gap detector it
+did not have. Each of those is now derived from the PR at the moment it is
+needed, so a missing report costs you the narrative and nothing else:
 
-- **`Reported:` / `D` / `R`** — the check F7 applies; this is where it is written down.
-- **`Bots:`** — a count alone makes a bot whose check exited 2 identical to a bot
-  that was silent, which is the conflation `reviewer-reported.md` forbids.
-- **`Roster:`** — disabled and retired reviewers are the only legitimate way `D`
-  shrinks, and `retirement-candidate` is the 2-3 round count that decides it.
-- **`Carried-forward`** — take the previous round's list, drop any id you resolved
-  this round, add any P1/P2 you replied "Won't fix" to this round. It cannot be
-  recomputed from the PR: F4's gate drops a thread the moment you reply to it, so
-  a declined P1 is indistinguishable from a fixed one the next round. This line
-  is the only thing carrying it.
+- **Outstanding threads** — F4's gate, recomputed each round.
+- **A declined P1/P2** — reply with `reply-to-comment.sh ... --no-resolve` and the
+  thread stays *unresolved on the PR*. GitHub carries it; it cannot be dropped by
+  a lost copy, and it needs no round-1 base case. Convergence checks it directly:
 
-**A missing round report means unknown, not zero** — and unknown is not a state
-you may converge from. If a round's report is absent, you cannot claim the strike
-counts or the carry-forward list; reconstruct what you can from the PR, say so,
-and ask the user rather than treating the gap as a clean slate.
+  ```bash
+  ( set -o pipefail
+    gh api graphql -f query='query($o:String!,$r:String!,$p:Int!){repository(owner:$o,name:$r){
+        pullRequest(number:$p){reviewThreads(first:100){nodes{isResolved}}}}}' \
+      -F o=<owner> -F r=<repo> -F p=<PR> \
+      --jq '[.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved|not)]|length' \
+      || { echo "resolve check failed - rerun it" >&2; exit 2; } )
+  ```
+
+  Non-zero means a finding is still open and the loop has not converged.
+- **A reviewer that will not report** — re-run it inside the same round. Two
+  failures *in one round* stops the loop and asks. Nothing crosses a round
+  boundary, so nothing needs remembering.
+- **Retirement state** is best-effort: a restart forgets it and the only cost is
+  calling a quiet reviewer again. It is in the report for the operator, not for
+  the rule.

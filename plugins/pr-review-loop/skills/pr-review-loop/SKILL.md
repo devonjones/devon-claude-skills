@@ -280,7 +280,7 @@ that distinction — they are not a flat list of equal-force bullets.
 | **Every configured reviewer must have reported.** | A reviewer that never reported looks identical to a reviewer with nothing to say. Never infer it from an empty comment list or a zero exit status — see [`references/reviewer-reported.md`](references/reviewer-reported.md). Consequence is the **A reviewer that will not report** row below. |
 | **Every disposition must have reached its thread.** | A reply you sent is not a reply that landed; a failed POST can leave a resolved thread carrying a finding and no disposition. F4's gate is what checks this — the query is in [`references/round-workflow.md`](references/round-workflow.md). |
 | **At least one reviewer must have run.** | An empty roster — every bot disabled, every default disabled, every agent retired — produces a vacuously clean round. Zero reviewers is not convergence; it is a configuration problem. Stop and ask. |
-| **An unresolved P1/P2 "Won't fix" carried forward from any round blocks convergence.** | Every Won't-fix on a P1/P2 must be (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. **Filing a beads ticket does not resolve a P1/P2** — a ticket is a deferral, so it needs one of those same three resolutions. Ticketing resolves P3s only. |
+| **An unresolved P1/P2 "Won't fix" blocks convergence** — check it with the unresolved-threads query in [`references/round-workflow.md`](references/round-workflow.md). | Every Won't-fix on a P1/P2 must be (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. **Filing a beads ticket does not resolve a P1/P2** — a ticket is a deferral, so it needs one of those same three resolutions. Ticketing resolves P3s only. Reply with `--no-resolve` so the thread stays unresolved on the PR and carries itself. |
 | **A CI fix is a fix.** | A fix pushed at F5 to get CI green changed the code as surely as a review fix did. The round that contained it is not clean. |
 | **A self-contradiction stops the loop.** | A round that reverses a previous round's fix means the loop is oscillating, not converging. Stop and ask the user; more rounds do not fix it. |
 | **A reviewer that will not report stops the loop.** | Re-run it. If the same reviewer fails **twice in the same loop** — counted per reviewer across the whole loop, resetting only on a successful report — stop and ask the user. A per-round counter would reset every round and never reach two. A round where the reviewer produced no usable report is a strike whether it failed to report or its *check* failed — one counter, both causes, recorded per round so it survives a restart. See [`references/reviewer-reported.md`](references/reviewer-reported.md). |
@@ -1287,14 +1287,13 @@ Agent reviewers run as C3 — the last step of the COLLECT phase, after C1 (Gemi
 
 4. **In F4–F6**, commit + push the batched fixes once, wait for CI, and trigger the next review.
 
-5. **Post the end-of-round report to the PR**, after F7, every round. It is the
-   loop's only durable state: strike counts, roster changes and carried-forward
-   Won't-fix ids live there and nowhere else, so a restart can read them back.
-   The block, the marker it carries and the query that retrieves it are in
-   [`references/round-workflow.md`](references/round-workflow.md). **Do not keep
-   a second copy of the block here** — the two diverged within one round of the
-   first being written, which is how the `Carried-forward` line went missing
-   from one of them.
+5. **Post the end-of-round report to the PR**, after F7, every round — the block
+   and the query that reads it back are in
+   [`references/round-workflow.md`](references/round-workflow.md). **Do not keep a
+   second copy of the block here**: two copies existed for most of this skill's
+   history, drifted apart once, and a field went missing from one of them.
+   Nothing the convergence rule depends on lives in the report; every such fact is
+   derived from the PR at the moment it is needed.
 
 ### Diminishing Returns for Agent Reviewers
 
