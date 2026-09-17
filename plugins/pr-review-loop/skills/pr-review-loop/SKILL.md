@@ -258,26 +258,6 @@ Before replying to the reviewer or making the fix:
 | Field added to schema in `models.py` but the docs in `README.md` still show the old shape | Cross-file consistency | Check related diagrams/tables in all files modified by the PR |
 | Wrong version number at one location | Isolated factual | Fix in place; no sweep needed |
 
-## Stopping Heuristics
-
-A round that isn't clean means run another round — that is the whole stopping
-rule (see Convergence). There is no round cap and no separate scorecard: the
-loop runs until it converges, or until the user says merge.
-
-One signal still needs watching every round, because it is an input to the
-convergence rule rather than an alternative to it:
-
-| Signal | What to do |
-|---|---|
-| **Contradiction count** — did this round reverse a fix from a previous round? | Stop and ask the user. A loop that oscillates is degrading the code, and no number of further rounds fixes that. |
-
-### When to Stop and Ask
-
-These block convergence and are not the agent's call:
-
-- A self-contradiction is detected across rounds
-- A reviewer keeps failing — see "A reviewer that will not report" under Convergence
-
 ## Convergence
 
 **A loop converges on ONE clean round.** Not two consecutive clean rounds. When
@@ -296,22 +276,38 @@ that distinction — they are not a flat list of equal-force bullets.
 
 | Rule | Why |
 |---|---|
-| **One clean round converges.** | A second confirming round buys nothing the first didn't. |
 | **A P1 or P2 fix means the round was NOT clean.** | The next round reviews *different code*. A review that passed did not pass on what would actually ship. Push the fix, run another round. (A P3-only fix is the agent's call — see below.) |
-| **Every configured reviewer must have reported.** | A reviewer that errored, rate-limited, or timed out makes the round INCOMPLETE, not clean — a reviewer that never reported looks identical to a reviewer with nothing to say. Check this explicitly; do not infer it from an empty comment list. |
+| **Every configured reviewer must have reported.** | A reviewer that errored, rate-limited, or timed out makes the round INCOMPLETE, not clean — a reviewer that never reported looks identical to a reviewer with nothing to say. See "What counts as reported" below; do not infer it from an empty comment list. |
 | **At least one reviewer must have run.** | An empty roster — every bot disabled, every default disabled, every agent retired — produces a vacuously clean round. Zero reviewers is not convergence; it is a configuration problem. Stop and ask. |
 | **An unresolved P1/P2 "Won't fix" carried forward from any round blocks convergence.** | Every Won't-fix on a P1/P2 must be (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. **Filing a beads ticket does not resolve a P1/P2** — a ticket is a deferral, so it needs one of those same three resolutions. Ticketing resolves P3s only. |
 | **A CI fix is a fix.** | A fix pushed at F5 to get CI green changed the code as surely as a review fix did. The round that contained it is not clean. |
+| **A self-contradiction stops the loop.** | A round that reverses a previous round's fix means the loop is oscillating, not converging. Stop and ask the user; more rounds do not fix it. |
 
-**Checking "every reviewer reported" is a positive check.** Count the reviewers
-you dispatched, count the ones that returned a manifest (including "No issues
-found"), and compare. Zero comments from a reviewer that reported is a clean
-signal; zero comments from a reviewer that never returned is a hole.
+#### What counts as "reported"
 
-**A reviewer that will not report.** Re-run it. If the same reviewer fails a
-second time, stop and ask the user — do not keep re-running, and do not call the
-round clean because the failure is inconvenient. Removing the round cap removed
-the thing that used to break this loop by accident; this is what replaces it.
+"Reported" means a different artifact per reviewer class, and the distinction
+matters — an agent has a manifest to return, a bot does not.
+
+| Reviewer | Reported means | Not reported |
+|---|---|---|
+| **Agent reviewer (C3)** | Returned a posting manifest, including the literal "No issues found" | Task failed, returned nothing, or returned an off-shape answer that names no findings and does not say it found none |
+| **External bot (C1/C2)** | Its trigger/fetch script exited successfully **and** a review exists for the current head commit | Script reported quota exhaustion, an error, or a poll timeout; or the newest review predates the current head commit |
+| **Disabled bot, retired agent** | Outside the denominator entirely — deliberately not dispatched | n/a |
+
+For a bot, "zero comments" is only a clean signal once you have confirmed a
+review actually ran against this commit. Silence from a bot that was never
+triggered, hit quota, or timed out is indistinguishable from silence from a bot
+that had nothing to say, and the script's exit status is the only thing that
+tells them apart.
+
+**Record it, do not hold it in your head.** The end-of-round report carries a
+per-reviewer status line every round, so this is checkable after the fact rather
+than an unverifiable claim.
+
+**A reviewer that will not report.** Re-run it. If the same reviewer fails
+**twice in the same loop** — the count is per reviewer, across the whole loop,
+and resets only on a successful report — stop and ask the user. A per-round
+counter would reset every round and never reach two.
 
 **Agent's judgement — explicitly discretionary:**
 
@@ -332,12 +328,10 @@ the thing that used to break this loop by accident; this is what replaces it.
   against the roster instead of shrugging it off round after round.
 
   **This discretion does not reach P1/P2.** Disagreeing with a P1/P2 finding is a
-  Won't-fix on a P1/P2, which the fixed rule above already blocks on. So this
-  bullet covers a round of P3s you disagree with; a round where you disagree with
-  a correctness or security finding needs reclassification, a fix, or the user's
-  sign-off, exactly as the table says. Without that bound the discretionary rule
-  would swallow the fixed one and a loop could converge by overruling its
-  reviewers on precisely the findings that matter most.
+  Won't-fix on a P1/P2, which the fixed rule above already blocks on — so this
+  bullet covers a round of P3s you disagree with. Unbounded, it would swallow the
+  fixed rule and let a loop converge by overruling its reviewers on precisely the
+  findings that matter most.
 
 ### Merge Authority
 
@@ -1316,31 +1310,44 @@ Agent reviewers run as C3 — the last step of the COLLECT phase, after C1 (Gemi
    ```
    Round N: posted X findings across Y agents (A withdrawn by validator);
    replied to Z threads (F fixed / W won't-fix / O out-of-scope); Gemini: G comments.
+   Reported: <reviewer>=ok|failed(<reason>) for every dispatched reviewer. D dispatched / R reported.
    ```
    This makes posting-protocol drift visible immediately — a round that
    fixed findings but posted/replied to zero threads is self-evidently
-   broken and must be corrected before the next round.
+   broken and must be corrected before the next round. The per-reviewer
+   status line is what makes "every configured reviewer must have reported"
+   checkable rather than an unverifiable claim: `D` and `R` must match
+   before the round can be called clean.
 
 ### Diminishing Returns for Agent Reviewers
 
 **This is reviewer retirement, not loop termination.** It decides whether to keep
 *calling* an individual agent; the convergence rule decides when the loop is
-done. Retiring an agent never converges a round, and a retired agent still counts
-as "reported" — it was deliberately not dispatched, which is the opposite of a
-reviewer that silently failed.
+done. Retiring an agent never converges a round.
+
+**Only rounds where the agent actually reported count toward retirement.** A
+round where it failed to report is evidence of a broken reviewer, not of a
+reviewer with nothing left to say — route that to "A reviewer that will not
+report" under Convergence. Without this, three silent spawn failures retire an
+agent, and retirement then certifies it as "reported", which launders the exact
+failure the convergence rule exists to catch.
+
+A retired agent is outside the "every reviewer reported" denominator because it
+was deliberately not dispatched — which is only true when it was retired for
+having nothing to say.
 
 Per agent:
 
-- Track each agent's state: productive / candidate-for-retirement / retired
-- After 2-3 rounds where an agent produces only nitpicks or "Won't fix" responses, mark it a retirement candidate and give it one more round
+- Track each agent's state: productive / retirement-candidate / retired
+- After 2-3 **reported** rounds where an agent produces only nitpicks or "Won't fix" responses, mark it a retirement-candidate and give it one more round
 - If that round produces a real fix, reset it to productive
 - If that round produces nothing actionable, **stop calling that agent**
-- Never retire the last remaining reviewer — see "At least one reviewer must have run" under Convergence
+- **Unless it is the last reviewer standing.** Do not retire it and do not keep calling it in a loop — stop and ask the user, the same resolution as "At least one reviewer must have run" under Convergence. A roster of one exhausted reviewer is a configuration problem, not a converged loop.
 
 Example tracking:
 ```
 - "security-reviewer: 2 rounds, still productive" (keep calling)
-- "dry-reviewer: retirement candidate" (one more round, then retire if nothing actionable)
+- "dry-reviewer: retirement-candidate" (one more round, then retire if nothing actionable)
 - "error-handling-reviewer: retired" (no longer called)
 ```
 
