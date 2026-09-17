@@ -159,13 +159,27 @@ If F6 returned new comments, start the next COLLECT PHASE. Otherwise: count `D` 
 
 ### End-of-round report (every round)
 
-Emit a short status block so posting-protocol drift is visible immediately:
+**Post it to the PR — do not just print it.** Everywhere else in this skill
+"emit" means write to the conversation, and a block that only reaches the
+conversation cannot be read back after a restart, which is the one thing the
+strike counter and the carry-forward rule both depend on:
 
-```
+```bash
+gh pr comment <PR> --body "$(cat <<'EOF'
 Round N: posted X findings across Y agents (A withdrawn by validator);
 replied to Z threads (F fixed / W won't-fix / O out-of-scope); Gemini: G comments.
 Reported: <reviewer>=ok|failed(<reason>) for every dispatched reviewer. D dispatched / R reported.
 Disabled: <bots and agents deliberately not dispatched, or "none">.
+Carried-forward P1/P2 Won't-fix: <comment ids, or "none">.
+EOF
+)"
 ```
 
 A round that fixed findings but shows zero posted/replied threads is broken — correct it before the next round (post the missing threads per F3's recovery rule) and note the violation in the merge-readiness summary.
+
+`D` and `R` must match before the round can be called clean. The
+`Carried-forward` line is what makes the "unresolved P1/P2 Won't-fix blocks
+convergence" rule checkable: a declined P1 stops appearing in F4's gate the
+moment you reply to it, so if it is not enumerated here it is indistinguishable
+from a fixed one next round. **An absent line is not an empty one** — if a round
+posted no comment, the counts for that round are unknown, not zero.

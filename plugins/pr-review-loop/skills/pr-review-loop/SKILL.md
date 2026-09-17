@@ -1287,7 +1287,7 @@ Agent reviewers run as C3 — the last step of the COLLECT phase, after C1 (Gemi
 
 4. **In F4–F6**, commit + push the batched fixes once, wait for CI, and trigger the next review.
 
-5. **Emit the end-of-round report** — a short block after F6, every round:
+5. **Post the end-of-round report to the PR** via `gh pr comment` — not just to the conversation — after F6, every round. It is the only durable record of the strike counts and carried-forward Won't-fix ids; see [`references/round-workflow.md`](references/round-workflow.md) for the exact block:
    ```
    Round N: posted X findings across Y agents (A withdrawn by validator);
    replied to Z threads (F fixed / W won't-fix / O out-of-scope); Gemini: G comments.

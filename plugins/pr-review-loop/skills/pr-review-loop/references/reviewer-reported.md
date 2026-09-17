@@ -10,7 +10,7 @@ manifest to return, a bot does not.
 | Reviewer | Reported means | Not reported |
 |---|---|---|
 | **Agent reviewer (C3)** | Returned a posting manifest, including the literal "No issues found" | Task failed, returned nothing, or returned an off-shape answer that names no findings and does not say it found none |
-| **External bot (C1/C2)** | A review by that bot exists whose commit matches the current head SHA | No such review. A check that *failed* is a third case — see below; it is not a strike against the reviewer. |
+| **External bot (C1/C2)** | A review by that bot exists whose commit matches the current head SHA | No such review. A check that *failed* is a third case — see below. |
 | **Disabled bot, disabled agent, retired agent** | Outside the denominator — deliberately not dispatched | n/a |
 
 A zero result is "not reported" — route it to "A reviewer that will not report"
@@ -47,8 +47,8 @@ produced no usable report — whether it did not report or the check for it fail
 Two strikes stops the loop and asks the user. Do not keep them separate: an
 alternating not-reported / check-failed pattern would trip neither. Do not keep
 them in your head either — a loop has no round cap and your context does not
-survive it. Record each round's `Reported:` line in a PR comment as you go, so
-the count is re-derivable from the PR by anyone, including you after a restart.
+survive it. F4 posts each round's line to the PR, so the count is re-derivable
+from the PR by anyone, including you after a restart.
 
 ## A bot whose login you cannot establish
 
