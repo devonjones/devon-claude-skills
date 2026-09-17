@@ -1233,6 +1233,16 @@ finding you can point at, and `mixed` should be backed by naming which recent
 findings were mutations and which were evidence-queries — otherwise it is
 undeclared wearing a better word.
 
+**Check the reassuring reading hardest.** A result that says everything is fine
+ends the investigation; a result that says something is broken starts one. So the
+clean answer is the one that has to be earned, and every false clean in this
+skill's own history ran that direction: a reply script reporting 21 posted when 17
+had failed, a gate reporting 0 unanswered when 18 were, an unpaginated query
+reporting 1 unresolved against a true 93, a bot check that would have read a poll
+timeout as "reported". None of them errs toward alarm. When a reviewer reports
+clean, when a check returns empty, when a script exits 0 — that is the moment to
+ask what it would have looked like if it had failed, not the moment to move on.
+
 **A demonstration that could not have failed is not a demonstration.** Before you
 report, ask what result would have refuted you, and check your experiment could
 have produced it. A reviewer published "verified: a failing EXIT trap does not
