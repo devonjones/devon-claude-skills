@@ -145,9 +145,5 @@ replied to Z threads (F fixed / W won't-fix / O out-of-scope); Gemini: G comment
 Reported: <reviewer>=ok|failed(<reason>) for every dispatched reviewer. D dispatched / R reported.
 ```
 
-The `Reported:` line is what makes "every configured reviewer must have reported"
-checkable rather than an unverifiable claim — `D` and `R` must match before the
-round can be called clean. See "What counts as reported" in `SKILL.md`; a bot's
-status comes from a head-SHA match, never from a script's exit status.
 
 A round that fixed findings but shows zero posted/replied threads is broken — correct it before the next round (post the missing threads per F3's recovery rule) and note the violation in the merge-readiness summary.

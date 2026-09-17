@@ -277,7 +277,7 @@ that distinction — they are not a flat list of equal-force bullets.
 | Rule | Why |
 |---|---|
 | **A P1 or P2 fix means the round was NOT clean.** | The next round reviews *different code*. A review that passed did not pass on what would actually ship. Push the fix, run another round. (A P3-only fix is the agent's call — see below.) |
-| **Every configured reviewer must have reported.** | A reviewer that errored, rate-limited, or timed out makes the round INCOMPLETE, not clean — a reviewer that never reported looks identical to a reviewer with nothing to say. See "What counts as reported" below; never infer it from an empty comment list or a zero exit status. |
+| **Every configured reviewer must have reported.** | A reviewer that never reported looks identical to a reviewer with nothing to say. See "What counts as reported" below; never infer it from an empty comment list or a zero exit status. Consequence is the next row. |
 | **At least one reviewer must have run.** | An empty roster — every bot disabled, every default disabled, every agent retired — produces a vacuously clean round. Zero reviewers is not convergence; it is a configuration problem. Stop and ask. |
 | **An unresolved P1/P2 "Won't fix" carried forward from any round blocks convergence.** | Every Won't-fix on a P1/P2 must be (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. **Filing a beads ticket does not resolve a P1/P2** — a ticket is a deferral, so it needs one of those same three resolutions. Ticketing resolves P3s only. |
 | **A CI fix is a fix.** | A fix pushed at F5 to get CI green changed the code as surely as a review fix did. The round that contained it is not clean. |
@@ -319,36 +319,44 @@ does not.
 | **External bot (C1/C2)** | A review by that bot exists whose commit matches the current head SHA | No such review, or you could not establish one either way |
 | **Disabled bot, disabled agent, retired agent** | Outside the denominator — deliberately not dispatched | n/a |
 
-**Do not use the wrapper script's exit status to decide this.** As shipped,
-`trigger-review.sh` and `get-review-comments.sh` exit 0 when a `--wait` poll
-times out with nothing, and `get-review-comments.sh` without `--wait` exits 0
-after only printing a quota warning. `trigger-review.sh` also returns 0 as soon
-as any unresolved thread exists — including the agent reviewers' own C3 threads
-from this same round, and the carried-forward P1/P2 threads the rules above
-*require* to stay open — so it can succeed without ever waiting for the bot.
-Exit 0 means "nothing went visibly wrong", not "the bot reviewed this commit".
+**Do not use a wrapper script's exit status to decide this**, and do not use
+`--latest`. Exit 0 means "nothing went visibly wrong", not "the bot reviewed this
+commit", and `--latest` compares SHAs with `>=` — a lexicographic compare on hex
+that is wrong in both directions. Both are tracked in `devon-claude-skills-4gw`;
+until it lands, run the check below yourself.
 
-Establish the head-commit match yourself:
+Query the **reviews** endpoint, once per configured bot, with its exact login:
 
 ```bash
 SHA=$(gh pr view <PR> --json headRefOid --jq .headRefOid)
-gh api "/repos/<owner>/<repo>/pulls/<PR>/comments?per_page=100" \
-  --jq '[.[] | select(.user.login | test("gemini|cursor"; "i")) | .commit_id] | unique'
-# the bot reported this round only if $SHA appears in that list
+gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/reviews" \
+  | jq -s --arg sha "$SHA" --arg bot "gemini-code-assist[bot]" \
+      'add | [.[] | select(.user.login == $bot and .commit_id == $sha)] | length'
 ```
 
-An empty list means the bot has never commented on this PR at all — which is
-what a bot that is enabled by default but not actually installed on the repo
-looks like. That is "could not establish", not "nothing to say".
+Non-zero means that bot reported on this commit. This is the same query
+`gemini_has_reviewed()` in `trigger-review.sh` already makes internally — copy it
+rather than inventing a variant, and note the three things it gets right that a
+casual version gets wrong:
 
-If that comes back false, or you cannot run it, the bot has **not** reported and
-the round is incomplete — route it to "A reviewer that will not report" above.
-`--latest` is not a substitute: it compares commit SHAs with `>=`, which is a
-lexicographic string compare on hex and is wrong in both directions.
+- **`/reviews`, not `/comments`.** A bot that reviewed and found nothing leaves a
+  review with no inline comments. Checking `/comments` scores a clean pass as
+  "never ran" — and the converging round is *by definition* the round the bot has
+  nothing to say in, so that misread deadlocks exactly the loop it was meant to
+  certify.
+- **`--paginate`.** The default page is the oldest 100, so on a long loop the
+  current round's activity is the first thing dropped. (`--paginate` emits one
+  array per page, which is why the `jq -s | add` slurp is there.)
+- **One exact login per bot.** Fusing the bots into one alternation lets one
+  bot's review certify the other, and the per-reviewer `Reported:` line cannot be
+  produced from the result.
 
-**Record it, do not hold it in your head.** The end-of-round report carries a
-per-reviewer status line, so this is checkable after the fact rather than an
-unverifiable claim. Compute it at F7, before applying the convergence rule.
+A zero result is "not reported" — route it to "A reviewer that will not report"
+above. That is also what an enabled-by-default bot that was never installed on
+the repo looks like.
+
+**Record it, do not hold it in your head.** Compute it at F7, before applying the
+convergence rule, and put it in the end-of-round report's per-reviewer line.
 
 ### Merge Authority
 

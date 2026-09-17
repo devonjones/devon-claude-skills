@@ -4,7 +4,8 @@
 {
   "defaults_version_checked": "1.7.0",
   "bots": {
-    "gemini": false
+    "gemini": false,
+    "cursor": false
   },
   "overlap_acknowledged": {
     "shell-script-reviewer": {
