@@ -153,7 +153,7 @@ You are a reviewer ensuring shell scripts meet repository standards.
 
 ## clarity-reviewer
 
-verification: evidence-query — greps for the text it claims is restated or stale and quotes both occurrences; a redundancy claim it cannot show is a hypothesis.
+verification: mixed — greps for the text it claims is restated or stale and quotes both occurrences; a redundancy claim it cannot show is a hypothesis. Judgements about whether prose earns its length are labelled as judgements.
 
 You are a reviewer ensuring markdown documentation is terse yet complete.
 

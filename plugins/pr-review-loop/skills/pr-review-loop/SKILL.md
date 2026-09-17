@@ -1167,64 +1167,64 @@ Authentication uses JWT tokens stored in httpOnly cookies.
 4. Track each agent's scope (directory where it was defined)
 5. Filter changed files per agent to only those within the agent's scope
 
-### Verification: every finding owes a demonstration
+### Verification: every finding carries its proof
 
-**Prove the finding; do not reason your way to it.** Reading the artifact and
-working out what it would do is a hypothesis. Say which one you have.
+**The obligation is on the finding, not the reviewer.** A reviewer executes when
+there is something to run and judges when there is not, and it does that per
+finding — so the finding is where the proof lives. Three kinds:
 
-There are two ways to prove one, and both are execution:
+| Kind | Proof | When |
+|---|---|---|
+| **mutation** | Change the code, watch the check fail, report what you saw. | There is something to run. |
+| **evidence-query** | Run the query that would produce the evidence a claim depends on; report the n. | The artifact is prose, a prompt, a directive, a policy. A claim that a dataset supports a week-long comparison dies when counting the rows returns one. |
+| **judgement** | None — say so, in the finding, in those words. | "This abstraction is wrong." "These two arguments are swappable." Nothing to mutate, nothing to count. |
 
-- **Code mutation** — change the code, watch the check fail, report what you saw.
-  The natural proof when there is something to run.
-- **Evidence query** — run the query that would produce the evidence a claim
-  depends on, and report the number it returns. The natural proof when the
-  artifact is prose, a prompt, a directive or a policy: a claim that a dataset
-  supports a comparison is disproved by counting the rows and finding one.
+**Judgement is legitimate and must be labelled as judgement.** Some of the most
+valuable findings are judgements, and a rule that pushed reviewers away from them
+would buy verifiability with relevance. What the rule forbids is a judgement
+*dressed as a behavioural claim* — "this exits 0 on failure" is checkable and must
+be checked; "this design is confusing" is not and must say so.
 
-The split that matters is *which proof you owe*, not *whether you owe one*.
 "It reviews prose, so it cannot execute" is the reasoning a reviewer uses to
-excuse itself from work it could do — a prose reviewer that asserts a sentence
+excuse itself from work it could do: a prose reviewer asserting one sentence
 restates another can grep for both and show them.
 
-Declare it as the first line of the agent's body in `AGENT-REVIEWERS.md`:
-
-```markdown
-## methodology-reviewer
-
-verification: evidence-query — for any directive, runs the query that would
-produce its evidence and reports the n.
-```
-
-`verification: mutation` | `verification: evidence-query` | `verification: none — <reason>`.
-
-**A reviewer that owes no demonstration at all is the rare case and must say so
-out loud**, with its reason. That claim should look conspicuous, because it
-almost always means the reviewer has not looked for the proof it could give. A
-reviewer with no line is **undeclared** — a finding about the roster, not the
-code. Surface all of it in the round's `Reported:` line:
+Declare the reviewer's usual mode as the first line of its body in
+`AGENT-REVIEWERS.md` — `verification: mutation` | `evidence-query` | `mixed` —
+and treat a missing line as **undeclared**, a finding about the roster rather
+than the code. The declaration describes what the reviewer typically owes; it
+never licenses a finding to skip its proof. Surface it per round:
 
 ```
-Reported: silent-failure-hunter=ok(mutation) methodology-reviewer=ok(evidence-query) foo=ok(undeclared)
+Reported: silent-failure-hunter=ok(mutation) clarity-reviewer=ok(evidence-query) foo=ok(undeclared)
 ```
 
-**A fixture that cannot fail is not a test.** Every fixture must be verified to
-fail against the defect it pins — a suite that passed 9/9 with two HIGH bugs live
-had two cases that could not fail at all. A fixture passing for the wrong reason
-is the same disease as a check that reads an empty result as success.
+**A fixture that cannot fail is not a test.** Verify every fixture fails against
+the defect it pins — a suite that passed 9/9 with two HIGH bugs live had two cases
+that could not fail at all.
 
-The evidence for all of this is one-sided. A reviewer claimed a repo's CI gate was
+**A fix is new code and gets no pass.** This is the rule's strongest evidence and
+it comes from this file's own history: commits 8 through 16 of the PR that wrote
+this section are nine consecutive fixes, each correcting a defect in the one
+immediately before it — a gate that could not see bot threads, its replacement
+that reported 0 of 18, its replacement that went blind to reopens. The section you
+are reading was itself superseded ten minutes after it was written, because its
+first author declared a reviewer exempt using the exact excuse it warns about.
+Review the fix as suspiciously as the thing it replaced, and review your own most
+suspiciously of all.
+
+The rest of the evidence runs one way. A reviewer claimed a repo's CI gate was
 `ruff format` when it is `black`, without running it; of nine findings it was the
-only one declined, and complying would have broken the build. In this skill's own
-convergence-rule PR, two findings were *verified by reading* in one round and
-proved wrong by running in the next — `set -e` not aborting where the doc claimed,
-and a `$SHA` that was never assigned. And a reply script reported 21 replies
-posted when 17 had silently failed, while the gate that should have caught it
-reported clean because gate and subject shared a defect: no reading of either
-finds that, and running one against the other does.
+only one declined, and complying would have broken the build. Two findings in this
+PR were *verified by reading* in one round and proved wrong by running in the next
+— `set -e` not aborting where the doc claimed, and a `$SHA` that was never
+assigned. And a reply script reported 21 replies posted when 17 had silently
+failed, while the gate that should have caught it reported clean, because gate and
+subject shared a defect: no reading of either finds that.
 
-Audit the roster when adopting this: read each agent, decide which proof it owes,
-write the line. Aligning `AGENT-REVIEWERS.md` to this rule may go straight to main
-— it is roster configuration, and the carve-out is scoped to that alignment.
+Audit the roster when adopting this. Aligning `AGENT-REVIEWERS.md` to this rule
+may go straight to main — it is roster configuration, and the carve-out is scoped
+to that alignment.
 
 ### When to Run Agent Reviewers
 
