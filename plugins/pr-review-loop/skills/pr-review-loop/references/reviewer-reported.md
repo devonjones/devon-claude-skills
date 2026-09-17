@@ -33,18 +33,19 @@ COUNT=$(gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/reviews" \
       'add | [.[] | select((.user.login == "gemini-code-assist[bot]"
                             or .user.login == "gemini-code-assist")
                            and .commit_id == $sha)] | length') \
-  || { echo "check failed: could not query reviews" >&2; exit 2; }   # keep: `set -e` does NOT
-       # abort a failed assignment in an agent tool call, so this explicit guard is the only one.
+  || { echo "check failed: could not query reviews" >&2; exit 2; }   # keep: `||` exempts this
+       # from errexit, so the guard is the only thing that catches it. `set -e` would not.
 echo "$COUNT"
 ```
 
 Non-zero means that bot reported on this commit.
 
 **A failed check is not a zero.** Exit 2 means the check broke. Re-run **the
-check** — not the reviewer — and do not spend a reviewer strike on it: the
-two-strike rule in `SKILL.md` counts rounds where a reviewer did not report, not
-rounds where your tooling fell over. `pipefail` stays set for the rest of the
-call you paste this into; re-set it if later commands rely on the default.
+check** — not the reviewer — and do not spend a reviewer strike on it. Record it
+as `failed(check)` in the round's `Reported:` line: the exemption is only
+legitimate when the documented command actually exited 2, and two check failures
+running on the same reviewer is itself a stop-and-ask, so "the check failed"
+cannot be used indefinitely in place of "the reviewer is dead".
 
 ## A bot whose login you cannot establish
 
@@ -53,7 +54,5 @@ out.** This is a first-contact stop, ahead of the two-strike rule, because a
 guessed login returns `0` forever and the strikes would expire against a bot that
 may be working fine.
 
-This skill knows Gemini's two literals and no others. Cursor's login appears
-nowhere in it; the one place Cursor is identified (`get-pr-comments.sh`) matches a
-substring over *issue* comments, which carry no `commit_id`. Record the answer
-here when you get it.
+This skill knows Gemini's two literals and no others — Cursor's login is not
+recorded anywhere in it. Record the answer here when you get it.

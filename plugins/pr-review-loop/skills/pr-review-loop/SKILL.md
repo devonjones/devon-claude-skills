@@ -283,7 +283,7 @@ that distinction — they are not a flat list of equal-force bullets.
 | **An unresolved P1/P2 "Won't fix" carried forward from any round blocks convergence.** | Every Won't-fix on a P1/P2 must be (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. **Filing a beads ticket does not resolve a P1/P2** — a ticket is a deferral, so it needs one of those same three resolutions. Ticketing resolves P3s only. |
 | **A CI fix is a fix.** | A fix pushed at F5 to get CI green changed the code as surely as a review fix did. The round that contained it is not clean. |
 | **A self-contradiction stops the loop.** | A round that reverses a previous round's fix means the loop is oscillating, not converging. Stop and ask the user; more rounds do not fix it. |
-| **A reviewer that will not report stops the loop.** | Re-run it. If the same reviewer fails **twice in the same loop** — counted per reviewer across the whole loop, resetting only on a successful report — stop and ask the user. A per-round counter would reset every round and never reach two. A round where your *check* failed (exit 2) is not a strike; re-run the check. |
+| **A reviewer that will not report stops the loop.** | Re-run it. If the same reviewer fails **twice in the same loop** — counted per reviewer across the whole loop, resetting only on a successful report — stop and ask the user. A per-round counter would reset every round and never reach two. A failed *check* is not a strike — see [`references/reviewer-reported.md`](references/reviewer-reported.md). |
 
 **Agent's judgement — explicitly discretionary:**
 

@@ -103,26 +103,25 @@ gh pr comment <PR> --body "## Response to Claude Review
 
 **Gate**: every finding in this round's fix set corresponds to a posted PR thread (Gemini, bot, or agent) with a reply **that actually landed**. If any fix has no thread, go back to F3 — a commit message is not an audit trail.
 
-Verify each thread rather than trusting the sends, and do it per thread — a count tells you how many replies are missing, never which. This must cover **every** thread you dispositioned, Gemini's and other bots' as well as your agents'. `get-agent-comments.sh` cannot do it: it filters on the `<!-- Agent: <name> -->` marker, which is only ever written by this skill's own posting scripts, so a Gemini thread is unreachable by any value of `<agent>`. Ask GitHub which roots have no reply:
+Verify each thread rather than trusting the sends, and do it per thread — a count tells you how many replies are missing, never which. Every finding and every reopen this skill posts is signed `🤖 **Claude Code** (<agent>):`; your replies are not. So a thread is outstanding exactly when its **last** comment carries that signature:
 
 ```bash
+set -o pipefail
 gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/comments" \
-  | jq -s 'add as $a
-      | ($a | map(select(.in_reply_to_id != null) | .in_reply_to_id) | unique) as $answered
-      | $a[] | select(.in_reply_to_id == null)
-      | select(.id as $i | $answered | index($i) | not)
-      | "\(.id) \(.path):\(.line)"' \
+  | jq -rs 'add | group_by(.in_reply_to_id // .id) | map(sort_by(.id) | last)
+      | .[] | select(.body | startswith("🤖 **Claude Code** ("))
+      | "\(.in_reply_to_id // .id) \(.path):\(.line // .original_line)"' \
   || { echo "reply check failed - rerun it" >&2; exit 2; }
 ```
 
-Every line it prints is a thread carrying a finding you never answered. Repost to
-those ids specifically, then run it again — empty output only means "all
-answered" when the command also exited 0.
+Every id it prints needs a reply from you. Repost to those specifically, then run
+it again.
 
-Do not match on your own login: agent findings are posted under the same token
-you reply with, so "a comment by me exists on this thread" is true of every agent
-thread before you reply to any of them. Reply-vs-root is the distinction that
-works, and `--paginate` matters — this PR passed 100 threads mid-loop.
+Last-comment, not has-any-reply: a reviewer that reopens a thread leaves it
+outstanding again, and a root-only test goes permanently blind to that thread
+after your first reply. `pipefail` is what makes the guard reachable — without
+it a `gh` failure part-way through pagination exits 0 and the gate reports clean
+from truncated data.
 
 **Delete this once `devon-claude-skills-cq0` lands** — the fix is `reply-to-comment.sh` adopting the `|| { ...; exit 1; }` that `post-line-comment.sh:49-53` already has, after which the exit status is trustworthy.
 
