@@ -1233,6 +1233,26 @@ finding you can point at, and `mixed` should be backed by naming which recent
 findings were mutations and which were evidence-queries — otherwise it is
 undeclared wearing a better word.
 
+**A demonstration that could not have failed is not a demonstration.** Before you
+report, ask what result would have refuted you, and check your experiment could
+have produced it. A reviewer published "verified: a failing EXIT trap does not
+mask exit status" and was wrong — under `set -e`, exit 3 becomes 1 and exit 0
+also becomes 1. Six reviewers refuted it. The run had happened; it just could not
+have come out any other way, because both variants ended in `false` and expected
+status 1 either way. They differed on the wrong axis. Running something is not
+the same as testing it: vary the one thing your claim is about, and confirm the
+other branch gives the other answer.
+
+**Do not reason about where the defaults live — run the loader.**
+`_load_defaults.sh` resolves its agents directory relative to its own location,
+and `~/.claude/skills/<plugin>` is usually a symlink into a checkout, so the path
+a reviewer infers and the path the loader reads can diverge. A reviewer once filed
+two P0/P1 findings against a different marketplace plugin's agents directory
+entirely. The loader prints what it actually loaded; ask it. The same goes for the
+roster: read `# Configuration` rather than prose describing it — a charter once
+recorded three defaults as "not adopted" while `disabled` was absent and all three
+were spawning, and the finding was written by the reviewer the prose said was off.
+
 **A fixture that cannot fail is not a test.** Verify every fixture fails against
 the defect it pins — a suite that passed 9/9 with two HIGH bugs live had two cases
 that could not fail at all.
