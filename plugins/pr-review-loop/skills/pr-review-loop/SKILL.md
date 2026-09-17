@@ -1287,19 +1287,14 @@ Agent reviewers run as C3 — the last step of the COLLECT phase, after C1 (Gemi
 
 4. **In F4–F6**, commit + push the batched fixes once, wait for CI, and trigger the next review.
 
-5. **Post the end-of-round report to the PR** via `gh pr comment` — not just to the conversation — after F6, every round. It is the only durable record of the strike counts and carried-forward Won't-fix ids; see [`references/round-workflow.md`](references/round-workflow.md) for the exact block:
-   ```
-   Round N: posted X findings across Y agents (A withdrawn by validator);
-   replied to Z threads (F fixed / W won't-fix / O out-of-scope); Gemini: G comments.
-   Reported: <reviewer>=ok|failed(<reason>) for every dispatched reviewer. D dispatched / R reported.
-   Disabled: <bots and agents deliberately not dispatched, or "none">.
-   ```
-   This makes posting-protocol drift visible immediately — a round that
-   fixed findings but posted/replied to zero threads is self-evidently
-   broken and must be corrected before the next round. The per-reviewer
-   status line is what makes "every configured reviewer must have reported"
-   checkable rather than an unverifiable claim: `D` and `R` must match
-   before the round can be called clean.
+5. **Post the end-of-round report to the PR**, after F7, every round. It is the
+   loop's only durable state: strike counts, roster changes and carried-forward
+   Won't-fix ids live there and nowhere else, so a restart can read them back.
+   The block, the marker it carries and the query that retrieves it are in
+   [`references/round-workflow.md`](references/round-workflow.md). **Do not keep
+   a second copy of the block here** — the two diverged within one round of the
+   first being written, which is how the `Carried-forward` line went missing
+   from one of them.
 
 ### Diminishing Returns for Agent Reviewers
 

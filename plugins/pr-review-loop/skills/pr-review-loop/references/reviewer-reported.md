@@ -26,8 +26,11 @@ configured bot:
 
 ```bash
 ( set -o pipefail
-SHA=$(gh pr view <PR> --json headRefOid --jq .headRefOid)
-[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "check failed: no head SHA" >&2; exit 2; }
+# $SHA must be the commit the reviewers reviewed - capture it at C1 and reuse it.
+# Do not re-resolve "current head" here: by report time F4 has pushed this
+# round's fixes, so current head is a different commit and every bot reads as
+# not-reported.
+[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "check failed: no reviewed SHA" >&2; exit 2; }
 COUNT=$(gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/reviews" \
   | jq -s --arg sha "$SHA" \
       'add | [.[] | select((.user.login == "gemini-code-assist[bot]"
@@ -47,8 +50,8 @@ produced no usable report — whether it did not report or the check for it fail
 Two strikes stops the loop and asks the user. Do not keep them separate: an
 alternating not-reported / check-failed pattern would trip neither. Do not keep
 them in your head either — a loop has no round cap and your context does not
-survive it. F4 posts each round's line to the PR, so the count is re-derivable
-from the PR by anyone, including you after a restart.
+survive it. The end-of-round report carries it to the PR after F7, so the count
+is re-derivable from the PR by anyone, including you after a restart.
 
 ## A bot whose login you cannot establish
 

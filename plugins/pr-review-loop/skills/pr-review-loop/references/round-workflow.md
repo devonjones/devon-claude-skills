@@ -10,6 +10,15 @@ This file is the operational companion to the round-structure diagram in `SKILL.
 
 ### C1. Check for unresolved Gemini line comments
 
+**First, pin the commit this round reviews.** Everything downstream that asks
+"did this reviewer report on this code" needs the SHA the reviewers saw, not
+whatever HEAD becomes after F4 pushes the round's fixes:
+
+```bash
+REVIEWED_SHA=$(gh pr view <PR> --json headRefOid --jq .headRefOid)
+```
+
+
 ALWAYS use `--wait` for first check after PR creation or push:
 
 ```bash
@@ -157,29 +166,48 @@ The `--wait` flag polls every 30s for up to 5 minutes waiting for new comments. 
 
 If F6 returned new comments, start the next COLLECT PHASE. Otherwise: count `D` reviewers dispatched against `R` that reported — see [`reviewer-reported.md`](reviewer-reported.md), which is where the per-class definition and the bot check live — then apply the convergence rule. `D` and `R` must match. One clean round converges; there is no round cap.
 
-### End-of-round report (every round)
+### End-of-round report — post it, after F7
 
-**Post it to the PR — do not just print it.** Everywhere else in this skill
-"emit" means write to the conversation, and a block that only reaches the
-conversation cannot be read back after a restart, which is the one thing the
-strike counter and the carry-forward rule both depend on:
+This is the loop's only durable state. It must survive a restart, so it goes to
+the PR, not the conversation, and it carries a marker you can grep for:
 
 ```bash
 gh pr comment <PR> --body "$(cat <<'EOF'
+<!-- pr-review-loop:round-report -->
 Round N: posted X findings across Y agents (A withdrawn by validator);
-replied to Z threads (F fixed / W won't-fix / O out-of-scope); Gemini: G comments.
+replied to Z threads (F fixed / W won't-fix / O out-of-scope).
 Reported: <reviewer>=ok|failed(<reason>) for every dispatched reviewer. D dispatched / R reported.
-Disabled: <bots and agents deliberately not dispatched, or "none">.
+Bots: <bot>=<n> comments|failed(<reason>)|disabled, per configured bot.
+Roster: disabled=<...|none> retired=<...|none> retirement-candidate=<...|none>.
 Carried-forward P1/P2 Won't-fix: <comment ids, or "none">.
 EOF
-)"
+)" || { echo "round report did not post - retry before starting the next round" >&2; exit 2; }
 ```
 
-A round that fixed findings but shows zero posted/replied threads is broken — correct it before the next round (post the missing threads per F3's recovery rule) and note the violation in the merge-readiness summary.
+Read the history back with:
 
-`D` and `R` must match before the round can be called clean. The
-`Carried-forward` line is what makes the "unresolved P1/P2 Won't-fix blocks
-convergence" rule checkable: a declined P1 stops appearing in F4's gate the
-moment you reply to it, so if it is not enumerated here it is indistinguishable
-from a fixed one next round. **An absent line is not an empty one** — if a round
-posted no comment, the counts for that round are unknown, not zero.
+```bash
+gh api --paginate "/repos/{owner}/{repo}/issues/<PR>/comments" \
+  --jq '.[] | select(.body | startswith("<!-- pr-review-loop:round-report -->")) | .body'
+```
+
+`get-pr-comments.sh` will **not** find these — it filters to bot authors and you
+are the operator. Use the query above.
+
+Why each field is there, since every one of them was a defect first:
+
+- **`Reported:` / `D` / `R`** — the check F7 applies; this is where it is written down.
+- **`Bots:`** — a count alone makes a bot whose check exited 2 identical to a bot
+  that was silent, which is the conflation `reviewer-reported.md` forbids.
+- **`Roster:`** — disabled and retired reviewers are the only legitimate way `D`
+  shrinks, and `retirement-candidate` is the 2-3 round count that decides it.
+- **`Carried-forward`** — take the previous round's list, drop any id you resolved
+  this round, add any P1/P2 you replied "Won't fix" to this round. It cannot be
+  recomputed from the PR: F4's gate drops a thread the moment you reply to it, so
+  a declined P1 is indistinguishable from a fixed one the next round. This line
+  is the only thing carrying it.
+
+**A missing round report means unknown, not zero** — and unknown is not a state
+you may converge from. If a round's report is absent, you cannot claim the strike
+counts or the carry-forward list; reconstruct what you can from the PR, say so,
+and ask the user rather than treating the gap as a clean slate.
