@@ -25,7 +25,7 @@ tracked in `devon-claude-skills-4gw`; until it lands, run this yourself, once pe
 configured bot:
 
 ```bash
-set -o pipefail
+( set -o pipefail
 SHA=$(gh pr view <PR> --json headRefOid --jq .headRefOid)
 [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "check failed: no head SHA" >&2; exit 2; }
 COUNT=$(gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/reviews" \
@@ -33,19 +33,22 @@ COUNT=$(gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/reviews" \
       'add | [.[] | select((.user.login == "gemini-code-assist[bot]"
                             or .user.login == "gemini-code-assist")
                            and .commit_id == $sha)] | length') \
-  || { echo "check failed: could not query reviews" >&2; exit 2; }   # keep: `||` exempts this
-       # from errexit, so the guard is the only thing that catches it. `set -e` would not.
-echo "$COUNT"
+  || { echo "check failed: could not query reviews" >&2; exit 2; }   # the only thing that catches this
+echo "$COUNT" )
 ```
 
 Non-zero means that bot reported on this commit.
 
-**A failed check is not a zero.** Exit 2 means the check broke. Re-run **the
-check** — not the reviewer — and do not spend a reviewer strike on it. Record it
-as `failed(check)` in the round's `Reported:` line: the exemption is only
-legitimate when the documented command actually exited 2, and two check failures
-running on the same reviewer is itself a stop-and-ask, so "the check failed"
-cannot be used indefinitely in place of "the reviewer is dead".
+**A failed check is not a zero.** Exit 2 means the check broke, not that the
+reviewer is silent. Re-run **the check**, not the reviewer.
+
+**One counter, written down.** A reviewer accumulates a strike for *any* round it
+produced no usable report — whether it did not report or the check for it failed.
+Two strikes stops the loop and asks the user. Do not keep them separate: an
+alternating not-reported / check-failed pattern would trip neither. Do not keep
+them in your head either — a loop has no round cap and your context does not
+survive it. Record each round's `Reported:` line in a PR comment as you go, so
+the count is re-derivable from the PR by anyone, including you after a restart.
 
 ## A bot whose login you cannot establish
 
@@ -54,5 +57,8 @@ out.** This is a first-contact stop, ahead of the two-strike rule, because a
 guessed login returns `0` forever and the strikes would expire against a bot that
 may be working fine.
 
-This skill knows Gemini's two literals and no others — Cursor's login is not
-recorded anywhere in it. Record the answer here when you get it.
+This skill knows Gemini's two literals and no others. It never records Cursor's
+actual login: the one place Cursor is named (`get-pr-comments.sh`) substring-matches
+`"cursor"` against issue-comment authors, and issue comments carry no `commit_id`,
+so it cannot answer "did this bot review this SHA". Record the real login here
+when you get it.

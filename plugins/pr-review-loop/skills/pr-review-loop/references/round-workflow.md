@@ -103,25 +103,25 @@ gh pr comment <PR> --body "## Response to Claude Review
 
 **Gate**: every finding in this round's fix set corresponds to a posted PR thread (Gemini, bot, or agent) with a reply **that actually landed**. If any fix has no thread, go back to F3 — a commit message is not an audit trail.
 
-Verify each thread rather than trusting the sends, and do it per thread — a count tells you how many replies are missing, never which. Every finding and every reopen this skill posts is signed `🤖 **Claude Code** (<agent>):`; your replies are not. So a thread is outstanding exactly when its **last** comment carries that signature:
+Verify each thread rather than trusting the sends, and do it per thread — a count tells you how many replies are missing, never which. Every finding and every reopen this skill posts is signed `🤖 **Claude Code** (<agent>):`; your replies are not. A thread is outstanding when its **last** comment carries that signature, or when it has no reply at all:
 
 ```bash
-set -o pipefail
-gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/comments" \
-  | jq -rs 'add | group_by(.in_reply_to_id // .id) | map(sort_by(.id) | last)
-      | .[] | select(.body | startswith("🤖 **Claude Code** ("))
-      | "\(.in_reply_to_id // .id) \(.path):\(.line // .original_line)"' \
-  || { echo "reply check failed - rerun it" >&2; exit 2; }
+( set -o pipefail
+  gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/comments" \
+    | jq -rs 'add | group_by(.in_reply_to_id // .id)
+        | map(select( (sort_by(.id) | last | .body | startswith("🤖 **Claude Code** (")) or length == 1 ))
+        | .[] | "\(.[0].in_reply_to_id // .[0].id) \(.[0].path):\(.[0].line // .[0].original_line)"' \
+    || { echo "reply check failed - rerun it" >&2; exit 2; } )
 ```
 
 Every id it prints needs a reply from you. Repost to those specifically, then run
 it again.
 
-Last-comment, not has-any-reply: a reviewer that reopens a thread leaves it
-outstanding again, and a root-only test goes permanently blind to that thread
-after your first reply. `pipefail` is what makes the guard reachable — without
-it a `gh` failure part-way through pagination exits 0 and the gate reports clean
-from truncated data.
+Both disjuncts are load-bearing: the signature test catches a reviewer's
+*reopen*, which a root-only test goes blind to after your first reply; the
+`length == 1` test catches an unreplied root from a source that does not sign —
+a bot, or a human. The subshell keeps `pipefail` from leaking into the rest of
+the call you paste this into, where a later `| head` would exit 141.
 
 **Delete this once `devon-claude-skills-cq0` lands** — the fix is `reply-to-comment.sh` adopting the `|| { ...; exit 1; }` that `post-line-comment.sh:49-53` already has, after which the exit status is trustworthy.
 
