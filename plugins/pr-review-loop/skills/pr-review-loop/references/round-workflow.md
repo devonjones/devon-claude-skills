@@ -103,11 +103,25 @@ gh pr comment <PR> --body "## Response to Claude Review
 
 **Gate**: every finding in this round's fix set corresponds to a posted PR thread (Gemini, bot, or agent) with a reply **that actually landed**. If any fix has no thread, go back to F3 — a commit message is not an audit trail.
 
-Verify each thread rather than trusting the sends, and do it per thread — a count tells you how many replies are missing, never which. Re-fetch with `get-agent-comments.sh <PR> <agent> --with-replies`: a thread showing `Status: RESOLVED` with an empty `REPLIES:` block **is** the defect. Repost to those threads specifically.
+Verify each thread rather than trusting the sends, and do it per thread — a count tells you how many replies are missing, never which. This must cover **every** thread you dispositioned, Gemini's and other bots' as well as your agents'; `get-agent-comments.sh` cannot do it, because it filters on the `<!-- Agent: <name> -->` marker that only `post-line-comment.sh` writes, so no value of `<agent>` ever retrieves a Gemini thread. Ask GitHub for unresolved-or-unanswered threads directly instead:
 
-Why this is needed: `reply-to-comment.sh` resolves the thread and exits 0 even when the reply POST failed (`devon-claude-skills-cq0`), so there is no exit status to gate on, and GitHub applies a secondary rate limit (HTTP 422, `"code": "abuse"`) after a few dozen comment writes in a short window. Space the reposts ~20s apart; give up after 3 rounds of retries and tell the user rather than looping.
+```bash
+gh api graphql -f query='
+  query($owner:String!,$repo:String!,$pr:Int!){
+    repository(owner:$owner,name:$repo){ pullRequest(number:$pr){
+      reviewThreads(first:100){ nodes{
+        isResolved
+        comments(first:100){ nodes{ author{login} body } }
+      } } } }
+  }' -F owner=<owner> -F repo=<repo> -F pr=<PR> \
+  | jq -r '.data.repository.pullRequest.reviewThreads.nodes[]
+           | select([.comments.nodes[].author.login] | index("<your-login>") | not)
+           | .comments.nodes[0].body[0:80]'
+```
 
-**Delete this paragraph when `devon-claude-skills-cq0` lands.** The fix is `reply-to-comment.sh` adopting the `|| { ...; exit 1; }` that `post-line-comment.sh:49-53` already has, after which the exit status is trustworthy and this whole workaround is longer than the thing it works around. This gate enforces the "Every disposition must have reached its thread" convergence rule.
+Anything it prints is a thread carrying a finding with no reply from you — repost to those specifically. A resolved thread among them is the `devon-claude-skills-cq0` signature (do not look for an "empty REPLIES block" from `get-agent-comments.sh`; that header is only emitted when a reply exists, so a missing reply omits the label rather than showing it empty): `reply-to-comment.sh` resolves the thread and exits 0 even when the reply POST failed, so there is no exit status to gate on, and GitHub applies a secondary rate limit (HTTP 422, `"code": "abuse"`) after a few dozen writes in a short window. Space reposts ~20s apart; after 3 retry rounds, stop and tell the user.
+
+**Delete this once `devon-claude-skills-cq0` lands** — the fix is `reply-to-comment.sh` adopting the `|| { ...; exit 1; }` that `post-line-comment.sh:49-53` already has, after which the exit status is trustworthy.
 
 ALWAYS use the script, NEVER raw git — ONCE per round, if any fixes were made:
 
@@ -139,7 +153,7 @@ The `--wait` flag polls every 30s for up to 5 minutes waiting for new comments. 
 
 ### F7. Count reporters, then apply the convergence rule
 
-If F6 returned new comments, start the next COLLECT PHASE. Otherwise: count `D` reviewers dispatched against `R` that reported (see "What counts as reported" in `SKILL.md` — a bot's status is a head-SHA match, not a script exit status), then apply the convergence rule. `D` and `R` must match. One clean round converges; there is no round cap.
+If F6 returned new comments, start the next COLLECT PHASE. Otherwise: count `D` reviewers dispatched against `R` that reported — see [`reviewer-reported.md`](reviewer-reported.md), which is where the per-class definition and the bot check live — then apply the convergence rule. `D` and `R` must match. One clean round converges; there is no round cap.
 
 ### End-of-round report (every round)
 
@@ -149,6 +163,7 @@ Emit a short status block so posting-protocol drift is visible immediately:
 Round N: posted X findings across Y agents (A withdrawn by validator);
 replied to Z threads (F fixed / W won't-fix / O out-of-scope); Gemini: G comments.
 Reported: <reviewer>=ok|failed(<reason>) for every dispatched reviewer. D dispatched / R reported.
+Disabled: <bots and agents deliberately not dispatched, or "none">.
 ```
 
 A round that fixed findings but shows zero posted/replied threads is broken — correct it before the next round (post the missing threads per F3's recovery rule) and note the violation in the merge-readiness summary.

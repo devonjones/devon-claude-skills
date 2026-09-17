@@ -14,48 +14,52 @@ manifest to return, a bot does not.
 | **Disabled bot, disabled agent, retired agent** | Outside the denominator — deliberately not dispatched | n/a |
 
 A zero result is "not reported" — route it to "A reviewer that will not report"
-in `SKILL.md`. That is also what an enabled-by-default bot that was never
-installed on the repo looks like.
+in `SKILL.md`.
 
 ## Checking a bot
 
 **Do not use a wrapper script's exit status, and do not use `--latest`.** Exit 0
 means "nothing went visibly wrong", not "the bot reviewed this commit", and
 `--latest` compares SHAs with `>=`, a lexicographic compare on hex. Both are
-tracked in `devon-claude-skills-4gw`; until it lands, run this yourself:
+tracked in `devon-claude-skills-4gw`; until it lands, run this yourself, once per
+configured bot:
 
 ```bash
-set -euo pipefail
+set -o pipefail
 SHA=$(gh pr view <PR> --json headRefOid --jq .headRefOid)
-[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "could not establish head SHA" >&2; exit 1; }
-gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/reviews" \
+[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "check failed: no head SHA" >&2; exit 2; }
+COUNT=$(gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/reviews" \
   | jq -s --arg sha "$SHA" \
       'add | [.[] | select((.user.login == "gemini-code-assist[bot]"
                             or .user.login == "gemini-code-assist")
-                           and .commit_id == $sha)] | length'
+                           and .commit_id == $sha)] | length') \
+  || { echo "check failed: could not query reviews" >&2; exit 2; }
+echo "$COUNT"
 ```
 
-Non-zero means that bot reported on this commit. Run it once per configured bot.
+Non-zero means that bot reported on this commit. Match **every login spelling the
+bot posts under** — Gemini uses two, and five call sites in this skill carry both.
 
-**Three ways this check lies if you shorten it:**
+**A failed check is not a zero**, and it takes both guards to keep it that way.
+`pipefail` is what makes a mid-pagination `gh` failure visible at all — without
+it the pipeline reports `jq`'s status and a truncated page set yields a confident
+wrong number. The explicit `|| { ...; exit 2; }` is what stops it: `set -e` does
+**not** abort a failed assignment when this snippet runs as an agent's tool call
+rather than as `bash script.sh`, so relying on ambient errexit leaves the bad
+value assigned and execution continuing. Verified both paths.
 
-- **Match every login spelling the bot posts under.** Gemini posts as both
-  `gemini-code-assist[bot]` and `gemini-code-assist`; five call sites in this
-  skill carry both. Matching one spelling when a bot uses two reads a real review
-  as "not reported" and deadlocks the round.
-- **Fail loudly, not to zero.** Without `set -euo pipefail` and the SHA guard, a
-  `gh` failure mid-pagination or an empty `$SHA` produces `0` — indistinguishable
-  from "the bot did not review". A failed *check* is "could not establish", which
-  is not reported, but it must be recorded as `failed(check-error)` in the
-  `Reported:` line rather than as a clean zero, or the re-run counts a tooling
-  outage as reviewer silence.
-- **One bot per query.** A fused result cannot produce the per-reviewer
-  `Reported:` line, and one bot's review would certify the other.
+Exit 2 means *the check failed*. Re-run **the check** — not the reviewer — and do
+not spend a reviewer strike on it: the two-strike rule in `SKILL.md` counts rounds
+where a reviewer did not report, not rounds where your tooling fell over.
 
-**A bot whose login you cannot establish cannot be checked.** This skill only
-knows Gemini's literals; Cursor's login string appears nowhere in it, and the one
-place Cursor is identified (`get-pr-comments.sh`) does a substring match over
-*issue* comments, which carry no `commit_id`. Guessing a login yields `0`, which
-is indistinguishable from a bot that never ran and deadlocks the loop at the
-two-strike rule. If a configured bot's login is unknown, stop and ask rather than
-guessing — and record the answer here.
+## A bot whose login you cannot establish
+
+**Stop and ask the user — do not guess, and do not spend two rounds finding
+out.** This is a first-contact stop, ahead of the two-strike rule, because a
+guessed login returns `0` forever and the strikes would expire against a bot that
+may be working fine.
+
+This skill knows Gemini's two literals and no others. Cursor's login appears
+nowhere in it; the one place Cursor is identified (`get-pr-comments.sh`) matches a
+substring over *issue* comments, which carry no `commit_id`. Record the answer
+here when you get it.

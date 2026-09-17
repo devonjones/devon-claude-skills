@@ -3,7 +3,6 @@
 ```json
 {
   "defaults_version_checked": "1.7.0",
-  "_bots_note": "cursor: Bugbot has never posted a review on any PR in this repo (42 PRs, 0 reviews; the only non-human review author on record is gemini-code-assist[bot]). Disabled because it is not installed here, not because its findings are unwanted. Re-enable if it is ever installed. gemini: consumer-tier Gemini Code Assist has been sunset for this account.",
   "bots": {
     "gemini": false,
     "cursor": false
@@ -20,6 +19,21 @@
   }
 }
 ```
+
+Both external bots are off, and why:
+
+- **cursor** — Bugbot has never posted a review on any PR in this repo (41 PRs;
+  the only non-human review author on record is `gemini-code-assist[bot]`).
+  Disabled because it is not installed here, not because its findings are
+  unwanted. Re-enable if it is ever installed.
+- **gemini** — Gemini Code Assist posted on this repo, 2026-07-21: "The consumer
+  version of Gemini Code Assist on GitHub has been sunset. All code review
+  activity has officially ceased." It cannot produce a head-SHA match again on
+  this account.
+
+This lives outside the JSON on purpose: `# Configuration` is a closed schema, and
+an unknown key there makes `discover-agents.sh` print a "likely typos" warning on
+every parse — which is the only signal that a misspelled off-switch did not take.
 
 # Guidelines
 
