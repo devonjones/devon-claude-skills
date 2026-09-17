@@ -10,12 +10,6 @@ This file is the operational companion to the round-structure diagram in `SKILL.
 
 ### C1. Check for unresolved Gemini line comments
 
-**Run the per-bot reported check here**, in COLLECT, while head is still the
-commit the reviewers are reviewing — see [`reviewer-reported.md`](reviewer-reported.md).
-After F4 pushes this round's fixes, head is a different commit and every bot
-reads as not-reported.
-
-
 ALWAYS use `--wait` for first check after PR creation or push:
 
 ```bash
@@ -40,6 +34,12 @@ The function appears to duplicate functionality...
 ```
 
 **Use the Node ID (PRRC_...) when replying to comments.** The Node ID is required for `reply-to-comment.sh` to properly attach your reply to the review thread.
+
+**Then run the per-bot reported check** — after the `--wait` above, never before
+it: the wait is what gives the bot time to review, and checking first reads a bot
+that has simply not answered yet as not-reported. It belongs in COLLECT rather
+than at report time, because head is only the commit the reviewers are reviewing
+until F4 pushes this round's fixes. See [`reviewer-reported.md`](reviewer-reported.md).
 
 ### C2. Check for other bot PR comments (Claude, Cursor, Copilot)
 
@@ -178,6 +178,8 @@ EOF
 )" || { echo "round report did not post - retry before starting the next round" >&2; exit 2; }
 ```
 
+Read the history back with:
+
 ```bash
 ( set -o pipefail
   gh api --paginate "/repos/{owner}/{repo}/issues/<PR>/comments" \
@@ -189,29 +191,35 @@ EOF
 the operator.
 
 **Nothing the convergence rule depends on lives in this report.** That was tried
-across four rounds — a strike counter, a carried-forward list, a roster progress
-count — and every one of them needed a source, a base case and a gap detector it
-did not have. Each of those is now derived from the PR at the moment it is
-needed, so a missing report costs you the narrative and nothing else:
+— a strike counter, a carried-forward list, a roster progress count — and every
+one of them needed a source, a base case and a gap detector it did not have. Each
+is now derived from the PR when it is needed, so a missing report costs you the
+narrative and nothing else:
 
 - **Outstanding threads** — F4's gate, recomputed each round.
-- **A declined P1/P2** — reply with `reply-to-comment.sh ... --no-resolve` and the
-  thread stays *unresolved on the PR*. GitHub carries it; it cannot be dropped by
-  a lost copy, and it needs no round-1 base case. Convergence checks it directly:
+- **A declined P1/P2** — found by what the reply *says*, not by the thread's
+  resolve state:
 
   ```bash
   ( set -o pipefail
-    gh api graphql -f query='query($o:String!,$r:String!,$p:Int!){repository(owner:$o,name:$r){
-        pullRequest(number:$p){reviewThreads(first:100){nodes{isResolved}}}}}' \
-      -F o=<owner> -F r=<repo> -F p=<PR> \
-      --jq '[.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved|not)]|length' \
-      || { echo "resolve check failed - rerun it" >&2; exit 2; } )
+    gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/comments" \
+      | jq -rs 'add | group_by(.in_reply_to_id // .id)
+          | map(select(any(.[]; .body | test("^Won.t fix"; "i"))))
+          | .[] | "\(.[0].id) \(.[0].path):\(.[0].line // .[0].original_line)"' \
+      || { echo "decline check failed - rerun it" >&2; exit 2; } )
   ```
 
-  Non-zero means a finding is still open and the loop has not converged.
+  Each line is a P1/P2 you declined; convergence is blocked until each is
+  reclassified, fixed, or signed off. **Do not use `isResolved` for this.** It was
+  tried and it fails three ways: `reviewThreads(first:100)` truncates oldest-first
+  so a fresh decline is always past the cutoff and the error runs toward
+  "converged"; `reply-to-comment.sh` resolves best-effort and only warns on
+  failure, so unresolved mostly means *the resolve no-op'd*, not *the finding is
+  open* — measured on this PR, 93 of 199 threads where the two views disagree; and
+  `--no-resolve` cannot *un*-resolve, so a decline after a reopen is invisible.
+  The reply text is the one signal that survives all three.
 - **A reviewer that will not report** — re-run it inside the same round. Two
-  failures *in one round* stops the loop and asks. Nothing crosses a round
-  boundary, so nothing needs remembering.
-- **Retirement state** is best-effort: a restart forgets it and the only cost is
-  calling a quiet reviewer again. It is in the report for the operator, not for
-  the rule.
+  failures in one round stops the loop, so nothing crosses a round boundary.
+- **Retirement state** is best-effort. A restart forgets it, and re-earning it
+  costs the 2-3 quiet reported rounds plus the confirming round that the
+  Diminishing Returns rule requires — cheap relative to the loop, not free.

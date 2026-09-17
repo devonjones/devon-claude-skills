@@ -45,13 +45,12 @@ Non-zero means that bot reported on this commit.
 **A failed check is not a zero.** Exit 2 means the check broke, not that the
 reviewer is silent. Re-run **the check**, not the reviewer.
 
-**One counter, written down.** A reviewer accumulates a strike for *any* round it
-produced no usable report — whether it did not report or the check for it failed.
-Two strikes stops the loop and asks the user. Do not keep them separate: an
-alternating not-reported / check-failed pattern would trip neither. Do not keep
-them in your head either — a loop has no round cap and your context does not
-survive it. Both failures must happen in the same round, so nothing has to survive
-one.
+**One counter, both causes, within the round.** A reviewer accumulates a strike
+for *any* attempt that produced no usable report — whether it did not report or
+the check for it failed. Do not keep the two separate: alternating them would trip
+neither. Two strikes **in the same round** stops the loop and asks the user, which
+is what keeps the count off your memory and out of the round report — nothing
+crosses a round boundary, so nothing has to survive one.
 
 ## A bot whose login you cannot establish
 
