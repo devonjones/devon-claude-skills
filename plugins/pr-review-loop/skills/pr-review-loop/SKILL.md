@@ -1167,66 +1167,64 @@ Authentication uses JWT tokens stored in httpOnly cookies.
 4. Track each agent's scope (directory where it was defined)
 5. Filter changed files per agent to only those within the agent's scope
 
-### Verification: execute by default
+### Verification: every finding owes a demonstration
 
-**A reviewer proves a finding by running it.** Mutate the code, watch the check
-fail, report what you saw. Reading the code and reasoning about what it would do
-is a hypothesis, not a finding — say which one you have.
+**Prove the finding; do not reason your way to it.** Reading the artifact and
+working out what it would do is a hypothesis. Say which one you have.
 
-This is the default because the evidence is one-sided:
+There are two ways to prove one, and both are execution:
 
-- A reviewer claimed a repo's CI gate was `ruff format` when it is `black`, without
-  running it. Of nine findings in that review it was the only one declined, and
-  complying would have broken the build.
-- In this skill's own convergence-rule PR, every round's sharpest finding came
-  from a reviewer that executed. Two of them — `set -e` not aborting where I
-  claimed, and a `$SHA` that was never assigned — had been *verified by reading*
-  one round earlier and were wrong both times.
-- The case that settles it: a reply script reported 21 replies posted when 17 had
-  silently failed, and the gate that should have caught it reported clean because
-  it was broken in the same way. No amount of reading either artifact finds that.
-  Running one against the other does.
+- **Code mutation** — change the code, watch the check fail, report what you saw.
+  The natural proof when there is something to run.
+- **Evidence query** — run the query that would produce the evidence a claim
+  depends on, and report the number it returns. The natural proof when the
+  artifact is prose, a prompt, a directive or a policy: a claim that a dataset
+  supports a comparison is disproved by counting the rows and finding one.
 
-**A reviewer that cannot execute is still legitimate — and must say so.** Some
-work has nothing to mutate: tracing a published claim back to the evidence
-licensing it, judging prose, assessing whether a design matches a stated intent.
-Those reviewers stay. What they may not do is omit the proof silently, because an
-unstated exemption is indistinguishable from a reviewer that should have executed
-and did not — which is the failure this rule exists to catch.
+The split that matters is *which proof you owe*, not *whether you owe one*.
+"It reviews prose, so it cannot execute" is the reasoning a reviewer uses to
+excuse itself from work it could do — a prose reviewer that asserts a sentence
+restates another can grep for both and show them.
 
-Declare it in the agent's own definition in `AGENT-REVIEWERS.md`, as the first
-line of its body:
+Declare it as the first line of the agent's body in `AGENT-REVIEWERS.md`:
 
 ```markdown
 ## methodology-reviewer
 
-verification: reads-only — traces claims to sources; there is no artifact to run.
-
-You are a reviewer ensuring every published claim...
+verification: evidence-query — for any directive, runs the query that would
+produce its evidence and reports the n.
 ```
 
-```markdown
-## silent-failure-hunter
+`verification: mutation` | `verification: evidence-query` | `verification: none — <reason>`.
 
-verification: execute
-
-You are a reviewer hunting absent signals...
-```
-
-**The field is the flag.** `verification: execute` is the default and may be
-omitted; `verification: reads-only — <reason>` requires the reason. A reviewer
-with neither is **undeclared**, which is a finding about the roster, not about
-the code. Surface all three states in the round's `Reported:` line so a reader can
-weight the findings:
+**A reviewer that owes no demonstration at all is the rare case and must say so
+out loud**, with its reason. That claim should look conspicuous, because it
+almost always means the reviewer has not looked for the proof it could give. A
+reviewer with no line is **undeclared** — a finding about the roster, not the
+code. Surface all of it in the round's `Reported:` line:
 
 ```
-Reported: silent-failure-hunter=ok clarity-reviewer=ok(reads-only) foo-reviewer=ok(undeclared)
+Reported: silent-failure-hunter=ok(mutation) methodology-reviewer=ok(evidence-query) foo=ok(undeclared)
 ```
 
-Audit the roster when this rule is adopted: read each agent, decide which it is,
-and write the line. Changing `AGENT-REVIEWERS.md` to align a roster to this rule
-may go straight to main — it is roster configuration, not skill code, and the
-carve-out is scoped to this alignment.
+**A fixture that cannot fail is not a test.** Every fixture must be verified to
+fail against the defect it pins — a suite that passed 9/9 with two HIGH bugs live
+had two cases that could not fail at all. A fixture passing for the wrong reason
+is the same disease as a check that reads an empty result as success.
+
+The evidence for all of this is one-sided. A reviewer claimed a repo's CI gate was
+`ruff format` when it is `black`, without running it; of nine findings it was the
+only one declined, and complying would have broken the build. In this skill's own
+convergence-rule PR, two findings were *verified by reading* in one round and
+proved wrong by running in the next — `set -e` not aborting where the doc claimed,
+and a `$SHA` that was never assigned. And a reply script reported 21 replies
+posted when 17 had silently failed, while the gate that should have caught it
+reported clean because gate and subject shared a defect: no reading of either
+finds that, and running one against the other does.
+
+Audit the roster when adopting this: read each agent, decide which proof it owes,
+write the line. Aligning `AGENT-REVIEWERS.md` to this rule may go straight to main
+— it is roster configuration, and the carve-out is scoped to that alignment.
 
 ### When to Run Agent Reviewers
 

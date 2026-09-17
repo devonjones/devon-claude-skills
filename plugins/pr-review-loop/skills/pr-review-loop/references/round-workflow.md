@@ -181,7 +181,7 @@ gh pr comment <PR> --body "$(cat <<'EOF'
 <!-- pr-review-loop:round-report -->
 Round N: posted X findings across Y agents (A withdrawn by validator);
 replied to Z threads (F fixed / W won't-fix / O out-of-scope).
-Reported: <reviewer>=ok|ok(reads-only)|ok(undeclared)|failed(<reason>), per dispatched reviewer. D dispatched / R reported.
+Reported: <reviewer>=ok(mutation|evidence-query|none|undeclared)|failed(<reason>), per dispatched reviewer. D dispatched / R reported.
 Roster: disabled=<...|none> retired=<...|none>.
 EOF
 )" || { echo "round report did not post - retry before starting the next round" >&2; exit 2; }
