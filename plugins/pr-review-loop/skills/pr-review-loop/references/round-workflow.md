@@ -109,13 +109,16 @@ gh pr comment <PR> --body "## Response to Claude Review
 
 **Gate**: every finding in this round's fix set corresponds to a posted PR thread (Gemini, bot, or agent) with a reply **that actually landed**. If any fix has no thread, go back to F3 — a commit message is not an audit trail.
 
-Verify each thread rather than trusting the sends, and do it per thread — a count tells you how many replies are missing, never which. Every finding and every reopen this skill posts is signed `🤖 **Claude Code** (<agent>):`; your replies are not. A thread is outstanding when its **last** comment carries that signature, or when it has no reply at all:
+Verify each thread rather than trusting the sends, and do it per thread — a count tells you how many replies are missing, never which. A thread is settled only when **you** spoke last and did not sign it: this skill signs every finding and every reopen it posts, and `<you>` is the login your token authenticates as:
 
 ```bash
 ( set -o pipefail
+  ME=$(gh api user --jq .login) || { echo "reply check failed - rerun it" >&2; exit 2; }
   gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/comments" \
-    | jq -rs 'add | group_by(.in_reply_to_id // .id)
-        | map(select( (sort_by(.id) | last | .body | startswith("🤖 **Claude Code** (")) or length == 1 ))
+    | jq -rs --arg me "$ME" 'add | group_by(.in_reply_to_id // .id)
+        | map(select( (sort_by(.id) | last | .body | startswith("🤖 **Claude Code** ("))
+                      or (sort_by(.id) | last | .user.login != $me)
+                      or length == 1 ))
         | .[] | "\(.[0].in_reply_to_id // .[0].id) \(.[0].path):\(.[0].line // .[0].original_line)"' \
     || { echo "reply check failed - rerun it" >&2; exit 2; } )
 ```
@@ -123,11 +126,17 @@ Verify each thread rather than trusting the sends, and do it per thread — a co
 Every id it prints needs a reply from you. Repost to those specifically, then run
 it again.
 
-Both disjuncts are load-bearing: the signature test catches a reviewer's
-*reopen*, which a root-only test goes blind to after your first reply; the
-`length == 1` test catches an unreplied root from a source that does not sign —
-a bot, or a human. The subshell keeps `pipefail` from leaking into the rest of
-the call you paste this into, where a later `| head` would exit 141.
+Three disjuncts, and each exists because leaving it out lost a real thread:
+
+- **signed last** — a reviewer reopened it. A root-only test goes blind to that
+  thread after your first reply.
+- **someone else spoke last** — checking "unsigned" alone tests the *body*, not
+  the *author*, and "not signed by this skill" is a far larger set than "written
+  by you". It includes a human reopening the thread by replying, which SKILL.md
+  calls the user's reopen surface, and Gemini answering inside a thread it did not
+  open — either of which would otherwise discharge your disposition for you.
+- **`length == 1`** — an unreplied root from a source that does not sign: a bot,
+  or a human.
 
 **Delete this once `devon-claude-skills-cq0` lands** — the fix is `reply-to-comment.sh` adopting the `|| { ...; exit 1; }` that `post-line-comment.sh:49-53` already has, after which the exit status is trustworthy.
 
@@ -211,7 +220,8 @@ narrative and nothing else:
   Each line is a finding disposed of by something other than a fix. **Look up
   each one's severity in its own thread** — the reply carries no priority, so the
   query cannot filter on it; only P1/P2 block convergence, and a declined nitpick
-  is not a blocker. It matches all four non-fix dispositions the Reply Templates
+  is not a blocker. An `Out of scope - tracked in <id>` line is resolved once you
+  confirm that ticket exists (`bd show <id>`); the finding lives there now. It matches all four non-fix dispositions the Reply Templates
   offer, not just "Won't fix": a P1/P2 answered "Acknowledged - as designed" is a
   decline whatever it is called, and that exact wording was used on this PR.
 
