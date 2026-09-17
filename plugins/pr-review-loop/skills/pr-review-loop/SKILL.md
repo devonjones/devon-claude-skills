@@ -106,7 +106,7 @@ disabled bot is never triggered and never waited for.
 
 ### Priority to Exit-Condition Mapping
 
-The quality-weighted exit condition (see ONE MORE LOOP Rule) depends on classifying findings as P1/P2 vs P3/nitpick. Use this table:
+The convergence rule (see Convergence) depends on classifying findings as P1/P2 vs P3/nitpick. Use this table:
 
 | Source label | P-level | Blocks quality-weighted exit? |
 |---|---|---|
@@ -281,44 +281,60 @@ After each round, evaluate:
 
 ### When to Stop
 
-- Two consecutive rounds with zero actionable (P1/P2) fixes — i.e., only nitpicks, only "Won't fix" responses, or zero-comment rounds
-- A self-contradiction is detected (pause for user input)
-- The fix/rejection ratio drops below ~25% (most comments are not actionable)
-- All remaining comments are stylistic or theoretical
-- The Hard Round Ceiling has fired (see below) — stop regardless of other signals
+The loop stops when it **converges** — see Convergence below. There is no round
+cap: the loop runs until it converges, or until the user says merge.
 
-### Hard Round Ceiling (Circuit Breaker)
+Stop and ask the user (do not converge) when:
 
-**If you reach 7 total rounds, STOP the loop regardless of state.** This is a pure circuit breaker — the quality-weighted exit condition (see ONE MORE LOOP Rule) handles normal termination earlier; this fires only when the loop is stuck. Report to the user:
+- A self-contradiction is detected across rounds
+- A P1/P2 finding is being carried forward as "Won't fix" without one of the resolutions in Convergence below
 
-- Rounds completed and elapsed time
-- Total comments received, by priority (P1/P2/P3 — see Priority to Exit-Condition Mapping) and source (Gemini, other bots, each agent)
-- Outstanding unresolved items (if any)
-- A recommendation on whether to continue, declare "good enough," or escalate
+## Convergence
 
-Then ask the user before proceeding further.
+**A loop converges on ONE clean round.** Not two consecutive clean rounds. When
+a round is clean, the loop is done.
 
-### ONE MORE LOOP Rule
+**There is no round limit.** Run until convergence or an explicit merge
+instruction. Do not cap the loop at N rounds; a stuck loop is a reason to stop
+and ask the user, not a number to count to.
 
-When a full round (Gemini + other bots + agent reviewers) produces no actionable feedback, do ONE additional "final verification" round to catch any last feedback from the final push.
+### What makes a round clean
 
-**Actionable feedback** = a **P1 or P2** finding (per the Priority to Exit-Condition Mapping) that is addressed with a code change. "Won't fix" responses, nitpick (P3) fixes, and zero-comment rounds are NOT actionable for loop-control purposes — they all count toward exit condition (b) below.
+Some of these rules are fixed and some are the running agent's judgement. Keep
+that distinction — they are not a flat list of equal-force bullets.
 
-**Unifying with stopping heuristics**: The "Two consecutive rounds with zero actionable (P1/P2) fixes" stopping heuristic and ONE MORE LOOP describe the same exit mechanism from two angles:
-- The **first** qualifying round (zero actionable fixes — i.e., only nitpicks, only "Won't fix", or zero comments) IS the ONE MORE LOOP trigger.
-- The **second** qualifying round IS the final verification — if the full Exit condition (quality-weighted) below is satisfied (all of (a) through (d)), you exit immediately at end of that round. No third round needed.
+**Fixed — not the agent's call:**
 
-**Tracking state**: Use `TaskCreate` to track whether you're in the "final verification round". Create a task like "Final verification round - if no actionable feedback, ready to merge".
+| Rule | Why |
+|---|---|
+| **One clean round converges.** | A second confirming round buys nothing the first didn't. |
+| **A P1 or P2 fix means the round was NOT clean.** | The next round reviews *different code*. A review that passed did not pass on what would actually ship. Push the fix, run another round. (A P3-only fix is the agent's call — see below.) |
+| **A reviewer that errored, rate-limited, or timed out makes the round INCOMPLETE, not clean.** | A reviewer that never reported looks identical to a reviewer with nothing to say. Re-run it; an incomplete round is not a result. |
+| **An unresolved P1/P2 "Won't fix" carried forward from any round blocks convergence.** | Every Won't-fix on a P1/P2 must be (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. |
 
-**Reset condition**: If the final verification round produces **P1 or P2 fixes** (correctness, security, breaking changes — see Priority to Exit-Condition Mapping), remove the "final verification round" task — you need a fresh "one more" after pushing those fixes. Nitpick-level (P3) fixes do NOT reset the counter.
+**Agent's judgement — explicitly discretionary:**
 
-**Exit condition (quality-weighted)**: You're done when ALL of:
-- (a) **No P1/P2 findings** (correctness, security, breaking changes) in the last round
-- (b) **The last two rounds had zero actionable (P1/P2) fixes** — i.e., they contained only nitpicks, were zero-comment rounds, or all feedback was "Won't fix"
-- (c) **No contradictions across rounds**
-- (d) **No unresolved P1/P2 Won't-fix findings carried forward from any prior round** — every Won't-fix on a P1/P2 must have been (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) actually fixed in a later round, or (iii) explicitly signed off on by the user as an acknowledged carry-forward (recorded in the merge-readiness summary). Carried-forward Won't-fix on a real P1/P2 without one of these three resolutions blocks exit regardless of (a) and (b).
+- **Only P3s were fixed → the round may be clean.** Not automatically clean, not
+  automatically disqualifying. The agent decides whether a nitpick-level change
+  was material enough that the next round should see it before merge.
 
-— **OR** the Hard Round Ceiling has fired (see above).
+- **Findings only ticketed, and low priority → the agent may call the round
+  clean.** This is discretion, not a severity cutoff. "All P3" does not
+  automatically mean clean; it means the agent gets to decide. File the tickets
+  with the reviewer's own text so the finding survives the merge.
+
+- **Disagreed with every finding → the round can be clean.** Lean clean. A round
+  you disagree with end to end is usually evidence that the *reviewers* are
+  underperforming, not a licence you granted yourself to skip them. The agent may
+  always run another round if that seems prudent. If it keeps happening, that is
+  a roster problem rather than a round problem — run the `dream-reviewers` skill
+  against the roster instead of shrugging it off round after round.
+
+### Merge Authority
+
+**Two things authorize a merge: the loop converged, or the user said yes.**
+Nothing else. Running low on patience, a long round count, a clean CI run, and a
+round that is clean only in a weaker sense are all not authorization.
 
 Proceed to merge readiness checks.
 
@@ -361,10 +377,13 @@ If repo-specific guidance defines additional merge criteria (attestation require
 
 ### 4. Merge or Ask
 
-- **If repo guidance authorizes auto-merge** and all its criteria are met (CI passed, required approvals present, branch protections satisfied): merge
-- **If any criteria are not met**, or no repo-specific guidance exists: present the summary and ask the user
+**The loop converging IS the authorization** (see Merge Authority) — so is an
+explicit "merge it" from the user. Nothing else is.
 
-The review loop should **not** override branch protections or bypass repo-defined merge requirements.
+- **Converged (or the user said yes)** and the repo's own criteria are met — CI passed, required approvals present, branch protections satisfied: merge, and present the summary alongside it
+- **Not converged**, or a repo criterion is unmet: present the summary and ask the user. Do not merge on a round that is clean only in a weaker sense — ask rather than picking the reading that permits the merge
+
+The review loop should **not** override branch protections or bypass repo-defined merge requirements. Repo policy can withhold a merge that convergence would otherwise authorize; it cannot authorize one on its own.
 
 ## Autonomous Loop Workflow
 
@@ -434,8 +453,8 @@ EACH ROUND — three phases, in order:
                               │
                               ▼
   If F6 returned new comments → next COLLECT PHASE (new round).
-  Otherwise → apply quality-weighted exit condition + Hard Round
-  Ceiling check (see ONE MORE LOOP Rule in Stopping Heuristics).
+  Otherwise → apply the convergence rule (see Convergence).
+  Clean round → converged. No round cap.
 ```
 
 **Phase order is mandatory.** Complete all COLLECT steps (C1, C2, C3) before beginning any FIX step (F1–F7). The BATCH POINT between them is what makes Pattern Analysis (`Sweep Before Fixing`) work.
@@ -443,10 +462,10 @@ EACH ROUND — three phases, in order:
 **For full step-by-step details with commands and example outputs, see [`references/round-workflow.md`](references/round-workflow.md).** The diagram above is the authoritative execution order; the reference file is the operational companion the model can read on demand when actually running a round.
 
 **COMPLETION:**
-When a full round produces no actionable feedback (Gemini + other bots + agents all stable)
-AND this was the "final verification" round:
+When a round is clean under the convergence rule (every reviewer reported,
+nothing was fixed this round):
 - Report all beads tickets created during the loop (if any)
-- Ask user about merge
+- The loop converged, which authorizes the merge — proceed to Merge Readiness
 
 ## CI Failure Handling
 
