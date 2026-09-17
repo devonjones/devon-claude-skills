@@ -197,29 +197,45 @@ is now derived from the PR when it is needed, so a missing report costs you the
 narrative and nothing else:
 
 - **Outstanding threads** — F4's gate, recomputed each round.
-- **A declined P1/P2** — found by what the reply *says*, not by the thread's
-  resolve state:
+- **A finding you did not fix** — found by what the thread's *last* reply says:
 
   ```bash
   ( set -o pipefail
     gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/comments" \
-      | jq -rs 'add | group_by(.in_reply_to_id // .id)
-          | map(select(any(.[]; .body | test("^Won.t fix"; "i"))))
-          | .[] | "\(.[0].id) \(.[0].path):\(.[0].line // .[0].original_line)"' \
+      | jq -rs 'add | group_by(.in_reply_to_id // .id) | map(sort_by(.id) | last)
+          | .[] | select(.body | test("^[*_>`~ -]*(Won.t fix|Out of scope|Deferred|Acknowledged)"; "i"))
+          | "\(.in_reply_to_id // .id) \(.path):\(.line // .original_line)"' \
       || { echo "decline check failed - rerun it" >&2; exit 2; } )
   ```
 
-  Each line is a P1/P2 you declined; convergence is blocked until each is
-  reclassified, fixed, or signed off. **Do not use `isResolved` for this.** It was
-  tried and it fails three ways: `reviewThreads(first:100)` truncates oldest-first
-  so a fresh decline is always past the cutoff and the error runs toward
-  "converged"; `reply-to-comment.sh` resolves best-effort and only warns on
-  failure, so unresolved mostly means *the resolve no-op'd*, not *the finding is
-  open* — measured on this PR, 93 of 199 threads where the two views disagree; and
-  `--no-resolve` cannot *un*-resolve, so a decline after a reopen is invisible.
-  The reply text is the one signal that survives all three.
+  Each line is a finding disposed of by something other than a fix. **Look up
+  each one's severity in its own thread** — the reply carries no priority, so the
+  query cannot filter on it; only P1/P2 block convergence, and a declined nitpick
+  is not a blocker. It matches all four non-fix dispositions the Reply Templates
+  offer, not just "Won't fix": a P1/P2 answered "Acknowledged - as designed" is a
+  decline whatever it is called, and that exact wording was used on this PR.
+
+  **Last reply, not any reply.** Matching anywhere in the thread is a ratchet no
+  escape valve can release: reclassifying, fixing later and signing off are all
+  *later* replies, and an earlier "Won't fix" stays matched forever. **An empty
+  result with a non-zero exit is a failed check, not a clean PR** — the same rule
+  the bot check states, and the only difference between them is the exit status.
+
+  **Do not use `isResolved` for this.** It was tried and it fails three ways:
+  `reviewThreads(first:100)` truncates oldest-first, so a fresh decline is past
+  the cutoff and the error runs toward "converged"; `reply-to-comment.sh` resolves
+  best-effort and only warns on failure, so unresolved mostly means *the resolve
+  no-op'd* rather than *the finding is open* — when this was measured, the two
+  views disagreed on nearly half the threads on this PR; and `--no-resolve` cannot
+  *un*-resolve, so a decline after a reopen is invisible. Reply text survives all
+  three.
+
+  A decline posted as part of a batch PR comment (the Claude-reviewer flow) lands
+  in `/issues/<PR>/comments`, which this query does not read. Reply on the thread
+  as well, or it is invisible here.
+
 - **A reviewer that will not report** — re-run it inside the same round. Two
   failures in one round stops the loop, so nothing crosses a round boundary.
-- **Retirement state** is best-effort. A restart forgets it, and re-earning it
-  costs the 2-3 quiet reported rounds plus the confirming round that the
-  Diminishing Returns rule requires — cheap relative to the loop, not free.
+- **Retirement state** is the exception: best-effort, not PR-derived. A restart
+  forgets it, and re-earning it costs the 2-3 quiet reported rounds plus the
+  confirming round the Diminishing Returns rule requires.

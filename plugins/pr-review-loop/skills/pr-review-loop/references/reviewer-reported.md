@@ -26,7 +26,8 @@ configured bot:
 
 ```bash
 ( set -o pipefail
-# Run this during COLLECT, alongside C1/C2 - not at report time. Head is the
+# Run this during COLLECT, AFTER C1's --wait - not before it (a bot that has not
+# answered yet would read as not-reported) and not at report time. Head is the
 # commit the reviewers are reviewing only until F4 pushes the round's fixes.
 SHA=$(gh pr view <PR> --json headRefOid --jq .headRefOid) \
   || { echo "check failed: no head SHA" >&2; exit 2; }
