@@ -1215,6 +1215,24 @@ is read from the PR's branch, so a roster committed to `main` after a PR was cut
 reports `override_count: 0` and `defaults_version_checked: None` against that PR.
 Rebase or merge before concluding a roster change took effect.
 
+**Put it in the spawn prompt, not the top of the charter.** `discover-agents.sh`
+hands each reviewer *its own section only* — a repo's `# Guidelines` and anything
+else above the agent definitions reach the orchestrator, never the reviewers
+(measured: this repo's Guidelines section appears in 0 of its agents'
+`instructions`). A "prove your findings" paragraph written once at the top of
+`AGENT-REVIEWERS.md` therefore arrives nowhere, while looking like it was
+adopted. The spawning template above carries the requirement instead, so every
+reviewer gets it whether or not its charter repeats it — which is also the only
+version an adopter cannot forget. Repeating it per agent definition is fine and
+is what the shipped defaults do; writing it once at the top is not.
+
+**Undeclared on purpose beats a guess.** A roster that declares only the
+reviewers whose findings it has actually read is more honest than one that
+labels all of them. A reviewer becomes declarable the first time it files a
+finding you can point at, and `mixed` should be backed by naming which recent
+findings were mutations and which were evidence-queries — otherwise it is
+undeclared wearing a better word.
+
 **A fixture that cannot fail is not a test.** Verify every fixture fails against
 the defect it pins — a suite that passed 9/9 with two HIGH bugs live had two cases
 that could not fail at all.
@@ -1278,6 +1296,14 @@ Task tool:
     You are the "<agent-name>" code reviewer for PR #<PR>.
 
     Your focus: <agent.instructions>
+
+    **Carry the proof in the finding.** A behavioural claim — it exits 0 on
+    failure, this branch is unreachable, that fixture cannot fail — is
+    checkable, so check it: mutate the code and watch the check fail, or run
+    the query that produces the evidence the claim depends on and report the
+    number. Report what you observed, not what you expect. A finding you could
+    not demonstrate is a hypothesis and must say so. A judgement about design
+    or wording owes no demonstration and must be labelled as judgement.
 
     **Your scope: <agent.scope>**
     You should ONLY review changes to the files listed below. Ignore all other files.
