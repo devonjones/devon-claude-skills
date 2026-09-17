@@ -358,6 +358,16 @@ the repo looks like.
 **Record it, do not hold it in your head.** Compute it at F7, before applying the
 convergence rule, and put it in the end-of-round report's per-reviewer line.
 
+**Verify the replies landed.** A round is not clean on the strength of replies you
+*sent* — GitHub applies a secondary rate limit (HTTP 422, `"code": "abuse"`) after
+a few dozen comment writes in a short window, and `reply-to-comment.sh` currently
+resolves the thread and exits 0 even when the POST failed
+(`devon-claude-skills-cq0`). That leaves a resolved thread carrying a finding and
+no disposition, which is indistinguishable from a finding nobody answered. Before
+calling a round clean, confirm the reply count on the PR matches the number of
+threads you dispositioned; on a rate limit, space the writes ~20s apart and retry
+rather than treating the failure as permanent.
+
 ### Merge Authority
 
 **Two things authorize a merge: the loop converged, or the user said yes.**
