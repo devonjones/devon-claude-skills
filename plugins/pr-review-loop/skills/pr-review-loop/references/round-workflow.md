@@ -126,17 +126,41 @@ Verify each thread rather than trusting the sends, and do it per thread — a co
 Every id it prints needs a reply from you. Repost to those specifically, then run
 it again.
 
+The subshell keeps `pipefail` from leaking into the rest of the call you paste
+this into, where a later `| head` would exit 141. Every `( set -o pipefail ... )`
+in this file and in `reviewer-reported.md` is wrapped for that reason.
+
 Three disjuncts, and each exists because leaving it out lost a real thread:
 
 - **signed last** — a reviewer reopened it. A root-only test goes blind to that
   thread after your first reply.
 - **someone else spoke last** — checking "unsigned" alone tests the *body*, not
   the *author*, and "not signed by this skill" is a far larger set than "written
-  by you". It includes a human reopening the thread by replying, which SKILL.md
-  calls the user's reopen surface, and Gemini answering inside a thread it did not
-  open — either of which would otherwise discharge your disposition for you.
-- **`length == 1`** — an unreplied root from a source that does not sign: a bot,
-  or a human.
+  by you". It catches Gemini answering inside a thread it did not open, and a
+  collaborator replying from their own account — either of which would otherwise
+  discharge your disposition for you.
+- **`length == 1`** — a root nobody has answered. It is the only disjunct that
+  fires on a thread *you* opened and left alone, which happens whenever you post
+  a finding on behalf of a reviewer that failed to post its own.
+
+**Blind spot — a human on the operator's own login.** That second disjunct
+compares *authors*, so it cannot fire when the person and the automation
+authenticate as one GitHub account. That is the ordinary single-maintainer setup
+and it is this repo's: all 483 comments on PR #42 are the same login, so the
+disjunct selects 0 of 235 threads and has never fired here.
+
+Demonstrated in round 15 with a discriminating pair — one synthetic thread,
+only the reopener's login varied. Signed finding → your unsigned fix reply → a
+third unsigned reply typed by hand in the web UI. As `alice`, the gate prints
+the thread. As the token's own login, it prints nothing: the gate calls the
+thread settled while the last word is a human asking for more.
+
+No content signal separates your disposition reply from a hand-typed human one
+— both are unsigned prose under the same login — so the remedy is procedural
+rather than a cleverer query. **A reopen must carry a marker to be seen.** Use
+`reopen-comment.sh`, which signs. A raw web-UI reply under the operator's own
+login is invisible to this gate, and the only honest handling is to say so: a
+query that cannot see a case must never be described as though it can.
 
 **Delete this once `devon-claude-skills-cq0` lands** — the fix is `reply-to-comment.sh` adopting the `|| { ...; exit 1; }` that `post-line-comment.sh:49-53` already has, after which the exit status is trustworthy.
 
@@ -181,8 +205,9 @@ gh pr comment <PR> --body "$(cat <<'EOF'
 <!-- pr-review-loop:round-report -->
 Round N: posted X findings across Y agents (A withdrawn by validator);
 replied to Z threads (F fixed / W won't-fix / O out-of-scope).
-Reported: <reviewer>=ok(mutation|evidence-query|none|undeclared)|failed(<reason>), per dispatched reviewer. D dispatched / R reported.
-Roster: disabled=<...|none> retired=<...|none>.
+Reported: <reviewer>=ok(mutation|evidence-query|judgement|mixed|undeclared)|failed(<reason>), per dispatched reviewer. D dispatched / R reported.
+Roster: disabled=<...|none> retired=<...|none> overridden=<...|none>.
+Dispatched against <head SHA at dispatch>.
 EOF
 )" || { echo "round report did not post - retry before starting the next round" >&2; exit 2; }
 ```
@@ -198,6 +223,61 @@ Read the history back with:
 
 `get-pr-comments.sh` will not find these — it filters to bot authors and you are
 the operator.
+
+### Was the round valid?
+
+Run this at F7, before applying the convergence rule. The **A round the branch
+moved under is INCOMPLETE** rule needs a detector or it is a rule nothing checks;
+this is it. Record the head SHA at C3 dispatch, compare it here:
+
+```bash
+( set -o pipefail
+  NOW=$(gh pr view <PR> --json headRefOid --jq .headRefOid) \
+    || { echo "round-validity check failed - rerun it" >&2; exit 2; }
+  [[ "$NOW" == "<SHA recorded at dispatch>" ]] \
+    && echo "round valid: reviewers all read $NOW" \
+    || echo "ROUND INCOMPLETE: dispatched against <SHA recorded at dispatch>, head is now $NOW - re-dispatch" )
+```
+
+A mismatch means the reviewers did not all read the same commit. The round
+proves nothing about what would ship: discard it and re-dispatch against the new
+head. It is not a finding to be dispositioned and it is not the agent's call.
+
+**Reconstructing it for a round you did not record.** Every review comment
+carries `original_commit_id`, so the SHAs a round's findings were written
+against are recoverable after the fact:
+
+```bash
+( set -o pipefail
+  gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/comments" \
+    | jq -rs 'add | group_by(.original_commit_id)
+        | map({sha: .[0].original_commit_id, n: length, first: (min_by(.id).created_at)})
+        | sort_by(.first) | .[] | "\(.sha[0:8]) \(.n) \(.first)"' \
+    || { echo "could not read comment SHAs - rerun it" >&2; exit 2; } )
+```
+
+One SHA per round is the healthy shape. Two SHAs inside one round's time window
+is a round that was dispatched against a moving branch.
+
+**Working-tree edits are the same hazard one step earlier**, and they need
+saying because the remedy differs: a reviewer reads the pushed head, so an
+uncommitted change is invisible both to it and to `git diff main...HEAD`, and
+cannot be reviewed at all. There is no SHA to compare, so the check is
+`git status --porcelain` against the reviewed paths. An uncommitted change to a
+file in the PR's diff **does not invalidate the round** — nobody read it either
+way — but it must not land in the round's F4 commit as though it had been
+reviewed.
+
+Clear it *before* F4, not after: `commit-and-push.sh` runs `git add -A`, so
+anything left in the tree rides along in the fix commit whatever you intended.
+Commit unrelated work first, or stash it until a round can review it. Check
+with `git status --porcelain` before calling the script, not after.
+
+`.beads/` is exempt. Beads rewrites and stages its JSONL on read, so `bd show`
+— which the ticket rule *requires* a reviewer to run — dirties the tree by
+itself. A rule that a mandated check cannot satisfy is not a rule; three
+separate actors dirtied `.beads/issues.jsonl` during round 15, two of them
+reviewers obeying instructions.
 
 **Nothing the convergence rule depends on lives in this report.** That was tried
 — a strike counter, a carried-forward list, a roster progress count — and every

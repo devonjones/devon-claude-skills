@@ -280,9 +280,9 @@ that distinction — they are not a flat list of equal-force bullets.
 | **Every configured reviewer must have reported.** | A reviewer that never reported looks identical to a reviewer with nothing to say. Never infer it from an empty comment list or a zero exit status — see [`references/reviewer-reported.md`](references/reviewer-reported.md). Consequence is the **A reviewer that will not report** row below. |
 | **Every disposition must have reached its thread.** | A reply you sent is not a reply that landed; a failed POST can leave a resolved thread carrying a finding and no disposition. F4's gate is what checks this — the query is in [`references/round-workflow.md`](references/round-workflow.md). |
 | **At least one reviewer must have run.** | An empty roster — every bot disabled, every default disabled, every agent retired — produces a vacuously clean round. Zero reviewers is not convergence; it is a configuration problem. Stop and ask. |
-| **A P1/P2 disposed of by anything other than a fix blocks convergence.** | Every Won't-fix on a P1/P2 must be (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. **An out-of-scope P1/P2 is resolved by a ticket that carries it** — file it with the reviewer's own text and the comment id, reply with the ticket id, and confirm the ticket exists. Out of scope means the fix lives outside this PR's diff, not that you would rather not do it now: an in-scope P1/P2 still needs (i), (ii) or (iii). Found by the thread's last reply text — "Won't fix", "Out of scope", "Deferred" and "Acknowledged" all count — never by its resolve state. Query in [`references/round-workflow.md`](references/round-workflow.md). |
+| **A P1/P2 disposed of by anything other than a fix blocks convergence.** | Every Won't-fix on a P1/P2 must be (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. **An out-of-scope P1/P2 is resolved by a ticket that carries it** — file it with the reviewer's own text and the comment id, reply with the ticket id, and confirm the ticket exists **and is open** — `bd show` exits 0 on a closed ticket, so existence alone lets a shut ticket carry a live P1. "Deferred" resolves a P1/P2 the same way and on the same terms, since it also files a ticket; the other three dispositions do not. Out of scope means the fix lives outside this PR's diff, not that you would rather not do it now: an in-scope P1/P2 still needs (i), (ii) or (iii). Found by the thread's last reply text — "Won't fix", "Out of scope", "Deferred" and "Acknowledged" all count — never by its resolve state. Query in [`references/round-workflow.md`](references/round-workflow.md). |
 | **A CI fix is a fix.** | A fix pushed at F5 to get CI green changed the code as surely as a review fix did. The round that contained it is not clean. |
-| **A round the branch moved under is INCOMPLETE.** | Reviewers must all read the same commit. If the branch is pushed between dispatch and the last manifest, they reviewed different code and the round proves nothing — re-dispatch against the new head. Working-tree edits during a round are the same hazard one step earlier: a reviewer reads the pushed head, so an uncommitted change is invisible to it and to `git diff main...HEAD`, and cannot be reviewed at all. |
+| **A round the branch moved under is INCOMPLETE.** | Reviewers must all read the same commit. Record the head SHA at dispatch, compare it at F7, and if the branch was pushed in between, discard the round and re-dispatch against the new head — the round proves nothing about what would ship. The comparison is the point: an invariant nothing checks is a wish, and this row shipped for one round with no detector anywhere in the skill. Query in [`references/round-workflow.md`](references/round-workflow.md), which also shows how to reconstruct the SHAs of a round you forgot to record, from `original_commit_id`. Working-tree edits are the same hazard one step earlier and take a different remedy: nobody read them either, so the round still stands, but they must not ride along in its F4 commit as though they had been reviewed. `.beads/` is exempt — `bd show` restages its JSONL, so the ticket rule below would otherwise forbid the check it requires. |
 | **A self-contradiction stops the loop.** | A round that reverses a previous round's fix means the loop is oscillating, not converging. Stop and ask the user; more rounds do not fix it. |
 | **A reviewer that will not report stops the loop.** | Re-run it inside the same round. Two failures **in that round** stops the loop and asks the user — whether it failed to report or the check for it failed; one counter, both causes, because alternating them would otherwise trip neither. Nothing crosses a round boundary, so nothing has to survive one. See [`references/reviewer-reported.md`](references/reviewer-reported.md). |
 
@@ -519,8 +519,17 @@ scripts/check-ci.sh <PR> --wait
 - Fixed: "Fixed - [description]"
 - Won't fix (bad suggestion): "Won't fix - [reason]"
 - Out of scope (good suggestion): "Out of scope - tracked in BD-XXX" (see below)
-- Deferred: "Good catch, tracking in #issue"
+- Deferred: "Deferred - tracking in BD-XXX"
 - Acknowledged: "Acknowledged - [explanation]"
+
+**Lead with the disposition word.** The convergence check that finds a P1/P2
+resolved by something other than a fix is anchored on these five words at the
+start of the reply, so a reply that buries the disposition is invisible to it.
+This template used to read *"Good catch, tracking in #issue"* for Deferred:
+same disposition, same intent, and the check returned false on it while
+returning true on "Deferred - tracking in #9". A P1/P2 declined in the exact
+words this skill recommended would have been waved through — the round-13 hole
+through a third door, shipped by the template rather than by the query.
 
 ### For PR Comments (Claude)
 Reply using `gh pr comment` with a consolidated response:
@@ -1191,13 +1200,13 @@ excuse itself from work it could do: a prose reviewer asserting one sentence
 restates another can grep for both and show them.
 
 Declare the reviewer's usual mode as the first line of its body —
-`verification: mutation` | `evidence-query` | `mixed` — and treat a missing line
+`verification: mutation` | `evidence-query` | `judgement` | `mixed` — and treat a missing line
 as **undeclared**, a finding about the roster rather than the code. The
 declaration describes what the reviewer typically owes; it never licenses a
 finding to skip its proof. Surface it per round:
 
 ```
-Reported: silent-failure-hunter=ok(mutation) clarity-reviewer=ok(evidence-query) foo=ok(undeclared)
+Reported: pr-test-analyzer=ok(mutation) comment-analyzer=ok(evidence-query) silent-failure-hunter=ok(mixed) foo=ok(undeclared)
 ```
 
 **The shipped defaults declare themselves; your charter declares only your own
@@ -1213,8 +1222,15 @@ asserting it would invite six answers.
 
 **A charter on `main` does not govern a branch already open.** `AGENT-REVIEWERS.md`
 is read from the PR's branch, so a roster committed to `main` after a PR was cut
-reports `override_count: 0` and `defaults_version_checked: None` against that PR.
+reports `override_count: 0` and `defaults_version_checked: null` against that PR.
 Rebase or merge before concluding a roster change took effect.
+
+The mirror of that: `discover-agents.sh` reads the **working tree**, not the
+branch, so an uncommitted roster edit takes effect for reviewers that never saw
+it in the diff. `D dispatched / R reported` will not catch it — an edit that
+drops a reviewer shrinks `D` and `R` together, so `D == R` still holds and the
+round reports a full roster it never had. Commit roster changes before
+dispatching.
 
 **Put it in the spawn prompt, not the top of the charter.** `discover-agents.sh`
 hands each reviewer *its own section only* — a repo's `# Guidelines` and anything
@@ -1222,7 +1238,7 @@ else above the agent definitions reach the orchestrator, never the reviewers
 (measured: this repo's Guidelines section appears in 0 of its agents'
 `instructions`). A "prove your findings" paragraph written once at the top of
 `AGENT-REVIEWERS.md` therefore arrives nowhere, while looking like it was
-adopted. The spawning template above carries the requirement instead, so every
+adopted. The spawning template below carries the requirement instead, so every
 reviewer gets it whether or not its charter repeats it — which is also the only
 version an adopter cannot forget. Repeating it per agent definition is fine and
 is what the shipped defaults do; writing it once at the top is not.
@@ -1257,6 +1273,25 @@ a reviewer that caught its own non-discriminating experiment — both variants
 returned 143 — switched to a discriminating pair and only then surfaced the real
 defect underneath, which its first experiment could never have reached.
 
+**Verify the control positive before it licenses anything.** A control that comes
+back negative has two explanations — your query is broken, or your control is
+wrong — and the result cannot tell you which. Only one of them is informative, so
+an unverified control proves nothing about the instrument it was brought in to
+check. Confirm it fires on a case you *know* is there, then trust its silence.
+The worked example is a reviewer testing this file's own reply gate: the gate is
+non-discriminating against this PR, where all four variants return 0, so it built
+a fixture and confirmed that removing each disjunct loses exactly one case before
+concluding anything from it. That confirmation is the whole difference between a
+fixture and a decoration.
+
+When the control does come back negative, **suspect the explanation local to what
+you just wrote before the one with global consequences you have not observed.**
+"My control string was badly chosen" and "grep is broken" both fit, but a broken
+grep would have shown up in a hundred other places that hour and showed up in
+none — the disconfirming evidence was already in the scrollback, unconsulted,
+because the broken instrument was the interesting hypothesis. Reaching for it
+first is a bad prior wearing the clothes of diligence.
+
 **Do not reason about where the defaults live — run the loader.**
 `_load_defaults.sh` resolves its agents directory relative to its own location,
 and `~/.claude/skills/<plugin>` is usually a symlink into a checkout, so the path
@@ -1286,9 +1321,12 @@ The rest of the evidence runs one way. A reviewer claimed a repo's CI gate was
 only one declined, and complying would have broken the build. Two findings in this
 PR were *verified by reading* in one round and proved wrong by running in the next
 — `set -e` not aborting where the doc claimed, and a `$SHA` that was never
-assigned. And a reply script reported 21 replies posted when 17 had silently
-failed, while the gate that should have caught it reported clean, because gate and
-subject shared a defect: no reading of either finds that.
+assigned. Reading is how every one of them passed.
+
+**The gap between knowing a rule and being governed by it is not measured in time
+or in care. It is measured in whether something checks.** The tree-dirtying rule
+in this file was broken by its own author four minutes after it shipped, and a
+reviewer caught it. That is the section working.
 
 Audit the roster when adopting this. Aligning `AGENT-REVIEWERS.md` to this rule
 may go straight to main — it is roster configuration, and the carve-out is scoped
@@ -1337,7 +1375,12 @@ Task tool:
     the query that produces the evidence the claim depends on and report the
     number. Report what you observed, not what you expect. A finding you could
     not demonstrate is a hypothesis and must say so. A judgement about design
-    or wording owes no demonstration and must be labelled as judgement.
+    or wording owes no demonstration and must be labelled as judgement. If
+    your check comes back empty, suspect your query before you report a defect
+    in the thing under test, and verify any control you lean on fires on a case
+    you know is there
+    — a control that has not been shown to work proves nothing by staying
+    silent.
 
     **Never modify the working tree.** You review; you do not revert, stage, or
     fix. If you find the tree dirty or otherwise inconsistent, report it — do not
