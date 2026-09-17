@@ -10,7 +10,7 @@ manifest to return, a bot does not.
 | Reviewer | Reported means | Not reported |
 |---|---|---|
 | **Agent reviewer (C3)** | Returned a posting manifest, including the literal "No issues found" | Task failed, returned nothing, or returned an off-shape answer that names no findings and does not say it found none |
-| **External bot (C1/C2)** | A review by that bot exists whose commit matches the current head SHA | No such review, or you could not establish one either way |
+| **External bot (C1/C2)** | A review by that bot exists whose commit matches the current head SHA | No such review. A check that *failed* is a third case — see below; it is not a strike against the reviewer. |
 | **Disabled bot, disabled agent, retired agent** | Outside the denominator — deliberately not dispatched | n/a |
 
 A zero result is "not reported" — route it to "A reviewer that will not report"
@@ -33,24 +33,18 @@ COUNT=$(gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/reviews" \
       'add | [.[] | select((.user.login == "gemini-code-assist[bot]"
                             or .user.login == "gemini-code-assist")
                            and .commit_id == $sha)] | length') \
-  || { echo "check failed: could not query reviews" >&2; exit 2; }
+  || { echo "check failed: could not query reviews" >&2; exit 2; }   # keep: `set -e` does NOT
+       # abort a failed assignment in an agent tool call, so this explicit guard is the only one.
 echo "$COUNT"
 ```
 
-Non-zero means that bot reported on this commit. Match **every login spelling the
-bot posts under** — Gemini uses two, and five call sites in this skill carry both.
+Non-zero means that bot reported on this commit.
 
-**A failed check is not a zero**, and it takes both guards to keep it that way.
-`pipefail` is what makes a mid-pagination `gh` failure visible at all — without
-it the pipeline reports `jq`'s status and a truncated page set yields a confident
-wrong number. The explicit `|| { ...; exit 2; }` is what stops it: `set -e` does
-**not** abort a failed assignment when this snippet runs as an agent's tool call
-rather than as `bash script.sh`, so relying on ambient errexit leaves the bad
-value assigned and execution continuing. Verified both paths.
-
-Exit 2 means *the check failed*. Re-run **the check** — not the reviewer — and do
-not spend a reviewer strike on it: the two-strike rule in `SKILL.md` counts rounds
-where a reviewer did not report, not rounds where your tooling fell over.
+**A failed check is not a zero.** Exit 2 means the check broke. Re-run **the
+check** — not the reviewer — and do not spend a reviewer strike on it: the
+two-strike rule in `SKILL.md` counts rounds where a reviewer did not report, not
+rounds where your tooling fell over. `pipefail` stays set for the rest of the
+call you paste this into; re-set it if later commands rely on the default.
 
 ## A bot whose login you cannot establish
 

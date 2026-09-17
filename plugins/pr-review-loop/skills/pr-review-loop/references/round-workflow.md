@@ -103,23 +103,26 @@ gh pr comment <PR> --body "## Response to Claude Review
 
 **Gate**: every finding in this round's fix set corresponds to a posted PR thread (Gemini, bot, or agent) with a reply **that actually landed**. If any fix has no thread, go back to F3 — a commit message is not an audit trail.
 
-Verify each thread rather than trusting the sends, and do it per thread — a count tells you how many replies are missing, never which. This must cover **every** thread you dispositioned, Gemini's and other bots' as well as your agents'; `get-agent-comments.sh` cannot do it, because it filters on the `<!-- Agent: <name> -->` marker that only `post-line-comment.sh` writes, so no value of `<agent>` ever retrieves a Gemini thread. Ask GitHub for unresolved-or-unanswered threads directly instead:
+Verify each thread rather than trusting the sends, and do it per thread — a count tells you how many replies are missing, never which. This must cover **every** thread you dispositioned, Gemini's and other bots' as well as your agents'. `get-agent-comments.sh` cannot do it: it filters on the `<!-- Agent: <name> -->` marker, which is only ever written by this skill's own posting scripts, so a Gemini thread is unreachable by any value of `<agent>`. Ask GitHub which roots have no reply:
 
 ```bash
-gh api graphql -f query='
-  query($owner:String!,$repo:String!,$pr:Int!){
-    repository(owner:$owner,name:$repo){ pullRequest(number:$pr){
-      reviewThreads(first:100){ nodes{
-        isResolved
-        comments(first:100){ nodes{ author{login} body } }
-      } } } }
-  }' -F owner=<owner> -F repo=<repo> -F pr=<PR> \
-  | jq -r '.data.repository.pullRequest.reviewThreads.nodes[]
-           | select([.comments.nodes[].author.login] | index("<your-login>") | not)
-           | .comments.nodes[0].body[0:80]'
+gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/comments" \
+  | jq -s 'add as $a
+      | ($a | map(select(.in_reply_to_id != null) | .in_reply_to_id) | unique) as $answered
+      | $a[] | select(.in_reply_to_id == null)
+      | select(.id as $i | $answered | index($i) | not)
+      | "\(.id) \(.path):\(.line)"' \
+  || { echo "reply check failed - rerun it" >&2; exit 2; }
 ```
 
-Anything it prints is a thread carrying a finding with no reply from you — repost to those specifically. A resolved thread among them is the `devon-claude-skills-cq0` signature (do not look for an "empty REPLIES block" from `get-agent-comments.sh`; that header is only emitted when a reply exists, so a missing reply omits the label rather than showing it empty): `reply-to-comment.sh` resolves the thread and exits 0 even when the reply POST failed, so there is no exit status to gate on, and GitHub applies a secondary rate limit (HTTP 422, `"code": "abuse"`) after a few dozen writes in a short window. Space reposts ~20s apart; after 3 retry rounds, stop and tell the user.
+Every line it prints is a thread carrying a finding you never answered. Repost to
+those ids specifically, then run it again — empty output only means "all
+answered" when the command also exited 0.
+
+Do not match on your own login: agent findings are posted under the same token
+you reply with, so "a comment by me exists on this thread" is true of every agent
+thread before you reply to any of them. Reply-vs-root is the distinction that
+works, and `--paginate` matters — this PR passed 100 threads mid-loop.
 
 **Delete this once `devon-claude-skills-cq0` lands** — the fix is `reply-to-comment.sh` adopting the `|| { ...; exit 1; }` that `post-line-comment.sh:49-53` already has, after which the exit status is trustworthy.
 
