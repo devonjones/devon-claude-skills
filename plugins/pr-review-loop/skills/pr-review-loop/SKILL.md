@@ -282,6 +282,7 @@ that distinction — they are not a flat list of equal-force bullets.
 | **At least one reviewer must have run.** | An empty roster — every bot disabled, every default disabled, every agent retired — produces a vacuously clean round. Zero reviewers is not convergence; it is a configuration problem. Stop and ask. |
 | **A P1/P2 disposed of by anything other than a fix blocks convergence.** | Every Won't-fix on a P1/P2 must be (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. **An out-of-scope P1/P2 is resolved by a ticket that carries it** — file it with the reviewer's own text and the comment id, reply with the ticket id, and confirm the ticket exists. Out of scope means the fix lives outside this PR's diff, not that you would rather not do it now: an in-scope P1/P2 still needs (i), (ii) or (iii). Found by the thread's last reply text — "Won't fix", "Out of scope", "Deferred" and "Acknowledged" all count — never by its resolve state. Query in [`references/round-workflow.md`](references/round-workflow.md). |
 | **A CI fix is a fix.** | A fix pushed at F5 to get CI green changed the code as surely as a review fix did. The round that contained it is not clean. |
+| **A round the branch moved under is INCOMPLETE.** | Reviewers must all read the same commit. If the branch is pushed between dispatch and the last manifest, they reviewed different code and the round proves nothing — re-dispatch against the new head. Working-tree edits during a round are the same hazard one step earlier: a reviewer reads the pushed head, so an uncommitted change is invisible to it and to `git diff main...HEAD`, and cannot be reviewed at all. |
 | **A self-contradiction stops the loop.** | A round that reverses a previous round's fix means the loop is oscillating, not converging. Stop and ask the user; more rounds do not fix it. |
 | **A reviewer that will not report stops the loop.** | Re-run it inside the same round. Two failures **in that round** stops the loop and asks the user — whether it failed to report or the check for it failed; one counter, both causes, because alternating them would otherwise trip neither. Nothing crosses a round boundary, so nothing has to survive one. See [`references/reviewer-reported.md`](references/reviewer-reported.md). |
 
@@ -1251,7 +1252,10 @@ also becomes 1. Six reviewers refuted it. The run had happened; it just could no
 have come out any other way, because both variants ended in `false` and expected
 status 1 either way. They differed on the wrong axis. Running something is not
 the same as testing it: vary the one thing your claim is about, and confirm the
-other branch gives the other answer.
+other branch gives the other answer. This pays for itself rather than costing:
+a reviewer that caught its own non-discriminating experiment — both variants
+returned 143 — switched to a discriminating pair and only then surfaced the real
+defect underneath, which its first experiment could never have reached.
 
 **Do not reason about where the defaults live — run the loader.**
 `_load_defaults.sh` resolves its agents directory relative to its own location,
@@ -1334,6 +1338,11 @@ Task tool:
     number. Report what you observed, not what you expect. A finding you could
     not demonstrate is a hypothesis and must say so. A judgement about design
     or wording owes no demonstration and must be labelled as judgement.
+
+    **Never modify the working tree.** You review; you do not revert, stage, or
+    fix. If you find the tree dirty or otherwise inconsistent, report it — do not
+    correct it. Touching live state during a round is how a reviewer becomes a
+    second author of the thing it is reviewing.
 
     **Your scope: <agent.scope>**
     You should ONLY review changes to the files listed below. Ignore all other files.
