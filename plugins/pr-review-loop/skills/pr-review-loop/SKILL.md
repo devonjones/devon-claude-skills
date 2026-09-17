@@ -277,37 +277,12 @@ that distinction — they are not a flat list of equal-force bullets.
 | Rule | Why |
 |---|---|
 | **A P1 or P2 fix means the round was NOT clean.** | The next round reviews *different code*. A review that passed did not pass on what would actually ship. Push the fix, run another round. (A P3-only fix is the agent's call — see below.) |
-| **Every configured reviewer must have reported.** | A reviewer that errored, rate-limited, or timed out makes the round INCOMPLETE, not clean — a reviewer that never reported looks identical to a reviewer with nothing to say. See "What counts as reported" below; do not infer it from an empty comment list. |
+| **Every configured reviewer must have reported.** | A reviewer that errored, rate-limited, or timed out makes the round INCOMPLETE, not clean — a reviewer that never reported looks identical to a reviewer with nothing to say. See "What counts as reported" below; never infer it from an empty comment list or a zero exit status. |
 | **At least one reviewer must have run.** | An empty roster — every bot disabled, every default disabled, every agent retired — produces a vacuously clean round. Zero reviewers is not convergence; it is a configuration problem. Stop and ask. |
 | **An unresolved P1/P2 "Won't fix" carried forward from any round blocks convergence.** | Every Won't-fix on a P1/P2 must be (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. **Filing a beads ticket does not resolve a P1/P2** — a ticket is a deferral, so it needs one of those same three resolutions. Ticketing resolves P3s only. |
 | **A CI fix is a fix.** | A fix pushed at F5 to get CI green changed the code as surely as a review fix did. The round that contained it is not clean. |
 | **A self-contradiction stops the loop.** | A round that reverses a previous round's fix means the loop is oscillating, not converging. Stop and ask the user; more rounds do not fix it. |
-
-#### What counts as "reported"
-
-"Reported" means a different artifact per reviewer class, and the distinction
-matters — an agent has a manifest to return, a bot does not.
-
-| Reviewer | Reported means | Not reported |
-|---|---|---|
-| **Agent reviewer (C3)** | Returned a posting manifest, including the literal "No issues found" | Task failed, returned nothing, or returned an off-shape answer that names no findings and does not say it found none |
-| **External bot (C1/C2)** | Its trigger/fetch script exited successfully **and** a review exists for the current head commit | Script reported quota exhaustion, an error, or a poll timeout; or the newest review predates the current head commit |
-| **Disabled bot, retired agent** | Outside the denominator entirely — deliberately not dispatched | n/a |
-
-For a bot, "zero comments" is only a clean signal once you have confirmed a
-review actually ran against this commit. Silence from a bot that was never
-triggered, hit quota, or timed out is indistinguishable from silence from a bot
-that had nothing to say, and the script's exit status is the only thing that
-tells them apart.
-
-**Record it, do not hold it in your head.** The end-of-round report carries a
-per-reviewer status line every round, so this is checkable after the fact rather
-than an unverifiable claim.
-
-**A reviewer that will not report.** Re-run it. If the same reviewer fails
-**twice in the same loop** — the count is per reviewer, across the whole loop,
-and resets only on a successful report — stop and ask the user. A per-round
-counter would reset every round and never reach two.
+| **A reviewer that will not report stops the loop.** | Re-run it. If the same reviewer fails **twice in the same loop** — counted per reviewer across the whole loop, resetting only on a successful report — stop and ask the user. A per-round counter would reset every round and never reach two. |
 
 **Agent's judgement — explicitly discretionary:**
 
@@ -332,6 +307,48 @@ counter would reset every round and never reach two.
   bullet covers a round of P3s you disagree with. Unbounded, it would swallow the
   fixed rule and let a loop converge by overruling its reviewers on precisely the
   findings that matter most.
+
+#### What counts as "reported"
+
+Different artifact per reviewer class — an agent has a manifest to return, a bot
+does not.
+
+| Reviewer | Reported means | Not reported |
+|---|---|---|
+| **Agent reviewer (C3)** | Returned a posting manifest, including the literal "No issues found" | Task failed, returned nothing, or returned an off-shape answer that names no findings and does not say it found none |
+| **External bot (C1/C2)** | A review by that bot exists whose commit matches the current head SHA | No such review, or you could not establish one either way |
+| **Disabled bot, disabled agent, retired agent** | Outside the denominator — deliberately not dispatched | n/a |
+
+**Do not use the wrapper script's exit status to decide this.** As shipped,
+`trigger-review.sh` and `get-review-comments.sh` exit 0 when a `--wait` poll
+times out with nothing, and `get-review-comments.sh` without `--wait` exits 0
+after only printing a quota warning. `trigger-review.sh` also returns 0 as soon
+as any unresolved thread exists — including the agent reviewers' own C3 threads
+from this same round, and the carried-forward P1/P2 threads the rules above
+*require* to stay open — so it can succeed without ever waiting for the bot.
+Exit 0 means "nothing went visibly wrong", not "the bot reviewed this commit".
+
+Establish the head-commit match yourself:
+
+```bash
+SHA=$(gh pr view <PR> --json headRefOid --jq .headRefOid)
+gh api "/repos/<owner>/<repo>/pulls/<PR>/comments?per_page=100" \
+  --jq '[.[] | select(.user.login | test("gemini|cursor"; "i")) | .commit_id] | unique'
+# the bot reported this round only if $SHA appears in that list
+```
+
+An empty list means the bot has never commented on this PR at all — which is
+what a bot that is enabled by default but not actually installed on the repo
+looks like. That is "could not establish", not "nothing to say".
+
+If that comes back false, or you cannot run it, the bot has **not** reported and
+the round is incomplete — route it to "A reviewer that will not report" above.
+`--latest` is not a substitute: it compares commit SHAs with `>=`, which is a
+lexicographic string compare on hex and is wrong in both directions.
+
+**Record it, do not hold it in your head.** The end-of-round report carries a
+per-reviewer status line, so this is checkable after the fact rather than an
+unverifiable claim. Compute it at F7, before applying the convergence rule.
 
 ### Merge Authority
 
@@ -450,7 +467,7 @@ EACH ROUND — three phases, in order:
   │ F4. Commit and push ONCE (if ANY fixes were made)           │
   │ F5. Wait for CI checks; fix failures (max 3 CI retries)     │
   │ F6. Trigger next review (--wait)                            │
-  │ F7. Inspect F6's output BEFORE applying exit conditions     │
+  │ F7. Count D dispatched / R reported, then apply convergence │
   └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -1332,16 +1349,12 @@ report" under Convergence. Without this, three silent spawn failures retire an
 agent, and retirement then certifies it as "reported", which launders the exact
 failure the convergence rule exists to catch.
 
-A retired agent is outside the "every reviewer reported" denominator because it
-was deliberately not dispatched — which is only true when it was retired for
-having nothing to say.
-
 Per agent:
 
 - Track each agent's state: productive / retirement-candidate / retired
-- After 2-3 **reported** rounds where an agent produces only nitpicks or "Won't fix" responses, mark it a retirement-candidate and give it one more round
-- If that round produces a real fix, reset it to productive
-- If that round produces nothing actionable, **stop calling that agent**
+- After 2-3 **reported** rounds where an agent produces only nitpicks or "Won't fix" responses, mark it a retirement-candidate and give it one more **reported** round
+- If that reported round produces a real fix, reset it to productive
+- If that reported round produces nothing actionable, **stop calling that agent**
 - **Unless it is the last reviewer standing.** Do not retire it and do not keep calling it in a loop — stop and ask the user, the same resolution as "At least one reviewer must have run" under Convergence. A roster of one exhausted reviewer is a configuration problem, not a converged loop.
 
 Example tracking:

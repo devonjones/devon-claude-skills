@@ -131,9 +131,9 @@ scripts/trigger-review.sh <PR> --wait
 
 The `--wait` flag polls every 30s for up to 5 minutes waiting for new comments. Do NOT use sleep or manual polling.
 
-### F7. Inspect F6's output BEFORE applying exit conditions
+### F7. Count reporters, then apply the convergence rule
 
-If F6 returned new comments, start the next COLLECT PHASE. Otherwise apply the convergence rule (see Convergence in `SKILL.md`). One clean round converges; there is no round cap.
+If F6 returned new comments, start the next COLLECT PHASE. Otherwise: count `D` reviewers dispatched against `R` that reported (see "What counts as reported" in `SKILL.md` — a bot's status is a head-SHA match, not a script exit status), then apply the convergence rule. `D` and `R` must match. One clean round converges; there is no round cap.
 
 ### End-of-round report (every round)
 
@@ -142,6 +142,12 @@ Emit a short status block so posting-protocol drift is visible immediately:
 ```
 Round N: posted X findings across Y agents (A withdrawn by validator);
 replied to Z threads (F fixed / W won't-fix / O out-of-scope); Gemini: G comments.
+Reported: <reviewer>=ok|failed(<reason>) for every dispatched reviewer. D dispatched / R reported.
 ```
+
+The `Reported:` line is what makes "every configured reviewer must have reported"
+checkable rather than an unverifiable claim — `D` and `R` must match before the
+round can be called clean. See "What counts as reported" in `SKILL.md`; a bot's
+status comes from a head-SHA match, never from a script's exit status.
 
 A round that fixed findings but shows zero posted/replied threads is broken — correct it before the next round (post the missing threads per F3's recovery rule) and note the violation in the merge-readiness summary.
