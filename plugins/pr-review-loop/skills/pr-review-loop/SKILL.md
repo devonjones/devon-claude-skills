@@ -108,7 +108,7 @@ disabled bot is never triggered and never waited for.
 
 The convergence rule (see Convergence) depends on classifying findings as P1/P2 vs P3/nitpick. Use this table:
 
-| Source label | P-level | Blocks quality-weighted exit? |
+| Source label | P-level | Blocks convergence? |
 |---|---|---|
 | Gemini `![critical]`, `![high]` | P1/P2 | Yes — must be resolved or merged with explicit user sign-off |
 | Gemini `![medium]` | P2 if correctness/security/breaking; else P3 | Yes if correctness/security/breaking; no if style/prose |
@@ -118,7 +118,7 @@ The convergence rule (see Convergence) depends on classifying findings as P1/P2 
 | Claude `⚠️` | P2 if correctness/security/breaking; else P3 | Yes if correctness/security/breaking; no if style/prose |
 | Agent comment, no explicit label | Infer from content: correctness/security/breaking → P1/P2; else P3 | Per inferred level |
 
-**"Won't fix" on a P1/P2 finding does NOT resolve it on its own** — it still blocks quality-weighted exit unless (i) the finding is reclassified to P3 with explicit justification (drop one P-level with reasoning), (ii) the finding is actually fixed in a later round, or (iii) the user explicitly signs off on the carry-forward, in which case the finding is recorded as an acknowledged unresolved item in the merge-readiness summary.
+**"Won't fix" on a P1/P2 finding does NOT resolve it on its own** — it still blocks convergence unless (i) the finding is reclassified to P3 with explicit justification (drop one P-level with reasoning), (ii) the finding is actually fixed in a later round, or (iii) the user explicitly signs off on the carry-forward, in which case the finding is recorded as an acknowledged unresolved item in the merge-readiness summary.
 
 The (iii) escape valve exists so the model isn't forced to relabel a genuine "won't fix" as a reclassification: surface the finding to the user, they sign off, it's recorded in the merge-readiness summary.
 
@@ -260,34 +260,23 @@ Before replying to the reviewer or making the fix:
 
 ## Stopping Heuristics
 
-Use signal quality — not a fixed round cap — to decide when to stop iterating.
+A round that isn't clean means run another round — that is the whole stopping
+rule (see Convergence). There is no round cap and no separate scorecard: the
+loop runs until it converges, or until the user says merge.
 
-### Per-Round Assessment
+One signal still needs watching every round, because it is an input to the
+convergence rule rather than an alternative to it:
 
-After each round, evaluate:
+| Signal | What to do |
+|---|---|
+| **Contradiction count** — did this round reverse a fix from a previous round? | Stop and ask the user. A loop that oscillates is degrading the code, and no number of further rounds fixes that. |
 
-| Metric | What It Means |
-|--------|---------------|
-| **Fix/rejection ratio** | What fraction of comments led to actual code fixes vs. "Won't fix" responses? A declining ratio suggests diminishing returns. |
-| **Severity trend** | Are new comments addressing high-priority issues (correctness, security) or low-priority nitpicks (style, documentation)? |
-| **Contradiction count** | Has this round contradicted any previous round's fixes? If so, investigate before continuing. |
-| **Net code quality** | Is the code measurably better than after the previous round? Or are changes lateral (different but not better)? |
+### When to Stop and Ask
 
-### When to Continue
-
-- The current round produced fixes for genuine correctness or security issues
-- New comments are addressing aspects not previously reviewed
-- The fix/rejection ratio remains above ~50% (most comments are actionable)
-
-### When to Stop
-
-The loop stops when it **converges** — see Convergence below. There is no round
-cap: the loop runs until it converges, or until the user says merge.
-
-Stop and ask the user (do not converge) when:
+These block convergence and are not the agent's call:
 
 - A self-contradiction is detected across rounds
-- A P1/P2 finding is being carried forward as "Won't fix" without one of the resolutions in Convergence below
+- A reviewer keeps failing — see "A reviewer that will not report" under Convergence
 
 ## Convergence
 
@@ -309,8 +298,20 @@ that distinction — they are not a flat list of equal-force bullets.
 |---|---|
 | **One clean round converges.** | A second confirming round buys nothing the first didn't. |
 | **A P1 or P2 fix means the round was NOT clean.** | The next round reviews *different code*. A review that passed did not pass on what would actually ship. Push the fix, run another round. (A P3-only fix is the agent's call — see below.) |
-| **A reviewer that errored, rate-limited, or timed out makes the round INCOMPLETE, not clean.** | A reviewer that never reported looks identical to a reviewer with nothing to say. Re-run it; an incomplete round is not a result. |
-| **An unresolved P1/P2 "Won't fix" carried forward from any round blocks convergence.** | Every Won't-fix on a P1/P2 must be (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. |
+| **Every configured reviewer must have reported.** | A reviewer that errored, rate-limited, or timed out makes the round INCOMPLETE, not clean — a reviewer that never reported looks identical to a reviewer with nothing to say. Check this explicitly; do not infer it from an empty comment list. |
+| **At least one reviewer must have run.** | An empty roster — every bot disabled, every default disabled, every agent retired — produces a vacuously clean round. Zero reviewers is not convergence; it is a configuration problem. Stop and ask. |
+| **An unresolved P1/P2 "Won't fix" carried forward from any round blocks convergence.** | Every Won't-fix on a P1/P2 must be (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. **Filing a beads ticket does not resolve a P1/P2** — a ticket is a deferral, so it needs one of those same three resolutions. Ticketing resolves P3s only. |
+| **A CI fix is a fix.** | A fix pushed at F5 to get CI green changed the code as surely as a review fix did. The round that contained it is not clean. |
+
+**Checking "every reviewer reported" is a positive check.** Count the reviewers
+you dispatched, count the ones that returned a manifest (including "No issues
+found"), and compare. Zero comments from a reviewer that reported is a clean
+signal; zero comments from a reviewer that never returned is a hole.
+
+**A reviewer that will not report.** Re-run it. If the same reviewer fails a
+second time, stop and ask the user — do not keep re-running, and do not call the
+round clean because the failure is inconvenient. Removing the round cap removed
+the thing that used to break this loop by accident; this is what replaces it.
 
 **Agent's judgement — explicitly discretionary:**
 
@@ -325,10 +326,18 @@ that distinction — they are not a flat list of equal-force bullets.
 
 - **Disagreed with every finding → the round can be clean.** Lean clean. A round
   you disagree with end to end is usually evidence that the *reviewers* are
-  underperforming, not a licence you granted yourself to skip them. The agent may
+  underperforming, not a license you granted yourself to skip them. The agent may
   always run another round if that seems prudent. If it keeps happening, that is
   a roster problem rather than a round problem — run the `dream-reviewers` skill
   against the roster instead of shrugging it off round after round.
+
+  **This discretion does not reach P1/P2.** Disagreeing with a P1/P2 finding is a
+  Won't-fix on a P1/P2, which the fixed rule above already blocks on. So this
+  bullet covers a round of P3s you disagree with; a round where you disagree with
+  a correctness or security finding needs reclassification, a fix, or the user's
+  sign-off, exactly as the table says. Without that bound the discretionary rule
+  would swallow the fixed one and a loop could converge by overruling its
+  reviewers on precisely the findings that matter most.
 
 ### Merge Authority
 
@@ -377,8 +386,7 @@ If repo-specific guidance defines additional merge criteria (attestation require
 
 ### 4. Merge or Ask
 
-**The loop converging IS the authorization** (see Merge Authority) — so is an
-explicit "merge it" from the user. Nothing else is.
+Per Merge Authority above:
 
 - **Converged (or the user said yes)** and the repo's own criteria are met — CI passed, required approvals present, branch protections satisfied: merge, and present the summary alongside it
 - **Not converged**, or a repo criterion is unmet: present the summary and ask the user. Do not merge on a round that is clean only in a weaker sense — ask rather than picking the reading that permits the merge
@@ -462,8 +470,8 @@ EACH ROUND — three phases, in order:
 **For full step-by-step details with commands and example outputs, see [`references/round-workflow.md`](references/round-workflow.md).** The diagram above is the authoritative execution order; the reference file is the operational companion the model can read on demand when actually running a round.
 
 **COMPLETION:**
-When a round is clean under the convergence rule (every reviewer reported,
-nothing was fixed this round):
+When a round is clean under the convergence rule (test it against Convergence —
+do not re-derive it here):
 - Report all beads tickets created during the loop (if any)
 - The loop converged, which authorizes the merge — proceed to Merge Readiness
 
@@ -1300,7 +1308,7 @@ Agent reviewers run as C3 — the last step of the COLLECT phase, after C1 (Gemi
    below) — this is the durable, unbiased telemetry that survives even when a
    finding never gets posted, and the only record of *who* dispositioned it.
 
-3. **Update per-agent tracking** based on results (productive / final-verification / retired)
+3. **Update per-agent tracking** based on results (productive / retirement-candidate / retired)
 
 4. **In F4–F6**, commit + push the batched fixes once, wait for CI, and trigger the next review.
 
@@ -1315,17 +1323,24 @@ Agent reviewers run as C3 — the last step of the COLLECT phase, after C1 (Gemi
 
 ### Diminishing Returns for Agent Reviewers
 
-Apply the same heuristic as Gemini, but **per agent**:
+**This is reviewer retirement, not loop termination.** It decides whether to keep
+*calling* an individual agent; the convergence rule decides when the loop is
+done. Retiring an agent never converges a round, and a retired agent still counts
+as "reported" — it was deliberately not dispatched, which is the opposite of a
+reviewer that silently failed.
 
-- Track each agent via `TaskCreate`: `"<agent-name>: final verification loop"`
-- After 2-3 cycles where an agent produces only nitpicks or "Won't fix" responses, enter final verification for that agent
-- If an agent's final verification produces actual fixes, reset its state
-- If an agent's final verification produces no actionable feedback, **stop calling that agent**
+Per agent:
+
+- Track each agent's state: productive / candidate-for-retirement / retired
+- After 2-3 rounds where an agent produces only nitpicks or "Won't fix" responses, mark it a retirement candidate and give it one more round
+- If that round produces a real fix, reset it to productive
+- If that round produces nothing actionable, **stop calling that agent**
+- Never retire the last remaining reviewer — see "At least one reviewer must have run" under Convergence
 
 Example tracking:
 ```
-- "security-reviewer: 2 cycles, still productive" (keep calling)
-- "dry-reviewer: final verification loop" (one more, then retire if no actionable feedback)
+- "security-reviewer: 2 rounds, still productive" (keep calling)
+- "dry-reviewer: retirement candidate" (one more round, then retire if nothing actionable)
 - "error-handling-reviewer: retired" (no longer called)
 ```
 
@@ -1334,7 +1349,7 @@ Example tracking:
 As agents reach diminishing returns, stop calling them. The main loop should:
 
 1. Parse `AGENT-REVIEWERS.md` to get all agent names
-2. Track per-agent state (productive / final-verification / retired)
+2. Track per-agent state (productive / retirement-candidate / retired)
 3. Only spawn Tasks for non-retired agents
 4. Update state after each cycle based on results
 
