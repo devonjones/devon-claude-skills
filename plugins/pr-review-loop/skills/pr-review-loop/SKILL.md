@@ -1237,8 +1237,12 @@ else above the agent definitions reach the orchestrator, never the reviewers
 `AGENT-REVIEWERS.md` therefore arrives nowhere, while looking like it was
 adopted. The spawning template below carries the requirement instead, so every
 reviewer gets it whether or not its charter repeats it — which is also the only
-version an adopter cannot forget. Repeating it per agent definition is fine and
-is what the shipped defaults do; writing it once at the top is not.
+version an adopter cannot forget. Do **not** repeat it in an agent definition:
+`instructions` is the whole file body and the template pastes that in before
+appending its own copy, so a charter that repeats the paragraph ships it twice
+to every reviewer it spawns. The shipped defaults did exactly that for two
+rounds. What belongs in the definition is the `verification:` line, which is
+per-agent and says something the template cannot.
 
 **Undeclared on purpose beats a guess.** A roster that declares only the
 reviewers whose findings it has actually read is more honest than one that
@@ -1306,8 +1310,8 @@ silent truncation: the query succeeds, the shape is right, the number is a
 subset, and nothing anywhere says so. `--paginate` on every list endpoint, and
 `reviewThreads(first: 100)` is not a query, it is a query about the first
 hundred. On this PR a single unpaginated page of review comments returns 30 of
-531 — so a gate reading one page would report clean while missing 94% of the
-threads it exists to check. Knowing roughly how many results there should be is
+531 — so a gate reading one page would report clean while missing the overwhelming
+majority of the threads it exists to check. Knowing roughly how many results there should be is
 what turns the truncation from invisible into obvious.
 
 **A fixture that cannot fail is not a test.** Verify every fixture fails against
