@@ -1302,6 +1302,15 @@ roster: read `# Configuration` rather than prose describing it — a charter onc
 recorded three defaults as "not adopted" while `disabled` was absent and all three
 were spawning, and the finding was written by the reviewer the prose said was off.
 
+**Paginate, then check the total against what you expect.** A page limit is a
+silent truncation: the query succeeds, the shape is right, the number is a
+subset, and nothing anywhere says so. `--paginate` on every list endpoint, and
+`reviewThreads(first: 100)` is not a query, it is a query about the first
+hundred. On this PR a single unpaginated page of review comments returns 30 of
+531 — so a gate reading one page would report clean while missing 94% of the
+threads it exists to check. Knowing roughly how many results there should be is
+what turns the truncation from invisible into obvious.
+
 **A fixture that cannot fail is not a test.** Verify every fixture fails against
 the defect it pins — a suite that passed 9/9 with two HIGH bugs live had two cases
 that could not fail at all.
