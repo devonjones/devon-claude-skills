@@ -53,6 +53,19 @@ For each issue in the comment, parse the structured markdown (numbered issues, f
 
 ### C3. Run agent reviewers
 
+**Record the head SHA before you spawn anything.** The round-validity check
+compares against it, and it is the only moment the value exists — by F4 the
+branch has moved under your own commit.
+
+```bash
+gh pr view <PR> --json headRefOid --jq .headRefOid \
+  || { echo "cannot read head SHA - do not dispatch blind" >&2; exit 2; }
+```
+
+Carry it to the BATCH POINT and into the round report's `Dispatched against`
+line. Also confirm the tree is clean before dispatching: reviewers read the
+pushed head, so an uncommitted change is invisible to them.
+
 The merged default + user agent set comes from pre-loop setup:
 
 - Spawn non-retired agents as parallel Tasks (defaults always spawn unless overridden or disabled per C+E), using the spawning template from `SKILL.md` VERBATIM on the posting steps — each agent POSTS its own findings as line comments via `post-line-comment.sh` and returns a posting manifest (`severity | file:line | title` per finding). Do NOT rewrite the template into "return findings, don't post" (⛔ rule 3: the PR is the system of record; unposted findings break the audit trail AND next round's `get-agent-comments.sh` dedup).
@@ -118,6 +131,8 @@ Verify each thread rather than trusting the sends, and do it per thread — a co
     | jq -rs --arg me "$ME" 'add | group_by(.in_reply_to_id // .id)
         | map(select( (sort_by(.id) | last | .body | startswith("🤖 **Claude Code** ("))
                       or (sort_by(.id) | last | .user.login != $me)
+                      or (sort_by(.id) | last | .body
+                          | test("^[*_>`~ -]*(Fixed|Won.t fix|Out of scope|Deferred|Acknowledged)"; "i") | not)
                       or length == 1 ))
         | .[] | "\(.[0].in_reply_to_id // .[0].id) \(.[0].path):\(.[0].line // .[0].original_line)"' \
     || { echo "reply check failed - rerun it" >&2; exit 2; } )
@@ -130,7 +145,7 @@ The subshell keeps `pipefail` from leaking into the rest of the call you paste
 this into, where a later `| head` would exit 141. Every `( set -o pipefail ... )`
 in this file and in `reviewer-reported.md` is wrapped for that reason.
 
-Three disjuncts, and each exists because leaving it out lost a real thread:
+Four disjuncts, and each exists because leaving it out lost a real thread:
 
 - **signed last** — a reviewer reopened it. A root-only test goes blind to that
   thread after your first reply.
@@ -143,24 +158,33 @@ Three disjuncts, and each exists because leaving it out lost a real thread:
   fires on a thread *you* opened and left alone, which happens whenever you post
   a finding on behalf of a reviewer that failed to post its own.
 
-**Blind spot — a human on the operator's own login.** That second disjunct
-compares *authors*, so it cannot fire when the person and the automation
-authenticate as one GitHub account. That is the ordinary single-maintainer setup
-and it is this repo's: all 483 comments on PR #42 are the same login, so the
-disjunct selects 0 of 235 threads and has never fired here.
+- **last word is not a disposition** — the one that covers a human on your own
+  login. The author test compares *logins*, so it cannot fire when the person and
+  the automation authenticate as one GitHub account, which is the ordinary
+  single-maintainer setup. A hand-typed reopen then looks exactly like your own
+  reply: same author, unsigned prose. What separates them is that *your*
+  dispositions lead with a disposition word and a human's pushback does not.
 
-Demonstrated in round 15 with a discriminating pair — one synthetic thread,
-only the reopener's login varied. Signed finding → your unsigned fix reply → a
-third unsigned reply typed by hand in the web UI. As `alice`, the gate prints
-the thread. As the token's own login, it prints nothing: the gate calls the
-thread settled while the last word is a human asking for more.
+Round 15 argued the opposite — that no content signal existed, so the remedy had
+to be procedural — and shipped **Lead with the disposition word** in the same
+commit, which is that signal being made mandatory. Two reviewers measured the
+correction independently against every thread on the PR and agreed on the shape:
+the overwhelming majority of last replies lead with a disposition word, the
+handful that do not are all operator dispositions in off-template vocabulary
+("Noted…", "Reopen accepted…"), and **none is a human reopen**. Re-measure rather
+than trusting that ratio — it is a property of how disciplined the replies have
+been, not a constant.
 
-No content signal separates your disposition reply from a hand-typed human one
-— both are unsigned prose under the same login — so the remedy is procedural
-rather than a cleverer query. **A reopen must carry a marker to be seen.** Use
-`reopen-comment.sh`, which signs. A raw web-UI reply under the operator's own
-login is invisible to this gate, and the only honest handling is to say so: a
-query that cannot see a case must never be described as though it can.
+So this disjunct's misses are false positives costing one cleanup reply each, and
+it never waves a real reopen through, which is the direction a gate should fail
+in.
+
+The procedural remedy could not have worked anyway: it told the human to use
+`reopen-comment.sh`, and the case the fixture was built from is a reply typed in
+the web UI, where no script is in the loop to carry a marker.
+
+This disjunct and the "lead with the disposition word" rule hold each other up.
+Break the template convention and the gate goes blind again.
 
 **Delete this once `devon-claude-skills-cq0` lands** — the fix is `reply-to-comment.sh` adopting the `|| { ...; exit 1; }` that `post-line-comment.sh:49-53` already has, after which the exit status is trustworthy.
 
@@ -226,22 +250,41 @@ the operator.
 
 ### Was the round valid?
 
-Run this at F7, before applying the convergence rule. The **A round the branch
-moved under is INCOMPLETE** rule needs a detector or it is a rule nothing checks;
-this is it. Record the head SHA at C3 dispatch, compare it here:
+Run this at the **BATCH POINT** — after the last manifest, before F1. Not at F7:
+F4 commits and pushes and F5 pushes CI fixes, so by F7 the head is the round's
+own fix commit and the comparison is against a value your own loop moved. Round
+15 shipped it at F7 and it printed `ROUND INCOMPLETE` on 15 of 15 healthy
+rounds; three reviewers demonstrated it independently, one by observing that
+round N's dispatch SHA *is* round N-1's F4 commit, so the two can never match.
 
 ```bash
 ( set -o pipefail
+  DISPATCHED=<SHA recorded at C3>
+  [[ "$DISPATCHED" =~ ^[0-9a-f]{40}$ ]] \
+    || { echo "no dispatch SHA recorded at C3 - round validity unknown, not valid" >&2; exit 2; }
   NOW=$(gh pr view <PR> --json headRefOid --jq .headRefOid) \
     || { echo "round-validity check failed - rerun it" >&2; exit 2; }
-  [[ "$NOW" == "<SHA recorded at dispatch>" ]] \
-    && echo "round valid: reviewers all read $NOW" \
-    || echo "ROUND INCOMPLETE: dispatched against <SHA recorded at dispatch>, head is now $NOW - re-dispatch" )
+  if [[ "$NOW" == "$DISPATCHED" ]]; then
+    echo "round valid: all reviewers read $NOW"
+  else
+    echo "ROUND INCOMPLETE: dispatched against $DISPATCHED, head is now $NOW - re-dispatch" >&2
+    exit 1
+  fi )
 ```
 
-A mismatch means the reviewers did not all read the same commit. The round
-proves nothing about what would ship: discard it and re-dispatch against the new
-head. It is not a finding to be dispositioned and it is not the agent's call.
+Three exits, three meanings, and they must stay distinct: **0** valid, **1** the
+branch moved, **2** the check could not run. Round 15's version returned 0 for
+both of the first two, which is the silent-failure class inside the detector
+written to catch a silent failure.
+
+The unsubstituted-placeholder case is why the regex guard is there. Without it,
+`[[ "$NOW" == "<SHA recorded at C3>" ]]` is a string compare against literal
+angle brackets, so forgetting to record a SHA produces output identical to a
+genuinely moved branch — a missing input indistinguishable from the defect.
+
+A mismatch means the reviewers did not all read the same commit. Discard the
+round and re-dispatch against the new head. It is not a finding to be
+dispositioned and it is not the agent's call.
 
 **Reconstructing it for a round you did not record.** Every review comment
 carries `original_commit_id`, so the SHAs a round's findings were written
@@ -250,34 +293,61 @@ against are recoverable after the fact:
 ```bash
 ( set -o pipefail
   gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/comments" \
-    | jq -rs 'add | group_by(.original_commit_id)
-        | map({sha: .[0].original_commit_id, n: length, first: (min_by(.id).created_at)})
-        | sort_by(.first) | .[] | "\(.sha[0:8]) \(.n) \(.first)"' \
+    | jq -rs 'add | map(select(.in_reply_to_id == null)) | group_by(.original_commit_id)
+        | map({sha: .[0].original_commit_id, n: length,
+               first: (min_by(.id).created_at), last: (max_by(.id).created_at)})
+        | sort_by(.first) | .[] | "\(.sha[0:8]) \(.n) \(.first) \(.last)"' \
     || { echo "could not read comment SHAs - rerun it" >&2; exit 2; } )
 ```
 
-One SHA per round is the healthy shape. Two SHAs inside one round's time window
-is a round that was dispatched against a moving branch.
+**Filter to roots.** A reply inherits its thread's `original_commit_id`, so
+without `select(.in_reply_to_id == null)` each group carries dispositions posted
+rounds later: on this PR, round 1's group came out as 22 findings plus 23 replies
+spanning three hours across thirteen later rounds, and 8 of 14 consecutive pairs
+overlapped in time. Filtered, every round's findings span ≤ 5 minutes and no two
+rounds overlap. Round 15 shipped the unfiltered version and cited its output as
+evidence the detector worked.
 
-**Working-tree edits are the same hazard one step earlier**, and they need
-saying because the remedy differs: a reviewer reads the pushed head, so an
-uncommitted change is invisible both to it and to `git diff main...HEAD`, and
-cannot be reviewed at all. There is no SHA to compare, so the check is
-`git status --porcelain` against the reviewed paths. An uncommitted change to a
-file in the PR's diff **does not invalidate the round** — nobody read it either
-way — but it must not land in the round's F4 commit as though it had been
-reviewed.
+Read it as: each row is one round's findings, `n` is how many, and the two
+timestamps bound the round. **Two rows whose windows overlap** is a round
+dispatched against a moving branch.
 
-Clear it *before* F4, not after: `commit-and-push.sh` runs `git add -A`, so
-anything left in the tree rides along in the fix commit whatever you intended.
-Commit unrelated work first, or stash it until a round can review it. Check
-with `git status --porcelain` before calling the script, not after.
+What this cannot see, and it matters: a round that pushes nothing leaves the head
+where it was, so its findings land on the previous row's SHA and the two collapse
+into one. That is exactly the clean converging round — the one whose validity
+decides the merge. Reconstruction is a forensic tool for rounds nobody recorded;
+it is not a substitute for recording the SHA at C3.
 
-`.beads/` is exempt. Beads rewrites and stages its JSONL on read, so `bd show`
-— which the ticket rule *requires* a reviewer to run — dirties the tree by
-itself. A rule that a mandated check cannot satisfy is not a rule; three
-separate actors dirtied `.beads/issues.jsonl` during round 15, two of them
-reviewers obeying instructions.
+**Working-tree edits are the same hazard one step earlier**, with a different
+remedy: a reviewer reads the pushed head, so an uncommitted change is invisible
+both to it and to `git diff main...HEAD` and cannot be reviewed at all. It
+**does not invalidate the round** — nobody read it either way — but it must not
+land in the round's F4 commit as though it had. `commit-and-push.sh` runs
+`git add -A`, so clearing the tree is something you do before calling it:
+
+```bash
+( set -o pipefail
+  DIRTY=$(git status --porcelain -- ':(exclude).beads') \
+    || { echo "tree check failed - rerun it" >&2; exit 2; }
+  if [[ -z "$DIRTY" ]]; then
+    echo "tree clean - safe to commit the round"
+  else
+    echo "unreviewed edits present - commit or stash before F4:" >&2
+    echo "$DIRTY" >&2
+    exit 1
+  fi )
+```
+
+`.beads/` is excluded because the ticket rule *requires* a reviewer to run
+`bd show`, and the export can restage `issues.jsonl` underneath it. Two round-16
+reviewers tested the mechanism and it is narrower than round 15 claimed: `bd
+show` alone is a read and leaves the file byte-identical — seven invocations, no
+change, positive control verified first. What restages it is a read *after an
+unexported write*, because `.beads/export-state.json` keys on `last_dolt_commit`.
+In round 15 a `bd create` advanced Dolt and the next reviewer's `bd show`
+exported someone else's write. Both observations were true and the reason given
+was wrong, which matters because the next reader uses the reason to diagnose a
+dirty tree — one round-16 reviewer already repeated the wrong mechanism back.
 
 **Nothing the convergence rule depends on lives in this report.** That was tried
 — a strike counter, a carried-forward list, a roster progress count — and every
@@ -301,7 +371,17 @@ narrative and nothing else:
   each one's severity in its own thread** — the reply carries no priority, so the
   query cannot filter on it; only P1/P2 block convergence, and a declined nitpick
   is not a blocker. An `Out of scope - tracked in <id>` line is resolved once you
-  confirm that ticket exists (`bd show <id>`); the finding lives there now. It matches all four non-fix dispositions the Reply Templates
+  confirm that ticket exists **and is open** — `bd show <id>` exits 0 on a
+  closed ticket, so existence alone is not the check:
+
+  ```bash
+  ( set -o pipefail
+    OUT=$(bd show "$TICKET" 2>/dev/null) || { echo "ticket $TICKET does not exist" >&2; exit 1; }
+    grep -q 'CLOSED' <<<"$OUT" && { echo "ticket $TICKET is closed - it cannot carry a live P1/P2" >&2; exit 1; }
+    echo "ticket $TICKET exists and is open" )
+  ```
+
+  The finding lives there now. It matches all four non-fix dispositions the Reply Templates
   offer, not just "Won't fix": a P1/P2 answered "Acknowledged - as designed" is a
   decline whatever it is called, and that exact wording was used on this PR.
 

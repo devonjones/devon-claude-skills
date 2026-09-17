@@ -280,7 +280,7 @@ that distinction — they are not a flat list of equal-force bullets.
 | **Every configured reviewer must have reported.** | A reviewer that never reported looks identical to a reviewer with nothing to say. Never infer it from an empty comment list or a zero exit status — see [`references/reviewer-reported.md`](references/reviewer-reported.md). Consequence is the **A reviewer that will not report** row below. |
 | **Every disposition must have reached its thread.** | A reply you sent is not a reply that landed; a failed POST can leave a resolved thread carrying a finding and no disposition. F4's gate is what checks this — the query is in [`references/round-workflow.md`](references/round-workflow.md). |
 | **At least one reviewer must have run.** | An empty roster — every bot disabled, every default disabled, every agent retired — produces a vacuously clean round. Zero reviewers is not convergence; it is a configuration problem. Stop and ask. |
-| **A P1/P2 disposed of by anything other than a fix blocks convergence.** | Every Won't-fix on a P1/P2 must be (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. **An out-of-scope P1/P2 is resolved by a ticket that carries it** — file it with the reviewer's own text and the comment id, reply with the ticket id, and confirm the ticket exists **and is open** — `bd show` exits 0 on a closed ticket, so existence alone lets a shut ticket carry a live P1. "Deferred" resolves a P1/P2 the same way and on the same terms, since it also files a ticket; the other three dispositions do not. Out of scope means the fix lives outside this PR's diff, not that you would rather not do it now: an in-scope P1/P2 still needs (i), (ii) or (iii). Found by the thread's last reply text — "Won't fix", "Out of scope", "Deferred" and "Acknowledged" all count — never by its resolve state. Query in [`references/round-workflow.md`](references/round-workflow.md). |
+| **A P1/P2 disposed of by anything other than a fix blocks convergence.** | Four reply words decline a finding, and **each one needs a path** — a word with no path is a P1/P2 that leaves by a door nobody is watching. **Out of scope** and **Deferred** are resolved by a ticket that carries the finding: file it with the reviewer's own text and the comment id, reply with the ticket id, and confirm the ticket exists **and is open** (`bd show` exits 0 on a closed ticket, so existence alone lets a shut ticket carry a live P1 — the open-ness check is in [`references/round-workflow.md`](references/round-workflow.md)). Out of scope means the fix lives outside this PR's diff, not that you would rather not do it now. **Won't fix** and **Acknowledged** take the other route: (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. An in-scope P1/P2 always needs (i), (ii) or (iii). Found by the thread's last reply text, never by its resolve state. Query in [`references/round-workflow.md`](references/round-workflow.md). |
 | **A CI fix is a fix.** | A fix pushed at F5 to get CI green changed the code as surely as a review fix did. The round that contained it is not clean. |
 | **A round the branch moved under is INCOMPLETE.** | Reviewers must all read the same commit. Record the head SHA at dispatch, compare it at F7, and if the branch was pushed in between, discard the round and re-dispatch against the new head — the round proves nothing about what would ship. The comparison is the point: an invariant nothing checks is a wish, and this row shipped for one round with no detector anywhere in the skill. Query in [`references/round-workflow.md`](references/round-workflow.md), which also shows how to reconstruct the SHAs of a round you forgot to record, from `original_commit_id`. Working-tree edits are the same hazard one step earlier and take a different remedy: nobody read them either, so the round still stands, but they must not ride along in its F4 commit as though they had been reviewed. `.beads/` is exempt — `bd show` restages its JSONL, so the ticket rule below would otherwise forbid the check it requires. |
 | **A self-contradiction stops the loop.** | A round that reverses a previous round's fix means the loop is oscillating, not converging. Stop and ask the user; more rounds do not fix it. |
@@ -522,14 +522,11 @@ scripts/check-ci.sh <PR> --wait
 - Deferred: "Deferred - tracking in BD-XXX"
 - Acknowledged: "Acknowledged - [explanation]"
 
-**Lead with the disposition word.** The convergence check that finds a P1/P2
-resolved by something other than a fix is anchored on these five words at the
-start of the reply, so a reply that buries the disposition is invisible to it.
-This template used to read *"Good catch, tracking in #issue"* for Deferred:
-same disposition, same intent, and the check returned false on it while
-returning true on "Deferred - tracking in #9". A P1/P2 declined in the exact
-words this skill recommended would have been waved through — the round-13 hole
-through a third door, shipped by the template rather than by the query.
+**Lead with the disposition word.** Two checks are anchored on the first word of
+a reply: the one that finds a P1/P2 declined rather than fixed (the four decline
+words) and F4's reply gate, which reads a reply that leads with none of the five
+as a thread still needing an answer. Bury the disposition and the first check
+goes blind while the second nags forever.
 
 ### For PR Comments (Claude)
 Reply using `gh pr comment` with a consolidated response:
@@ -1268,10 +1265,7 @@ also becomes 1. Six reviewers refuted it. The run had happened; it just could no
 have come out any other way, because both variants ended in `false` and expected
 status 1 either way. They differed on the wrong axis. Running something is not
 the same as testing it: vary the one thing your claim is about, and confirm the
-other branch gives the other answer. This pays for itself rather than costing:
-a reviewer that caught its own non-discriminating experiment — both variants
-returned 143 — switched to a discriminating pair and only then surfaced the real
-defect underneath, which its first experiment could never have reached.
+other branch gives the other answer.
 
 **Verify the control positive before it licenses anything.** A control that comes
 back negative has two explanations — your query is broken, or your control is
@@ -1284,13 +1278,18 @@ a fixture and confirmed that removing each disjunct loses exactly one case befor
 concluding anything from it. That confirmation is the whole difference between a
 fixture and a decoration.
 
-When the control does come back negative, **suspect the explanation local to what
-you just wrote before the one with global consequences you have not observed.**
-"My control string was badly chosen" and "grep is broken" both fit, but a broken
-grep would have shown up in a hundred other places that hour and showed up in
-none — the disconfirming evidence was already in the scrollback, unconsulted,
-because the broken instrument was the interesting hypothesis. Reaching for it
-first is a bad prior wearing the clothes of diligence.
+When it does come back negative, **suspect the explanation local to what you just
+wrote before the one with global consequences you have not observed.** "My
+control string was wrong" and "grep is broken" both fit the result, but a broken
+grep would be visible in a hundred other places — so the disconfirming evidence
+is usually already in your scrollback. Preferring the interesting hypothesis is a
+bad prior wearing the clothes of diligence.
+
+**A truncated result looks exactly like a complete one.** Pagination is one form;
+a tool-output preview is another. A reviewer this round read a truncated preview
+of `get-agent-comments.sh`, saw 13 threads where the data had 62, and reported a
+thread as unanswered when its reply was there. Re-run to a file and count rather
+than reading a preview, and treat any capped view as an unknown, not a zero.
 
 **Do not reason about where the defaults live — run the loader.**
 `_load_defaults.sh` resolves its agents directory relative to its own location,
