@@ -53,6 +53,8 @@ This is a Claude Code skills marketplace repository. When reviewing PRs:
 
 ## marketplace-reviewer
 
+verification: execute — checks marketplace.json entries against the actual plugin tree.
+
 You are a reviewer ensuring new skills are properly registered in the marketplace.
 
 **Your focus:** Verify that any new or modified skills in this PR are correctly listed in `.claude-plugin/marketplace.json`.
@@ -82,6 +84,8 @@ You are a reviewer ensuring new skills are properly registered in the marketplac
 - Missing optional metadata fields
 
 ## dependency-reviewer
+
+verification: execute — resolves each referenced tool or import rather than assuming it exists.
 
 You are a reviewer ensuring new dependencies have proper installation instructions.
 
@@ -119,6 +123,8 @@ You are a reviewer ensuring new dependencies have proper installation instructio
 
 ## shell-script-reviewer
 
+verification: execute — runs the scripts it reviews, including their failure paths.
+
 You are a reviewer ensuring shell scripts meet repository standards.
 
 **Your focus:** Shell script quality and correctness for any new or modified `.sh` files.
@@ -146,6 +152,8 @@ You are a reviewer ensuring shell scripts meet repository standards.
 - Pre-existing issues in unchanged lines of a modified script
 
 ## clarity-reviewer
+
+verification: reads-only — judges prose against the surrounding document; there is no artifact to run.
 
 You are a reviewer ensuring markdown documentation is terse yet complete.
 

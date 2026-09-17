@@ -1167,6 +1167,67 @@ Authentication uses JWT tokens stored in httpOnly cookies.
 4. Track each agent's scope (directory where it was defined)
 5. Filter changed files per agent to only those within the agent's scope
 
+### Verification: execute by default
+
+**A reviewer proves a finding by running it.** Mutate the code, watch the check
+fail, report what you saw. Reading the code and reasoning about what it would do
+is a hypothesis, not a finding — say which one you have.
+
+This is the default because the evidence is one-sided:
+
+- A reviewer claimed a repo's CI gate was `ruff format` when it is `black`, without
+  running it. Of nine findings in that review it was the only one declined, and
+  complying would have broken the build.
+- In this skill's own convergence-rule PR, every round's sharpest finding came
+  from a reviewer that executed. Two of them — `set -e` not aborting where I
+  claimed, and a `$SHA` that was never assigned — had been *verified by reading*
+  one round earlier and were wrong both times.
+- The case that settles it: a reply script reported 21 replies posted when 17 had
+  silently failed, and the gate that should have caught it reported clean because
+  it was broken in the same way. No amount of reading either artifact finds that.
+  Running one against the other does.
+
+**A reviewer that cannot execute is still legitimate — and must say so.** Some
+work has nothing to mutate: tracing a published claim back to the evidence
+licensing it, judging prose, assessing whether a design matches a stated intent.
+Those reviewers stay. What they may not do is omit the proof silently, because an
+unstated exemption is indistinguishable from a reviewer that should have executed
+and did not — which is the failure this rule exists to catch.
+
+Declare it in the agent's own definition in `AGENT-REVIEWERS.md`, as the first
+line of its body:
+
+```markdown
+## methodology-reviewer
+
+verification: reads-only — traces claims to sources; there is no artifact to run.
+
+You are a reviewer ensuring every published claim...
+```
+
+```markdown
+## silent-failure-hunter
+
+verification: execute
+
+You are a reviewer hunting absent signals...
+```
+
+**The field is the flag.** `verification: execute` is the default and may be
+omitted; `verification: reads-only — <reason>` requires the reason. A reviewer
+with neither is **undeclared**, which is a finding about the roster, not about
+the code. Surface all three states in the round's `Reported:` line so a reader can
+weight the findings:
+
+```
+Reported: silent-failure-hunter=ok clarity-reviewer=ok(reads-only) foo-reviewer=ok(undeclared)
+```
+
+Audit the roster when this rule is adopted: read each agent, decide which it is,
+and write the line. Changing `AGENT-REVIEWERS.md` to align a roster to this rule
+may go straight to main — it is roster configuration, not skill code, and the
+carve-out is scoped to this alignment.
+
 ### When to Run Agent Reviewers
 
 Agent reviewers run as **C3** — the last step of the COLLECT phase in each round, after C1 (Gemini) and C2 (other bots), and before any FIX-phase edits.
