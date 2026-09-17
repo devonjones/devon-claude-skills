@@ -1189,15 +1189,31 @@ be checked; "this design is confusing" is not and must say so.
 excuse itself from work it could do: a prose reviewer asserting one sentence
 restates another can grep for both and show them.
 
-Declare the reviewer's usual mode as the first line of its body in
-`AGENT-REVIEWERS.md` — `verification: mutation` | `evidence-query` | `mixed` —
-and treat a missing line as **undeclared**, a finding about the roster rather
-than the code. The declaration describes what the reviewer typically owes; it
-never licenses a finding to skip its proof. Surface it per round:
+Declare the reviewer's usual mode as the first line of its body —
+`verification: mutation` | `evidence-query` | `mixed` — and treat a missing line
+as **undeclared**, a finding about the roster rather than the code. The
+declaration describes what the reviewer typically owes; it never licenses a
+finding to skip its proof. Surface it per round:
 
 ```
 Reported: silent-failure-hunter=ok(mutation) clarity-reviewer=ok(evidence-query) foo=ok(undeclared)
 ```
+
+**The shipped defaults declare themselves; your charter declares only your own
+reviewers.** Do **not** add a `verification:` line under `## pr-test-analyzer` or
+any other default name in your `AGENT-REVIEWERS.md`. A user agent whose name
+matches a default *replaces* it (`discover-agents.sh:13`), so a section
+containing only a declaration substitutes ~20 characters for the entire shipped
+prompt — measured at 3,647 characters replaced by 22, reported as
+`kind=user-override`, with the roster silently lobotomised and the audit reading
+as complete. That is the failure this rule exists to catch, produced by following
+the rule carelessly. The plugin knows what its own reviewers do; six repos each
+asserting it would invite six answers.
+
+**A charter on `main` does not govern a branch already open.** `AGENT-REVIEWERS.md`
+is read from the PR's branch, so a roster committed to `main` after a PR was cut
+reports `override_count: 0` and `defaults_version_checked: None` against that PR.
+Rebase or merge before concluding a roster change took effect.
 
 **A fixture that cannot fail is not a test.** Verify every fixture fails against
 the defect it pins — a suite that passed 9/9 with two HIGH bugs live had two cases
