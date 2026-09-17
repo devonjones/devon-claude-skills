@@ -277,7 +277,8 @@ that distinction — they are not a flat list of equal-force bullets.
 | Rule | Why |
 |---|---|
 | **A P1 or P2 fix means the round was NOT clean.** | The next round reviews *different code*. A review that passed did not pass on what would actually ship. Push the fix, run another round. (A P3-only fix is the agent's call — see below.) |
-| **Every configured reviewer must have reported.** | A reviewer that never reported looks identical to a reviewer with nothing to say. See "What counts as reported" below; never infer it from an empty comment list or a zero exit status. Consequence is the next row. |
+| **Every configured reviewer must have reported.** | A reviewer that never reported looks identical to a reviewer with nothing to say. Never infer it from an empty comment list or a zero exit status — see [`references/reviewer-reported.md`](references/reviewer-reported.md). Consequence is the next row. |
+| **Every disposition must have reached its thread.** | A reply you sent is not a reply that landed; a failed POST can leave a resolved thread carrying a finding and no disposition. F4's gate is what checks this. |
 | **At least one reviewer must have run.** | An empty roster — every bot disabled, every default disabled, every agent retired — produces a vacuously clean round. Zero reviewers is not convergence; it is a configuration problem. Stop and ask. |
 | **An unresolved P1/P2 "Won't fix" carried forward from any round blocks convergence.** | Every Won't-fix on a P1/P2 must be (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. **Filing a beads ticket does not resolve a P1/P2** — a ticket is a deferral, so it needs one of those same three resolutions. Ticketing resolves P3s only. |
 | **A CI fix is a fix.** | A fix pushed at F5 to get CI green changed the code as surely as a review fix did. The round that contained it is not clean. |
@@ -308,65 +309,11 @@ that distinction — they are not a flat list of equal-force bullets.
   fixed rule and let a loop converge by overruling its reviewers on precisely the
   findings that matter most.
 
-#### What counts as "reported"
-
-Different artifact per reviewer class — an agent has a manifest to return, a bot
-does not.
-
-| Reviewer | Reported means | Not reported |
-|---|---|---|
-| **Agent reviewer (C3)** | Returned a posting manifest, including the literal "No issues found" | Task failed, returned nothing, or returned an off-shape answer that names no findings and does not say it found none |
-| **External bot (C1/C2)** | A review by that bot exists whose commit matches the current head SHA | No such review, or you could not establish one either way |
-| **Disabled bot, disabled agent, retired agent** | Outside the denominator — deliberately not dispatched | n/a |
-
-**Do not use a wrapper script's exit status to decide this**, and do not use
-`--latest`. Exit 0 means "nothing went visibly wrong", not "the bot reviewed this
-commit", and `--latest` compares SHAs with `>=` — a lexicographic compare on hex
-that is wrong in both directions. Both are tracked in `devon-claude-skills-4gw`;
-until it lands, run the check below yourself.
-
-Query the **reviews** endpoint, once per configured bot, with its exact login:
-
-```bash
-SHA=$(gh pr view <PR> --json headRefOid --jq .headRefOid)
-gh api --paginate "/repos/{owner}/{repo}/pulls/<PR>/reviews" \
-  | jq -s --arg sha "$SHA" --arg bot "gemini-code-assist[bot]" \
-      'add | [.[] | select(.user.login == $bot and .commit_id == $sha)] | length'
-```
-
-Non-zero means that bot reported on this commit. This is the same query
-`gemini_has_reviewed()` in `trigger-review.sh` already makes internally — copy it
-rather than inventing a variant, and note the three things it gets right that a
-casual version gets wrong:
-
-- **`/reviews`, not `/comments`.** A bot that reviewed and found nothing leaves a
-  review with no inline comments. Checking `/comments` scores a clean pass as
-  "never ran" — and the converging round is *by definition* the round the bot has
-  nothing to say in, so that misread deadlocks exactly the loop it was meant to
-  certify.
-- **`--paginate`.** The default page is the oldest 100, so on a long loop the
-  current round's activity is the first thing dropped. (`--paginate` emits one
-  array per page, which is why the `jq -s | add` slurp is there.)
-- **One exact login per bot.** Fusing the bots into one alternation lets one
-  bot's review certify the other, and the per-reviewer `Reported:` line cannot be
-  produced from the result.
-
-A zero result is "not reported" — route it to "A reviewer that will not report"
-above. That is also what an enabled-by-default bot that was never installed on
-the repo looks like.
-
-**Record it, do not hold it in your head.** Compute it at F7, before applying the
-convergence rule, and put it in the end-of-round report's per-reviewer line.
-
-**Verify the replies landed.** A round is not clean on the strength of replies you
-*sent* — GitHub applies a secondary rate limit (HTTP 422, `"code": "abuse"`) after
-a few dozen comment writes in a short window, and `reply-to-comment.sh` currently
-resolves the thread and exits 0 even when the POST failed
-(`devon-claude-skills-cq0`). That leaves a resolved thread carrying a finding and
-no disposition, which is indistinguishable from a finding nobody answered. Before
-calling a round clean, confirm the reply count on the PR matches the number of
-threads you dispositioned; on a rate limit, space the writes ~20s apart and retry
-rather than treating the failure as permanent.
+**Record it, do not hold it in your head.** Compute `D dispatched / R reported`
+at F7, before applying the convergence rule, and put it in the end-of-round
+report's per-reviewer line. What counts as reported differs per reviewer class,
+and a bot needs a real check rather than an absence of comments — see
+[`references/reviewer-reported.md`](references/reviewer-reported.md).
 
 ### Merge Authority
 
@@ -407,6 +354,7 @@ Always prepare a summary of what the review loop did and observed:
 - **Self-contradictions**: Any detected during the loop and how they were resolved
 - **Beads tickets**: Out-of-scope items captured for follow-up
 - **Branch protection status**: Whether all required checks and approvals are satisfied
+- **Reviewers not dispatched**: every bot and agent that was disabled or retired, and why. A `D dispatched / R reported` of 2/2 reads identically for a two-reviewer roster and a four-reviewer roster with two switched off; naming them is what makes the difference visible
 - **Stale defaults pin bypass** (if `--skip-stale-check` was used): note the config and current plugin versions; recommend running `/pr-review-loop:audit-agents`
 - **Posting integrity**: total agent findings vs posted line-comment threads vs replied threads, per round. These MUST match (every finding posted, every thread replied). Any round where findings were fixed without posted threads is a protocol violation — report it explicitly, never paper over it.
 - **Validator activity** (if `independent_validator.enabled`): per-flagger acceptance rate (`X of Y posted findings survived; Z withdrawn as INVALID; W annotated [validator: uncertain]`). A flagger with persistent low acceptance is a candidate for retirement or prompt refinement.
@@ -1346,6 +1294,7 @@ Agent reviewers run as C3 — the last step of the COLLECT phase, after C1 (Gemi
    Round N: posted X findings across Y agents (A withdrawn by validator);
    replied to Z threads (F fixed / W won't-fix / O out-of-scope); Gemini: G comments.
    Reported: <reviewer>=ok|failed(<reason>) for every dispatched reviewer. D dispatched / R reported.
+   Disabled: <bots and agents deliberately not dispatched, or "none">.
    ```
    This makes posting-protocol drift visible immediately — a round that
    fixed findings but posted/replied to zero threads is self-evidently

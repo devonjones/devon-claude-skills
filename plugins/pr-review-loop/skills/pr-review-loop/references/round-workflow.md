@@ -101,7 +101,13 @@ gh pr comment <PR> --body "## Response to Claude Review
 
 ### F4. Commit and push
 
-**Gate**: every finding in this round's fix set corresponds to a posted PR thread (Gemini, bot, or agent) with a reply. If any fix has no thread, go back to F3 — a commit message is not an audit trail.
+**Gate**: every finding in this round's fix set corresponds to a posted PR thread (Gemini, bot, or agent) with a reply **that actually landed**. If any fix has no thread, go back to F3 — a commit message is not an audit trail.
+
+Verify each thread rather than trusting the sends, and do it per thread — a count tells you how many replies are missing, never which. Re-fetch with `get-agent-comments.sh <PR> <agent> --with-replies`: a thread showing `Status: RESOLVED` with an empty `REPLIES:` block **is** the defect. Repost to those threads specifically.
+
+Why this is needed: `reply-to-comment.sh` resolves the thread and exits 0 even when the reply POST failed (`devon-claude-skills-cq0`), so there is no exit status to gate on, and GitHub applies a secondary rate limit (HTTP 422, `"code": "abuse"`) after a few dozen comment writes in a short window. Space the reposts ~20s apart; give up after 3 rounds of retries and tell the user rather than looping.
+
+**Delete this paragraph when `devon-claude-skills-cq0` lands.** The fix is `reply-to-comment.sh` adopting the `|| { ...; exit 1; }` that `post-line-comment.sh:49-53` already has, after which the exit status is trustworthy and this whole workaround is longer than the thing it works around. This gate enforces the "Every disposition must have reached its thread" convergence rule.
 
 ALWAYS use the script, NEVER raw git — ONCE per round, if any fixes were made:
 
@@ -144,6 +150,5 @@ Round N: posted X findings across Y agents (A withdrawn by validator);
 replied to Z threads (F fixed / W won't-fix / O out-of-scope); Gemini: G comments.
 Reported: <reviewer>=ok|failed(<reason>) for every dispatched reviewer. D dispatched / R reported.
 ```
-
 
 A round that fixed findings but shows zero posted/replied threads is broken — correct it before the next round (post the missing threads per F3's recovery rule) and note the violation in the merge-readiness summary.

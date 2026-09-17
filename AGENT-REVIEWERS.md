@@ -3,6 +3,7 @@
 ```json
 {
   "defaults_version_checked": "1.7.0",
+  "_bots_note": "cursor: Bugbot has never posted a review on any PR in this repo (42 PRs, 0 reviews; the only non-human review author on record is gemini-code-assist[bot]). Disabled because it is not installed here, not because its findings are unwanted. Re-enable if it is ever installed. gemini: consumer-tier Gemini Code Assist has been sunset for this account.",
   "bots": {
     "gemini": false,
     "cursor": false
