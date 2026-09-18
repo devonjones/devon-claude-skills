@@ -1271,6 +1271,21 @@ status 1 either way. They differed on the wrong axis. Running something is not
 the same as testing it: vary the one thing your claim is about, and confirm the
 other branch gives the other answer.
 
+**Record what you measured and what you were told as two separate things.** A
+paragraph that fuses a measurement to a story hands the story the measurement's
+credibility, and a reviewer that checks the cheap half in two seconds will report
+the whole paragraph verified. That is not a lapse in the reviewer; it is what the
+fusion does to anyone reading it.
+
+This skill's own worst instance: round 15 reported "15 SHAs for 15 rounds" as the
+positive control for a new round-validity detector. The measurement was true —
+the reconstruction query really did return that. The claim it was carrying, that
+the detector worked, was false; the detector had never been run, and three
+reviewers proved the next round that it could not have passed on any healthy
+round. The true half carried the false half into a commit message, a status
+report and a merge argument. Split them and the false half has nothing to ride
+on.
+
 **Verify the control positive before it licenses anything.** A control that comes
 back negative has two explanations — your query is broken, or your control is
 wrong — and the result cannot tell you which. Only one of them is informative, so
