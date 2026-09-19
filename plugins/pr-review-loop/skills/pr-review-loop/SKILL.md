@@ -370,7 +370,7 @@ The review loop should **not** override branch protections or bypass repo-define
 
 **CRITICAL RULES - NEVER VIOLATE THESE:**
 1. **ALWAYS use full absolute paths for scripts** - Glob once to find the scripts directory, then inline the full path in every Bash call. NEVER use variables or compound commands (see setup at top of document)
-2. **ALWAYS use `commit-and-push.sh`** - NEVER `git commit` or `git push` (see table at top of document)
+2. **ALWAYS use `commit-and-push.sh`** - NEVER `git commit` or `git push` (see table at top of document). **One exception, and it is the script's job to make it unnecessary:** if the script cannot get a branch onto the remote, `git push -u origin HEAD` by hand and say so in the PR body. A rule whose only escape hatch is undocumented traps whoever follows it next — this exception exists because an agent obeying the rule had no way out, and had to be told by hand that raw push was allowed.
 3. **ALWAYS reply to EVERY comment**:
    - Line comments (Gemini, agents): use `reply-to-comment.sh`
    - PR comments (Claude): use `gh pr comment` with consolidated response

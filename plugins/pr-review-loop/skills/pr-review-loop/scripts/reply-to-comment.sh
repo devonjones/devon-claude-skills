@@ -112,7 +112,14 @@ REPLY_RESULT=$(gh api \
     echo "API Response: $REPLY_RESULT" >&2
     echo "" >&2
     # Parse common errors
-    if echo "$REPLY_RESULT" | grep -q "Not Found"; then
+    if echo "$REPLY_RESULT" | grep -qE '"code": *"abuse"|secondary rate limit|was submitted too quickly|temporarily blocked from content creation'; then
+        echo "This is GitHub's secondary content-creation limiter, not a permanent error." >&2
+        echo "It is expected at review volume. Retrying immediately keeps it triggered:" >&2
+        echo "write the reply bodies to disk and post them later." >&2
+        echo "" >&2
+        echo "Exiting 3 (retryable) so a caller can tell this apart from a real failure." >&2
+        exit 3
+    elif echo "$REPLY_RESULT" | grep -q "Not Found"; then
         echo "Possible causes:" >&2
         echo "  - Comment ID $DATABASE_ID does not exist on PR #$PR_NUMBER" >&2
         echo "  - The comment may have been deleted" >&2
@@ -127,13 +134,16 @@ REPLY_RESULT=$(gh api \
         echo "  - The reply body may be empty or invalid" >&2
         echo "  - The comment thread may be locked" >&2
     fi
+    # NEVER fall through to the resolve. A resolved thread carrying a finding
+    # and no reply is worse than an unreplied open one: "resolved" is the
+    # universal signal that a finding was handled, so it lies to a person and
+    # not just to a caller. An unreplied OPEN thread can be found and retried
+    # by anyone; an unreplied RESOLVED one is invisible.
+    echo "Thread left UNRESOLVED so the missing disposition stays visible." >&2
+    exit 1
 }
 
-if [[ "$REPLY_POSTED" == "true" ]]; then
-    echo "Reply posted successfully."
-else
-    echo "Warning: Could not post reply. Will still attempt to resolve thread."
-fi
+echo "Reply posted successfully."
 
 # Resolve the thread unless --no-resolve is specified
 if [[ "$NO_RESOLVE" != "--no-resolve" ]]; then
