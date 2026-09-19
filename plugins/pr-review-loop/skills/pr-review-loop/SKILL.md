@@ -106,9 +106,9 @@ disabled bot is never triggered and never waited for.
 
 ### Priority to Exit-Condition Mapping
 
-The quality-weighted exit condition (see ONE MORE LOOP Rule) depends on classifying findings as P1/P2 vs P3/nitpick. Use this table:
+The convergence rule (see Convergence) depends on classifying findings as P1/P2 vs P3/nitpick. Use this table:
 
-| Source label | P-level | Blocks quality-weighted exit? |
+| Source label | P-level | Blocks convergence? |
 |---|---|---|
 | Gemini `![critical]`, `![high]` | P1/P2 | Yes — must be resolved or merged with explicit user sign-off |
 | Gemini `![medium]` | P2 if correctness/security/breaking; else P3 | Yes if correctness/security/breaking; no if style/prose |
@@ -118,7 +118,7 @@ The quality-weighted exit condition (see ONE MORE LOOP Rule) depends on classify
 | Claude `⚠️` | P2 if correctness/security/breaking; else P3 | Yes if correctness/security/breaking; no if style/prose |
 | Agent comment, no explicit label | Infer from content: correctness/security/breaking → P1/P2; else P3 | Per inferred level |
 
-**"Won't fix" on a P1/P2 finding does NOT resolve it on its own** — it still blocks quality-weighted exit unless (i) the finding is reclassified to P3 with explicit justification (drop one P-level with reasoning), (ii) the finding is actually fixed in a later round, or (iii) the user explicitly signs off on the carry-forward, in which case the finding is recorded as an acknowledged unresolved item in the merge-readiness summary.
+**"Won't fix" on a P1/P2 finding does NOT resolve it on its own** — it still blocks convergence unless (i) the finding is reclassified to P3 with explicit justification (drop one P-level with reasoning), (ii) the finding is actually fixed in a later round, or (iii) the user explicitly signs off on the carry-forward, in which case the finding is recorded as an acknowledged unresolved item in the merge-readiness summary.
 
 The (iii) escape valve exists so the model isn't forced to relabel a genuine "won't fix" as a reclassification: surface the finding to the user, they sign off, it's recorded in the merge-readiness summary.
 
@@ -258,67 +258,67 @@ Before replying to the reviewer or making the fix:
 | Field added to schema in `models.py` but the docs in `README.md` still show the old shape | Cross-file consistency | Check related diagrams/tables in all files modified by the PR |
 | Wrong version number at one location | Isolated factual | Fix in place; no sweep needed |
 
-## Stopping Heuristics
+## Convergence
 
-Use signal quality — not a fixed round cap — to decide when to stop iterating.
+**A loop converges on ONE clean round.** Not two consecutive clean rounds. When
+a round is clean, the loop is done.
 
-### Per-Round Assessment
+**There is no round limit.** Run until convergence or an explicit merge
+instruction. Do not cap the loop at N rounds; a stuck loop is a reason to stop
+and ask the user, not a number to count to.
 
-After each round, evaluate:
+### What makes a round clean
 
-| Metric | What It Means |
-|--------|---------------|
-| **Fix/rejection ratio** | What fraction of comments led to actual code fixes vs. "Won't fix" responses? A declining ratio suggests diminishing returns. |
-| **Severity trend** | Are new comments addressing high-priority issues (correctness, security) or low-priority nitpicks (style, documentation)? |
-| **Contradiction count** | Has this round contradicted any previous round's fixes? If so, investigate before continuing. |
-| **Net code quality** | Is the code measurably better than after the previous round? Or are changes lateral (different but not better)? |
+Some of these rules are fixed and some are the running agent's judgement. Keep
+that distinction — they are not a flat list of equal-force bullets.
 
-### When to Continue
+**Fixed — not the agent's call:**
 
-- The current round produced fixes for genuine correctness or security issues
-- New comments are addressing aspects not previously reviewed
-- The fix/rejection ratio remains above ~50% (most comments are actionable)
+| Rule | Why |
+|---|---|
+| **A P1 or P2 fix means the round was NOT clean.** | The next round reviews *different code*. A review that passed did not pass on what would actually ship. Push the fix, run another round. (A P3-only fix is the agent's call — see below.) |
+| **Every configured reviewer must have reported.** | A reviewer that never reported looks identical to a reviewer with nothing to say. Never infer it from an empty comment list or a zero exit status — see [`references/reviewer-reported.md`](references/reviewer-reported.md). Consequence is the **A reviewer that will not report** row below. |
+| **Every disposition must have reached its thread.** | A reply you sent is not a reply that landed; a failed POST can leave a resolved thread carrying a finding and no disposition. F4's gate is what checks this — the query is in [`references/round-workflow.md`](references/round-workflow.md). |
+| **At least one reviewer must have run.** | An empty roster — every bot disabled, every default disabled, every agent retired — produces a vacuously clean round. Zero reviewers is not convergence; it is a configuration problem. Stop and ask. |
+| **A P1/P2 disposed of by anything other than a fix blocks convergence.** | Four reply words decline a finding, and **each one needs a path** — a word with no path is a P1/P2 that leaves by a door nobody is watching. **Out of scope** and **Deferred** are resolved by a ticket that carries the finding: file it with the reviewer's own text and the comment id, reply with the ticket id, and confirm the ticket exists **and is open** (`bd show` exits 0 on a closed ticket, so existence alone lets a shut ticket carry a live P1 — the open-ness check is in [`references/round-workflow.md`](references/round-workflow.md)). Out of scope means the fix lives outside this PR's diff, not that you would rather not do it now. **Won't fix** and **Acknowledged** take the other route: (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. An in-scope P1/P2 always needs (i), (ii) or (iii). Found by the thread's last reply text, never by its resolve state. Query in [`references/round-workflow.md`](references/round-workflow.md). |
+| **A CI fix is a fix.** | A fix pushed at F5 to get CI green changed the code as surely as a review fix did. The round that contained it is not clean. |
+| **A round the branch moved under is INCOMPLETE.** | Reviewers must all read the same commit. Record the head SHA at dispatch, compare it at F7, and if the branch was pushed in between, discard the round and re-dispatch against the new head — the round proves nothing about what would ship. The comparison is the point: an invariant nothing checks is a wish, and this row shipped for one round with no detector anywhere in the skill. Query in [`references/round-workflow.md`](references/round-workflow.md), which also shows how to reconstruct the SHAs of a round you forgot to record, from `original_commit_id`. Working-tree edits are the same hazard one step earlier and take a different remedy: nobody read them either, so the round still stands, but they must not ride along in its F4 commit as though they had been reviewed. `.beads/` is exempt — `bd show` restages its JSONL, so the ticket rule below would otherwise forbid the check it requires. |
+| **A self-contradiction stops the loop.** | A round that reverses a previous round's fix means the loop is oscillating, not converging. Stop and ask the user; more rounds do not fix it. |
+| **A reviewer that will not report stops the loop.** | Re-run it inside the same round. Two failures **in that round** stops the loop and asks the user — whether it failed to report or the check for it failed; one counter, both causes, because alternating them would otherwise trip neither. Nothing crosses a round boundary, so nothing has to survive one. See [`references/reviewer-reported.md`](references/reviewer-reported.md). |
 
-### When to Stop
+**Agent's judgement — explicitly discretionary:**
 
-- Two consecutive rounds with zero actionable (P1/P2) fixes — i.e., only nitpicks, only "Won't fix" responses, or zero-comment rounds
-- A self-contradiction is detected (pause for user input)
-- The fix/rejection ratio drops below ~25% (most comments are not actionable)
-- All remaining comments are stylistic or theoretical
-- The Hard Round Ceiling has fired (see below) — stop regardless of other signals
+- **Only P3s were fixed → the round may be clean.** Not automatically clean, not
+  automatically disqualifying. The agent decides whether a nitpick-level change
+  was material enough that the next round should see it before merge.
 
-### Hard Round Ceiling (Circuit Breaker)
+- **Findings only ticketed, and low priority → the agent may call the round
+  clean.** This is discretion, not a severity cutoff. "All P3" does not
+  automatically mean clean; it means the agent gets to decide. File the tickets
+  with the reviewer's own text so the finding survives the merge.
 
-**If you reach 7 total rounds, STOP the loop regardless of state.** This is a pure circuit breaker — the quality-weighted exit condition (see ONE MORE LOOP Rule) handles normal termination earlier; this fires only when the loop is stuck. Report to the user:
+- **Disagreed with every finding → the round can be clean.** Lean clean. A round
+  you disagree with end to end is usually evidence that the *reviewers* are
+  underperforming, not a license you granted yourself to skip them. The agent may
+  always run another round if that seems prudent. If it keeps happening, that is
+  a roster problem rather than a round problem — run the `dream-reviewers` skill
+  against the roster instead of shrugging it off round after round.
 
-- Rounds completed and elapsed time
-- Total comments received, by priority (P1/P2/P3 — see Priority to Exit-Condition Mapping) and source (Gemini, other bots, each agent)
-- Outstanding unresolved items (if any)
-- A recommendation on whether to continue, declare "good enough," or escalate
+  **This discretion does not reach P1/P2.** Disagreeing with a P1/P2 finding is a
+  Won't-fix on a P1/P2, which the fixed rule above already blocks on — so this
+  bullet covers a round of P3s you disagree with. Unbounded, it would swallow the
+  fixed rule and let a loop converge by overruling its reviewers on precisely the
+  findings that matter most.
 
-Then ask the user before proceeding further.
+**Record it, do not hold it in your head.** Compute `D dispatched / R reported`
+at F7, before applying the convergence rule, and put it in the end-of-round
+report's per-reviewer line.
 
-### ONE MORE LOOP Rule
+### Merge Authority
 
-When a full round (Gemini + other bots + agent reviewers) produces no actionable feedback, do ONE additional "final verification" round to catch any last feedback from the final push.
-
-**Actionable feedback** = a **P1 or P2** finding (per the Priority to Exit-Condition Mapping) that is addressed with a code change. "Won't fix" responses, nitpick (P3) fixes, and zero-comment rounds are NOT actionable for loop-control purposes — they all count toward exit condition (b) below.
-
-**Unifying with stopping heuristics**: The "Two consecutive rounds with zero actionable (P1/P2) fixes" stopping heuristic and ONE MORE LOOP describe the same exit mechanism from two angles:
-- The **first** qualifying round (zero actionable fixes — i.e., only nitpicks, only "Won't fix", or zero comments) IS the ONE MORE LOOP trigger.
-- The **second** qualifying round IS the final verification — if the full Exit condition (quality-weighted) below is satisfied (all of (a) through (d)), you exit immediately at end of that round. No third round needed.
-
-**Tracking state**: Use `TaskCreate` to track whether you're in the "final verification round". Create a task like "Final verification round - if no actionable feedback, ready to merge".
-
-**Reset condition**: If the final verification round produces **P1 or P2 fixes** (correctness, security, breaking changes — see Priority to Exit-Condition Mapping), remove the "final verification round" task — you need a fresh "one more" after pushing those fixes. Nitpick-level (P3) fixes do NOT reset the counter.
-
-**Exit condition (quality-weighted)**: You're done when ALL of:
-- (a) **No P1/P2 findings** (correctness, security, breaking changes) in the last round
-- (b) **The last two rounds had zero actionable (P1/P2) fixes** — i.e., they contained only nitpicks, were zero-comment rounds, or all feedback was "Won't fix"
-- (c) **No contradictions across rounds**
-- (d) **No unresolved P1/P2 Won't-fix findings carried forward from any prior round** — every Won't-fix on a P1/P2 must have been (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) actually fixed in a later round, or (iii) explicitly signed off on by the user as an acknowledged carry-forward (recorded in the merge-readiness summary). Carried-forward Won't-fix on a real P1/P2 without one of these three resolutions blocks exit regardless of (a) and (b).
-
-— **OR** the Hard Round Ceiling has fired (see above).
+**Two things authorize a merge: the loop converged, or the user said yes.**
+Nothing else. Running low on patience, a long round count, a clean CI run, and a
+round that is clean only in a weaker sense are all not authorization.
 
 Proceed to merge readiness checks.
 
@@ -353,6 +353,7 @@ Always prepare a summary of what the review loop did and observed:
 - **Self-contradictions**: Any detected during the loop and how they were resolved
 - **Beads tickets**: Out-of-scope items captured for follow-up
 - **Branch protection status**: Whether all required checks and approvals are satisfied
+- **Reviewers not dispatched**: every bot and agent that was disabled or retired, and why. A `D dispatched / R reported` of 2/2 reads identically for a two-reviewer roster and a four-reviewer roster with two switched off; naming them is what makes the difference visible
 - **Stale defaults pin bypass** (if `--skip-stale-check` was used): note the config and current plugin versions; recommend running `/pr-review-loop:audit-agents`
 - **Posting integrity**: total agent findings vs posted line-comment threads vs replied threads, per round. These MUST match (every finding posted, every thread replied). Any round where findings were fixed without posted threads is a protocol violation — report it explicitly, never paper over it.
 - **Validator activity** (if `independent_validator.enabled`): per-flagger acceptance rate (`X of Y posted findings survived; Z withdrawn as INVALID; W annotated [validator: uncertain]`). A flagger with persistent low acceptance is a candidate for retirement or prompt refinement.
@@ -361,10 +362,12 @@ If repo-specific guidance defines additional merge criteria (attestation require
 
 ### 4. Merge or Ask
 
-- **If repo guidance authorizes auto-merge** and all its criteria are met (CI passed, required approvals present, branch protections satisfied): merge
-- **If any criteria are not met**, or no repo-specific guidance exists: present the summary and ask the user
+Per Merge Authority above:
 
-The review loop should **not** override branch protections or bypass repo-defined merge requirements.
+- **Converged (or the user said yes)** and the repo's own criteria are met — CI passed, required approvals present, branch protections satisfied: merge, and present the summary alongside it
+- **Not converged**, or a repo criterion is unmet: present the summary and ask the user. Do not merge on a round that is clean only in a weaker sense — ask rather than picking the reading that permits the merge
+
+The review loop should **not** override branch protections or bypass repo-defined merge requirements. Repo policy can withhold a merge that convergence would otherwise authorize; it cannot authorize one on its own.
 
 ## Autonomous Loop Workflow
 
@@ -429,13 +432,13 @@ EACH ROUND — three phases, in order:
   │ F4. Commit and push ONCE (if ANY fixes were made)           │
   │ F5. Wait for CI checks; fix failures (max 3 CI retries)     │
   │ F6. Trigger next review (--wait)                            │
-  │ F7. Inspect F6's output BEFORE applying exit conditions     │
+  │ F7. Count D dispatched / R reported, then apply convergence │
   └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
   If F6 returned new comments → next COLLECT PHASE (new round).
-  Otherwise → apply quality-weighted exit condition + Hard Round
-  Ceiling check (see ONE MORE LOOP Rule in Stopping Heuristics).
+  Otherwise → apply the convergence rule (see Convergence).
+  Clean round → converged. No round cap.
 ```
 
 **Phase order is mandatory.** Complete all COLLECT steps (C1, C2, C3) before beginning any FIX step (F1–F7). The BATCH POINT between them is what makes Pattern Analysis (`Sweep Before Fixing`) work.
@@ -443,10 +446,10 @@ EACH ROUND — three phases, in order:
 **For full step-by-step details with commands and example outputs, see [`references/round-workflow.md`](references/round-workflow.md).** The diagram above is the authoritative execution order; the reference file is the operational companion the model can read on demand when actually running a round.
 
 **COMPLETION:**
-When a full round produces no actionable feedback (Gemini + other bots + agents all stable)
-AND this was the "final verification" round:
+When a round is clean under the convergence rule (test it against Convergence —
+do not re-derive it here):
 - Report all beads tickets created during the loop (if any)
-- Ask user about merge
+- The loop converged, which authorizes the merge — proceed to Merge Readiness
 
 ## CI Failure Handling
 
@@ -516,8 +519,14 @@ scripts/check-ci.sh <PR> --wait
 - Fixed: "Fixed - [description]"
 - Won't fix (bad suggestion): "Won't fix - [reason]"
 - Out of scope (good suggestion): "Out of scope - tracked in BD-XXX" (see below)
-- Deferred: "Good catch, tracking in #issue"
+- Deferred: "Deferred - tracking in BD-XXX"
 - Acknowledged: "Acknowledged - [explanation]"
+
+**Lead with the disposition word.** Two checks are anchored on the first word of
+a reply: the one that finds a P1/P2 declined rather than fixed (the four decline
+words) and F4's reply gate, which reads a reply that leads with none of the five
+as a thread still needing an answer. Bury the disposition and the first check
+goes blind while the second nags forever.
 
 ### For PR Comments (Claude)
 Reply using `gh pr comment` with a consolidated response:
@@ -1165,6 +1174,191 @@ Authentication uses JWT tokens stored in httpOnly cookies.
 4. Track each agent's scope (directory where it was defined)
 5. Filter changed files per agent to only those within the agent's scope
 
+### Verification: every finding carries its proof
+
+**The obligation is on the finding, not the reviewer.** A reviewer executes when
+there is something to run and judges when there is not, and it does that per
+finding — so the finding is where the proof lives. Three kinds:
+
+| Kind | Proof | When |
+|---|---|---|
+| **mutation** | Change the code, watch the check fail, report what you saw. | There is something to run. |
+| **evidence-query** | Run the query that would produce the evidence a claim depends on; report the n. | The artifact is prose, a prompt, a directive, a policy. A claim that a dataset supports a week-long comparison dies when counting the rows returns one. |
+| **judgement** | None — say so, in the finding, in those words. | "This abstraction is wrong." "These two arguments are swappable." Nothing to mutate, nothing to count. |
+
+**Judgement is legitimate and must be labelled as judgement.** Some of the most
+valuable findings are judgements, and a rule that pushed reviewers away from them
+would buy verifiability with relevance. What the rule forbids is a judgement
+*dressed as a behavioural claim* — "this exits 0 on failure" is checkable and must
+be checked; "this design is confusing" is not and must say so.
+
+"It reviews prose, so it cannot execute" is the reasoning a reviewer uses to
+excuse itself from work it could do: a prose reviewer asserting one sentence
+restates another can grep for both and show them.
+
+Declare the reviewer's usual mode as the first line of its body —
+`verification: mutation` | `evidence-query` | `judgement` | `mixed` — and treat a missing line
+as **undeclared**, a finding about the roster rather than the code. The
+declaration describes what the reviewer typically owes; it never licenses a
+finding to skip its proof. Surface it per round:
+
+```
+Reported: pr-test-analyzer=ok(mutation) comment-analyzer=ok(evidence-query) silent-failure-hunter=ok(mixed) foo=ok(undeclared)
+```
+
+**The shipped defaults declare themselves; your charter declares only your own
+reviewers.** Do **not** add a `verification:` line under `## pr-test-analyzer` or
+any other default name in your `AGENT-REVIEWERS.md`. A user agent whose name
+matches a default *replaces* it (`discover-agents.sh:13`), so a section
+containing only a declaration substitutes ~20 characters for the entire shipped
+prompt — measured at 3,647 characters replaced by 22, reported as
+`kind=user-override`, with the roster silently lobotomised and the audit reading
+as complete. That is the failure this rule exists to catch, produced by following
+the rule carelessly. The plugin knows what its own reviewers do; six repos each
+asserting it would invite six answers.
+
+**A charter on `main` does not govern a branch already open.** `AGENT-REVIEWERS.md`
+is read from the PR's branch, so a roster committed to `main` after a PR was cut
+reports `override_count: 0` and `defaults_version_checked: null` against that PR.
+Rebase or merge before concluding a roster change took effect.
+
+The mirror of that: `discover-agents.sh` reads the **working tree**, not the
+branch, so an uncommitted roster edit takes effect for reviewers that never saw
+it in the diff. `D dispatched / R reported` will not catch it — an edit that
+drops a reviewer shrinks `D` and `R` together, so `D == R` still holds and the
+round reports a full roster it never had. Commit roster changes before
+dispatching.
+
+**Put it in the spawn prompt, not the top of the charter.** `discover-agents.sh`
+hands each reviewer *its own section only* — a repo's `# Guidelines` and anything
+else above the agent definitions reach the orchestrator, never the reviewers
+(measured: this repo's Guidelines section appears in 0 of its agents'
+`instructions`). A "prove your findings" paragraph written once at the top of
+`AGENT-REVIEWERS.md` therefore arrives nowhere, while looking like it was
+adopted. The spawning template below carries the requirement instead, so every
+reviewer gets it whether or not its charter repeats it — which is also the only
+version an adopter cannot forget. Do **not** repeat it in an agent definition:
+`instructions` is the whole file body and the template pastes that in before
+appending its own copy, so a charter that repeats the paragraph ships it twice
+to every reviewer it spawns. The shipped defaults did exactly that for two
+rounds. What belongs in the definition is the `verification:` line, which is
+per-agent and says something the template cannot.
+
+**Undeclared on purpose beats a guess.** A roster that declares only the
+reviewers whose findings it has actually read is more honest than one that
+labels all of them. A reviewer becomes declarable the first time it files a
+finding you can point at, and `mixed` should be backed by naming which recent
+findings were mutations and which were evidence-queries — otherwise it is
+undeclared wearing a better word.
+
+**Check the reassuring reading hardest.** A result that says everything is fine
+ends the investigation; a result that says something is broken starts one. So the
+clean answer is the one that has to be earned, and every false clean in this
+skill's own history ran that direction: a reply script reporting 21 posted when 17
+had failed, a gate reporting 0 unanswered when 18 were, an unpaginated query
+reporting 1 unresolved against a true 93, a bot check that would have read a poll
+timeout as "reported". None of them errs toward alarm. When a reviewer reports
+clean, when a check returns empty, when a script exits 0 — that is the moment to
+ask what it would have looked like if it had failed, not the moment to move on.
+
+**A demonstration that could not have failed is not a demonstration.** Before you
+report, ask what result would have refuted you, and check your experiment could
+have produced it. A reviewer published "verified: a failing EXIT trap does not
+mask exit status" and was wrong — under `set -e`, exit 3 becomes 1 and exit 0
+also becomes 1. Six reviewers refuted it. The run had happened; it just could not
+have come out any other way, because both variants ended in `false` and expected
+status 1 either way. They differed on the wrong axis. Running something is not
+the same as testing it: vary the one thing your claim is about, and confirm the
+other branch gives the other answer.
+
+**Record what you measured and what you were told as two separate things.** A
+paragraph that fuses a measurement to a story hands the story the measurement's
+credibility, and a reviewer that checks the cheap half in two seconds will report
+the whole paragraph verified. That is not a lapse in the reviewer; it is what the
+fusion does to anyone reading it.
+
+This skill's own worst instance: round 15 reported "15 SHAs for 15 rounds" as the
+positive control for a new round-validity detector. The measurement was true —
+the reconstruction query really did return that. The claim it was carrying, that
+the detector worked, was false; the detector had never been run, and three
+reviewers proved the next round that it could not have passed on any healthy
+round. The true half carried the false half into a commit message, a status
+report and a merge argument. Split them and the false half has nothing to ride
+on.
+
+**Verify the control positive before it licenses anything.** A control that comes
+back negative has two explanations — your query is broken, or your control is
+wrong — and the result cannot tell you which. Only one of them is informative, so
+an unverified control proves nothing about the instrument it was brought in to
+check. Confirm it fires on a case you *know* is there, then trust its silence.
+The worked example is a reviewer testing this file's own reply gate: the gate is
+non-discriminating against this PR, where all four variants return 0, so it built
+a fixture and confirmed that removing each disjunct loses exactly one case before
+concluding anything from it. That confirmation is the whole difference between a
+fixture and a decoration.
+
+When it does come back negative, **suspect the explanation local to what you just
+wrote before the one with global consequences you have not observed.** "My
+control string was wrong" and "grep is broken" both fit the result, but a broken
+grep would be visible in a hundred other places — so the disconfirming evidence
+is usually already in your scrollback. Preferring the interesting hypothesis is a
+bad prior wearing the clothes of diligence.
+
+**A truncated result looks exactly like a complete one.** Pagination is one form;
+a tool-output preview is another. A reviewer this round read a truncated preview
+of `get-agent-comments.sh`, saw 13 threads where the data had 62, and reported a
+thread as unanswered when its reply was there. Re-run to a file and count rather
+than reading a preview, and treat any capped view as an unknown, not a zero.
+
+**Do not reason about where the defaults live — run the loader.**
+`_load_defaults.sh` resolves its agents directory relative to its own location,
+and `~/.claude/skills/<plugin>` is usually a symlink into a checkout, so the path
+a reviewer infers and the path the loader reads can diverge. A reviewer once filed
+two P0/P1 findings against a different marketplace plugin's agents directory
+entirely. The loader prints what it actually loaded; ask it. The same goes for the
+roster: read `# Configuration` rather than prose describing it — a charter once
+recorded three defaults as "not adopted" while `disabled` was absent and all three
+were spawning, and the finding was written by the reviewer the prose said was off.
+
+**Paginate, then check the total against what you expect.** A page limit is a
+silent truncation: the query succeeds, the shape is right, the number is a
+subset, and nothing anywhere says so. `--paginate` on every list endpoint, and
+`reviewThreads(first: 100)` is not a query, it is a query about the first
+hundred. On this PR a single unpaginated page of review comments returns 30 of
+531 — so a gate reading one page would report clean while missing the overwhelming
+majority of the threads it exists to check. Knowing roughly how many results there should be is
+what turns the truncation from invisible into obvious.
+
+**A fixture that cannot fail is not a test.** Verify every fixture fails against
+the defect it pins — a suite that passed 9/9 with two HIGH bugs live had two cases
+that could not fail at all.
+
+**A fix is new code and gets no pass.** This is the rule's strongest evidence and
+it comes from this file's own history: commits 8 through 16 of the PR that wrote
+this section are nine consecutive fixes, each correcting a defect in the one
+immediately before it — a gate that could not see bot threads, its replacement
+that reported 0 of 18, its replacement that went blind to reopens. The section you
+are reading was itself superseded ten minutes after it was written, because its
+first author declared a reviewer exempt using the exact excuse it warns about.
+Review the fix as suspiciously as the thing it replaced, and review your own most
+suspiciously of all.
+
+The rest of the evidence runs one way. A reviewer claimed a repo's CI gate was
+`ruff format` when it is `black`, without running it; of nine findings it was the
+only one declined, and complying would have broken the build. Two findings in this
+PR were *verified by reading* in one round and proved wrong by running in the next
+— `set -e` not aborting where the doc claimed, and a `$SHA` that was never
+assigned. Reading is how every one of them passed.
+
+**The gap between knowing a rule and being governed by it is not measured in time
+or in care. It is measured in whether something checks.** The tree-dirtying rule
+in this file was broken by its own author four minutes after it shipped, and a
+reviewer caught it. That is the section working.
+
+Audit the roster when adopting this. Aligning `AGENT-REVIEWERS.md` to this rule
+may go straight to main — it is roster configuration, and the carve-out is scoped
+to that alignment.
+
 ### When to Run Agent Reviewers
 
 Agent reviewers run as **C3** — the last step of the COLLECT phase in each round, after C1 (Gemini) and C2 (other bots), and before any FIX-phase edits.
@@ -1201,6 +1395,24 @@ Task tool:
     You are the "<agent-name>" code reviewer for PR #<PR>.
 
     Your focus: <agent.instructions>
+
+    **Carry the proof in the finding.** A behavioural claim — it exits 0 on
+    failure, this branch is unreachable, that fixture cannot fail — is
+    checkable, so check it: mutate the code and watch the check fail, or run
+    the query that produces the evidence the claim depends on and report the
+    number. Report what you observed, not what you expect. A finding you could
+    not demonstrate is a hypothesis and must say so. A judgement about design
+    or wording owes no demonstration and must be labelled as judgement. If
+    your check comes back empty, suspect your query before you report a defect
+    in the thing under test, and verify any control you lean on fires on a case
+    you know is there
+    — a control that has not been shown to work proves nothing by staying
+    silent.
+
+    **Never modify the working tree.** You review; you do not revert, stage, or
+    fix. If you find the tree dirty or otherwise inconsistent, report it — do not
+    correct it. Touching live state during a round is how a reviewer becomes a
+    second author of the thing it is reviewing.
 
     **Your scope: <agent.scope>**
     You should ONLY review changes to the files listed below. Ignore all other files.
@@ -1281,32 +1493,43 @@ Agent reviewers run as C3 — the last step of the COLLECT phase, after C1 (Gemi
    below) — this is the durable, unbiased telemetry that survives even when a
    finding never gets posted, and the only record of *who* dispositioned it.
 
-3. **Update per-agent tracking** based on results (productive / final-verification / retired)
+3. **Update per-agent tracking** based on results (productive / retirement-candidate / retired)
 
 4. **In F4–F6**, commit + push the batched fixes once, wait for CI, and trigger the next review.
 
-5. **Emit the end-of-round report** — a short block after F6, every round:
-   ```
-   Round N: posted X findings across Y agents (A withdrawn by validator);
-   replied to Z threads (F fixed / W won't-fix / O out-of-scope); Gemini: G comments.
-   ```
-   This makes posting-protocol drift visible immediately — a round that
-   fixed findings but posted/replied to zero threads is self-evidently
-   broken and must be corrected before the next round.
+5. **Post the end-of-round report to the PR**, after F7, every round — the block
+   and the query that reads it back are in
+   [`references/round-workflow.md`](references/round-workflow.md). **Do not keep a
+   second copy of the block here**: two copies existed for most of this skill's
+   history, drifted apart once, and a field went missing from one of them.
+   Nothing the convergence rule depends on lives in the report; every such fact is
+   derived from the PR at the moment it is needed.
 
 ### Diminishing Returns for Agent Reviewers
 
-Apply the same heuristic as Gemini, but **per agent**:
+**This is reviewer retirement, not loop termination.** It decides whether to keep
+*calling* an individual agent; the convergence rule decides when the loop is
+done. Retiring an agent never converges a round.
 
-- Track each agent via `TaskCreate`: `"<agent-name>: final verification loop"`
-- After 2-3 cycles where an agent produces only nitpicks or "Won't fix" responses, enter final verification for that agent
-- If an agent's final verification produces actual fixes, reset its state
-- If an agent's final verification produces no actionable feedback, **stop calling that agent**
+**Only rounds where the agent actually reported count toward retirement.** A
+round where it failed to report is evidence of a broken reviewer, not of a
+reviewer with nothing left to say — route that to "A reviewer that will not
+report" under Convergence. Without this, three silent spawn failures retire an
+agent, and retirement then certifies it as "reported", which launders the exact
+failure the convergence rule exists to catch.
+
+Per agent:
+
+- Track each agent's state: productive / retirement-candidate / retired
+- After 2-3 **reported** rounds where an agent produces only nitpicks or "Won't fix" responses, mark it a retirement-candidate and give it one more **reported** round
+- If that reported round produces a real fix, reset it to productive
+- If that reported round produces nothing actionable, **stop calling that agent**
+- **Unless it is the last reviewer standing.** Do not retire it and do not keep calling it in a loop — stop and ask the user, the same resolution as "At least one reviewer must have run" under Convergence. A roster of one exhausted reviewer is a configuration problem, not a converged loop.
 
 Example tracking:
 ```
-- "security-reviewer: 2 cycles, still productive" (keep calling)
-- "dry-reviewer: final verification loop" (one more, then retire if no actionable feedback)
+- "security-reviewer: 2 rounds, still productive" (keep calling)
+- "dry-reviewer: retirement-candidate" (one more round, then retire if nothing actionable)
 - "error-handling-reviewer: retired" (no longer called)
 ```
 
@@ -1315,7 +1538,7 @@ Example tracking:
 As agents reach diminishing returns, stop calling them. The main loop should:
 
 1. Parse `AGENT-REVIEWERS.md` to get all agent names
-2. Track per-agent state (productive / final-verification / retired)
+2. Track per-agent state (productive / retirement-candidate / retired)
 3. Only spawn Tasks for non-retired agents
 4. Update state after each cycle based on results
 
