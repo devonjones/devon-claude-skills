@@ -56,9 +56,24 @@ fi
 
 # Function to get check status summary
 # Returns: "pending", "passing", or "failing"
+#
+# Resolved against a SHA, never against the PR. `gh pr checks <PR>` attributes
+# results to the pull request, so on a merge-forward or a fast fix-and-push it
+# can answer for a commit that is no longer the head - and because the previous
+# commit was usually also green, a stale green and a real green are identical.
+# "A CI fix is a fix", so a stale green can carry a round to convergence on code
+# nobody checked.
 get_check_status() {
+    local sha="${1:-}"
     local checks_json
-    checks_json=$(gh pr checks "$PR_NUMBER" $REPO_FLAG --json name,state,bucket 2>/dev/null) || {
+    if [[ -z "$sha" ]]; then
+        # No SHA means we cannot say which commit a verdict belongs to. That is
+        # not "passing".
+        echo "unknown_sha"
+        return
+    fi
+    checks_json=$(gh api "repos/${REPO}/commits/${sha}/check-runs" --paginate 2>/dev/null \
+        | jq -s '[.[].check_runs[]] | map({name, state: (if .status != "completed" then (.status|ascii_upcase) else (.conclusion|ascii_upcase) end)})') || {
         echo "no_checks"
         return
     }
@@ -71,7 +86,7 @@ get_check_status() {
         return
     fi
 
-    pending=$(echo "$checks_json" | jq '[.[] | select(.state == "PENDING" or .state == "QUEUED" or .state == "IN_PROGRESS" or .state == "WAITING" or .state == "REQUESTED" or .state == "ACTION_REQUIRED")] | length')
+    pending=$(echo "$checks_json" | jq '[.[] | select(.state == "PENDING" or .state == "QUEUED" or .state == "IN_PROGRESS" or .state == "WAITING" or .state == "REQUESTED" or .state == "ACTION_REQUIRED" or .state == "null")] | length')
     fail=$(echo "$checks_json" | jq '[.[] | select(.state == "FAILURE" or .state == "ERROR" or .state == "TIMED_OUT" or .state == "CANCELLED" or .state == "STARTUP_FAILURE")] | length')
     pass=$(echo "$checks_json" | jq '[.[] | select(.state == "SUCCESS" or .state == "NEUTRAL" or .state == "SKIPPED")] | length')
 
@@ -129,12 +144,32 @@ get_failure_details() {
     done <<< "$failed_checks"
 }
 
+# Pin the commit under test ONCE. Every verdict below is about THIS commit.
+TARGET_SHA=$(gh pr view "$PR_NUMBER" $REPO_FLAG --json headRefOid --jq .headRefOid 2>/dev/null) || TARGET_SHA=""
+if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "Error: could not resolve the PR head SHA - cannot attribute CI results to a commit." >&2
+    exit 2
+fi
+echo "Checking CI for ${TARGET_SHA:0:7}"
+
+# If the branch moves while we wait, the verdict we are about to report belongs
+# to code that is no longer what would ship. That is neither pass nor fail.
+head_moved() {
+    local now
+    now=$(gh pr view "$PR_NUMBER" $REPO_FLAG --json headRefOid --jq .headRefOid 2>/dev/null) || return 1
+    [[ "$now" =~ ^[0-9a-f]{40}$ && "$now" != "$TARGET_SHA" ]]
+}
+
 # Single check (no wait)
 if [[ "$WAIT_MODE" == "false" ]]; then
-    status=$(get_check_status)
+    status=$(get_check_status "$TARGET_SHA")
     case "$status" in
+        unknown_sha)
+            echo "Error: no commit to attribute CI results to." >&2
+            exit 2
+            ;;
         no_checks)
-            echo "No CI checks found on PR #$PR_NUMBER"
+            echo "No CI checks found for ${TARGET_SHA:0:7}"
             exit 0
             ;;
         passing:*)
@@ -167,7 +202,13 @@ sleep 5
 ELAPSED=5
 
 while [[ $ELAPSED -lt $TIMEOUT ]]; do
-    status=$(get_check_status)
+    if head_moved; then
+        echo "" >&2
+        echo "Branch moved while waiting: results for ${TARGET_SHA:0:7} no longer describe the head." >&2
+        echo "Re-run against the new head rather than trusting this verdict." >&2
+        exit 3
+    fi
+    status=$(get_check_status "$TARGET_SHA")
 
     case "$status" in
         no_checks)
@@ -230,7 +271,7 @@ done
 echo ""
 echo "⏰ Timeout after ${TIMEOUT}s"
 echo ""
-status=$(get_check_status)
+status=$(get_check_status "$TARGET_SHA")
 case "$status" in
     failing:*)
         echo "✗ CI checks failed"
