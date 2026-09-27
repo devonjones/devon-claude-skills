@@ -285,18 +285,26 @@ After each round, evaluate:
 - A self-contradiction is detected (pause for user input)
 - The fix/rejection ratio drops below ~25% (most comments are not actionable)
 - All remaining comments are stylistic or theoretical
-- The Hard Round Ceiling has fired (see below) — stop regardless of other signals
+- Past round 5, the next round can't be justified under Escalating Scrutiny (see below)
 
-### Hard Round Ceiling (Circuit Breaker)
+### Escalating Scrutiny Past Round 5
 
-**If you reach 7 total rounds, STOP the loop regardless of state.** This is a pure circuit breaker — the quality-weighted exit condition (see ONE MORE LOOP Rule) handles normal termination earlier; this fires only when the loop is stuck. Report to the user:
+There is no hard round cap — a PR that keeps surfacing real bugs should keep getting fixed. But long loops are usually a smell (reviewers re-litigating, fixes churning, scope creeping), so **from round 6 onward, every new round must justify itself, and the bar rises with each round.**
+
+Before triggering round N (N ≥ 6), answer explicitly — in your reasoning and in the round's commit message body:
+
+1. **What P1/P2 did the last round fix, and was it genuinely new?** A finding in code the loop itself introduced, or a re-flag of territory already reviewed, is a sign of churn, not progress.
+2. **Would this finding have been a P1/P2 on round 1?** Past round 5, demand a concrete failure scenario (inputs/state → wrong result) before accepting P2. Speculative or "could be cleaner" findings drop to P3.
+3. **Is the loop converging?** Compare finding counts and severities over the last 2–3 rounds. Flat or rising counts at the same severity mean the reviewers are generating, not discovering.
+
+The further past 5, the stronger the evidence needed: by round 8+, only a clear correctness or security P1 justifies another round on its own. If you can't justify the next round, stop and exit via the quality-weighted exit condition below, treating remaining P2s under the scrutinized classification.
+
+If the loop is still going past round 5 and you're unsure, pause and report to the user:
 
 - Rounds completed and elapsed time
 - Total comments received, by priority (P1/P2/P3 — see Priority to Exit-Condition Mapping) and source (Gemini, other bots, each agent)
 - Outstanding unresolved items (if any)
 - A recommendation on whether to continue, declare "good enough," or escalate
-
-Then ask the user before proceeding further.
 
 ### ONE MORE LOOP Rule
 
@@ -317,8 +325,6 @@ When a full round (Gemini + other bots + agent reviewers) produces no actionable
 - (b) **The last two rounds had zero actionable (P1/P2) fixes** — i.e., they contained only nitpicks, were zero-comment rounds, or all feedback was "Won't fix"
 - (c) **No contradictions across rounds**
 - (d) **No unresolved P1/P2 Won't-fix findings carried forward from any prior round** — every Won't-fix on a P1/P2 must have been (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) actually fixed in a later round, or (iii) explicitly signed off on by the user as an acknowledged carry-forward (recorded in the merge-readiness summary). Carried-forward Won't-fix on a real P1/P2 without one of these three resolutions blocks exit regardless of (a) and (b).
-
-— **OR** the Hard Round Ceiling has fired (see above).
 
 Proceed to merge readiness checks.
 
@@ -434,8 +440,8 @@ EACH ROUND — three phases, in order:
                               │
                               ▼
   If F6 returned new comments → next COLLECT PHASE (new round).
-  Otherwise → apply quality-weighted exit condition + Hard Round
-  Ceiling check (see ONE MORE LOOP Rule in Stopping Heuristics).
+  Otherwise → apply quality-weighted exit condition (see ONE MORE
+  LOOP Rule; past round 5, also Escalating Scrutiny).
 ```
 
 **Phase order is mandatory.** Complete all COLLECT steps (C1, C2, C3) before beginning any FIX step (F1–F7). The BATCH POINT between them is what makes Pattern Analysis (`Sweep Before Fixing`) work.

@@ -133,7 +133,7 @@ The `--wait` flag polls every 30s for up to 5 minutes waiting for new comments. 
 
 ### F7. Inspect F6's output BEFORE applying exit conditions
 
-If F6 returned new comments, start the next COLLECT PHASE. Otherwise apply the quality-weighted exit condition and Hard Round Ceiling check (see ONE MORE LOOP Rule in `SKILL.md`'s Stopping Heuristics section).
+If F6 returned new comments, start the next COLLECT PHASE. Otherwise apply the quality-weighted exit condition (see ONE MORE LOOP Rule in `SKILL.md`'s Stopping Heuristics section). Past round 5, a new round must also pass Escalating Scrutiny.
 
 ### End-of-round report (every round)
 
