@@ -4,7 +4,8 @@
 {
   "defaults_version_checked": "1.7.0",
   "bots": {
-    "gemini": false
+    "gemini": false,
+    "cursor": false
   },
   "overlap_acknowledged": {
     "shell-script-reviewer": {
@@ -18,6 +19,21 @@
   }
 }
 ```
+
+Both external bots are off, and why:
+
+- **cursor** — Bugbot has never posted a review on any PR in this repo (41 PRs;
+  the only non-human review author on record is `gemini-code-assist[bot]`).
+  Disabled because it is not installed here, not because its findings are
+  unwanted. Re-enable if it is ever installed.
+- **gemini** — Gemini Code Assist posted on this repo, 2026-07-21: "The consumer
+  version of Gemini Code Assist on GitHub has been sunset. All code review
+  activity has officially ceased." It cannot produce a head-SHA match again on
+  this account.
+
+This lives outside the JSON on purpose: `# Configuration` is a closed schema, and
+an unknown key there makes `discover-agents.sh` print a "likely typos" warning on
+every parse — which is the only signal that a misspelled off-switch did not take.
 
 # Guidelines
 
@@ -36,6 +52,8 @@ This is a Claude Code skills marketplace repository. When reviewing PRs:
 # Agents
 
 ## marketplace-reviewer
+
+verification: evidence-query — resolves each claimed marketplace.json entry against the actual plugin tree and reports what is missing.
 
 You are a reviewer ensuring new skills are properly registered in the marketplace.
 
@@ -66,6 +84,8 @@ You are a reviewer ensuring new skills are properly registered in the marketplac
 - Missing optional metadata fields
 
 ## dependency-reviewer
+
+verification: evidence-query — resolves each referenced tool or import and reports which do not exist.
 
 You are a reviewer ensuring new dependencies have proper installation instructions.
 
@@ -103,6 +123,8 @@ You are a reviewer ensuring new dependencies have proper installation instructio
 
 ## shell-script-reviewer
 
+verification: mutation — runs the scripts it reviews and fault-injects their failure paths.
+
 You are a reviewer ensuring shell scripts meet repository standards.
 
 **Your focus:** Shell script quality and correctness for any new or modified `.sh` files.
@@ -130,6 +152,8 @@ You are a reviewer ensuring shell scripts meet repository standards.
 - Pre-existing issues in unchanged lines of a modified script
 
 ## clarity-reviewer
+
+verification: mixed — greps for the text it claims is restated or stale and quotes both occurrences; a redundancy claim it cannot show is a hypothesis. Judgements about whether prose earns its length are labelled as judgements.
 
 You are a reviewer ensuring markdown documentation is terse yet complete.
 
