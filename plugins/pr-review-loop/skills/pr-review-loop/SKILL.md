@@ -118,9 +118,11 @@ The quality-weighted exit condition (see ONE MORE LOOP Rule) depends on classify
 | Claude `⚠️` | P2 if correctness/security/breaking; else P3 | Yes if correctness/security/breaking; no if style/prose |
 | Agent comment, no explicit label | Infer from content: correctness/security/breaking → P1/P2; else P3 | Per inferred level |
 
-**"Won't fix" on a P1/P2 finding does NOT resolve it on its own** — it still blocks quality-weighted exit unless (i) the finding is reclassified to P3 with explicit justification (drop one P-level with reasoning), (ii) the finding is actually fixed in a later round, or (iii) the user explicitly signs off on the carry-forward, in which case the finding is recorded as an acknowledged unresolved item in the merge-readiness summary.
+**Reviewers don't get the final word on severity; you do.** Treat a reviewer's self-grade as a claim to check. You may decline any finding with a reason, and a reasoned decline on style, wording, comment or doc grounds resolves it: it does not block exit and it cannot be reopened (see the reviewer reopen rule).
 
-The (iii) escape valve exists so the model isn't forced to relabel a genuine "won't fix" as a reclassification: surface the finding to the user, they sign off, it's recorded in the merge-readiness summary.
+**"Won't fix" on a genuine behavioural P1/P2** (correctness, security, breaking change, data loss) does NOT resolve it on its own. It still blocks quality-weighted exit unless (i) you reclassify it with a stated reason, (ii) it is fixed in a later round, or (iii) the user explicitly signs off on the carry-forward, in which case it is recorded as an acknowledged unresolved item in the merge-readiness summary.
+
+**Comments, docstrings and PR-body text are P3 by default, and the fix is deletion.** They are P2 only if the text would lead a reader to write a bug, and never P1, whatever the reviewer's label says. This includes comment-analyzer's HIGH.
 
 **Classifying `![medium]` (Gemini's most-used label) — use these heuristics:**
 
@@ -191,19 +193,18 @@ The key difference: Claude comments don't have "threads" to resolve - you reply 
 - Stylistic preferences that don't match project conventions
 - Adding documentation for self-explanatory code
 
-When in doubt, ask the user rather than blindly applying changes.
+When in doubt, decide. Ask the user only about behavioural or product-level questions, never about review wording.
 
 ### Self-Contradiction Detection
 
-Track changes across rounds. When a fix in round N reverses or conflicts with a fix from a previous round, this signals that the review loop may be degrading the code rather than improving it.
+Track changes across rounds. Reviewers flap: round N asks to reverse round N-K, two reviewers pull opposite ways, or a reviewer re-raises a point you already declined. Flapping means the loop is oscillating, and more rounds won't fix it. You are the tiebreaker.
 
-**When a contradiction is detected:**
+**When reviewers flap:**
 
-1. **Identify all involved changes**: List the original code, the round N-K change, and the round N change that contradicts it.
-2. **Analyze both positions**: Each round may have had valid reasoning. Assess whether the later round caught a genuine mistake in the earlier fix, or whether the loop is oscillating.
-3. **Check against the original**: Compare both the round N-K and round N versions against the original pre-review-loop code. Often the original is the correct version.
-4. **Report to the user** with a clear summary: what changed, what contradicted it, your assessment of which version is correct and why, and a recommendation.
-5. **Do not silently apply the contradicting change.** Pause and get user input.
+1. **Pick one side.** Decide using project conventions (CLAUDE.md, surrounding code) and the original pre-review-loop code, which is often the right answer.
+2. **Reply once on each involved thread** with the decision and the reason, and state that the matter is closed. Don't rewrite the code a third time.
+3. **Later re-raises of the same point are declined by reference** to that reply ("decided in <thread link>"). They don't count as findings.
+4. **Go to the user only if the choice changes behaviour or is a product decision.** Wording, style, comment and structure disputes are yours to settle.
 
 **Parallel valid findings**: Multiple reviewers may independently flag different aspects of the same code. This is not a contradiction — it's convergent analysis. The key distinction is whether round N is *undoing* round N-K's work (contradiction) vs. addressing a *different concern* in nearby code (parallel findings).
 
@@ -216,7 +217,7 @@ When Gemini (or any reviewer) raises a finding, ask: **is this finding symptomat
 **Do not fix comments one-at-a-time.** After collecting all comments for a round (Gemini + other bots + agents), list them together before editing any file:
 
 1. Identify patterns across comments (same issue type, multiple files or lines) — plan one sweep fix, not N individual fixes.
-2. For each planned fix, re-read the new text through each active agent's lens *before* staging: would code-reviewer flag this phrasing? Would comment-analyzer flag a stale assertion? Revise until the fix itself wouldn't draw a new comment.
+2. When a comment, docstring or PR-body passage is flagged, prefer deleting it to rewriting it. Fewer words make fewer claims to check. Don't answer a doc finding with a longer, more defensive comment; that feeds the next round.
 3. Commit once per round, not once per comment. Note deliberate trade-offs in the commit message body so reviewers see the reasoning rather than re-flagging it.
 
 ### Indicators of a Broader Pattern
@@ -1223,6 +1224,7 @@ Task tool:
 
     2. **Evaluate replies to your prior comments**:
        - If the response is reasonable (good explanation, valid fix, or acceptable tradeoff), do NOT re-raise
+       - A reasoned decline on style, wording, comment or doc grounds is final. Do NOT reopen it
        - If the response is UNREASONABLE (dismissive, incorrect, or ignores the issue), reopen:
          ```bash
          scripts/reopen-comment.sh <PR> <comment-id> <agent-name> "Reopening - <reason why response is insufficient>"
