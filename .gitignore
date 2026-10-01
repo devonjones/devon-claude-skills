@@ -12,3 +12,9 @@
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Marketplace install artifacts. Installing a plugin from this repo's own
+# marketplace copies plugins/<name> to /<name>/<version>/ and writes an
+# .in_use marker inside it. The source of truth is plugins/.
+/nano-banana/
+/pr-review-loop/
