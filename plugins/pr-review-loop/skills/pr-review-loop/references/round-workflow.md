@@ -218,7 +218,7 @@ The `--wait` flag polls every 30s for up to 5 minutes waiting for new comments. 
 
 ### F7. Count reporters, then apply the convergence rule
 
-If F6 returned new comments, start the next COLLECT PHASE. Otherwise: count `D` reviewers dispatched against `R` that reported — see [`reviewer-reported.md`](reviewer-reported.md), which is where the per-class definition and the bot check live — then apply the convergence rule. `D` and `R` must match. One clean round converges; there is no round cap.
+If F6 returned new comments, start the next COLLECT PHASE. Otherwise: count `D` reviewers dispatched against `R` that reported — see [`reviewer-reported.md`](reviewer-reported.md), which is where the per-class definition and the bot check live — then apply the convergence rule. `D` and `R` must match. One clean round converges; there is no round cap. Past round 5, a new round must also pass Escalating Scrutiny in `SKILL.md`.
 
 ### End-of-round report
 

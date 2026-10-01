@@ -122,6 +122,8 @@ The convergence rule (see Convergence) depends on classifying findings as P1/P2 
 
 The (iii) escape valve exists so the model isn't forced to relabel a genuine "won't fix" as a reclassification: surface the finding to the user, they sign off, it's recorded in the merge-readiness summary.
 
+**Comment, docstring and PR-body findings are P3 by default.** They are P2 only if the text is wrong in a way that would lead a reader to write a bug. Fix them by shortening or deleting, never by adding. A comment says what the code does and why, tersely. It does not tell the story of how the code got this way: no history, past bugs, round numbers or rejected alternatives. That belongs in the commit message, if anywhere. A reasoned decline on wording or style grounds is final, and reviewers don't reopen it.
+
 **Classifying `![medium]` (Gemini's most-used label) — use these heuristics:**
 
 - P2 (blocking): the comment describes a correctness bug, security concern, breaking change, data loss risk, or incorrect error handling. Example: *"this will return nil for empty input"*, *"missing null check could crash on production data"*, *"env var not validated before use"*.
@@ -191,19 +193,18 @@ The key difference: Claude comments don't have "threads" to resolve - you reply 
 - Stylistic preferences that don't match project conventions
 - Adding documentation for self-explanatory code
 
-When in doubt, ask the user rather than blindly applying changes.
+When in doubt, decide or ask the user. Don't apply changes blindly.
 
 ### Self-Contradiction Detection
 
 Track changes across rounds. When a fix in round N reverses or conflicts with a fix from a previous round, this signals that the review loop may be degrading the code rather than improving it.
 
-**When a contradiction is detected:**
+This includes reviewers flapping: two reviewers pulling opposite ways, or a reviewer re-raising a point you already declined.
 
-1. **Identify all involved changes**: List the original code, the round N-K change, and the round N change that contradicts it.
-2. **Analyze both positions**: Each round may have had valid reasoning. Assess whether the later round caught a genuine mistake in the earlier fix, or whether the loop is oscillating.
-3. **Check against the original**: Compare both the round N-K and round N versions against the original pre-review-loop code. Often the original is the correct version.
-4. **Report to the user** with a clear summary: what changed, what contradicted it, your assessment of which version is correct and why, and a recommendation.
-5. **Do not silently apply the contradicting change.** Pause and get user input.
+**When a contradiction is detected, either settle it or ask the user.** Never silently apply the contradicting change.
+
+- **Settle it:** pick one side, using project conventions and the original pre-review-loop code (often the right answer). Reply once on each involved thread with the decision and the reason. Later re-raises are declined by reference to that reply and don't count as findings.
+- **Ask the user:** summarize the original, both changes, and your recommendation. You must ask when the choice changes behaviour or is a product decision.
 
 **Parallel valid findings**: Multiple reviewers may independently flag different aspects of the same code. This is not a contradiction — it's convergent analysis. The key distinction is whether round N is *undoing* round N-K's work (contradiction) vs. addressing a *different concern* in nearby code (parallel findings).
 
@@ -216,7 +217,7 @@ When Gemini (or any reviewer) raises a finding, ask: **is this finding symptomat
 **Do not fix comments one-at-a-time.** After collecting all comments for a round (Gemini + other bots + agents), list them together before editing any file:
 
 1. Identify patterns across comments (same issue type, multiple files or lines) — plan one sweep fix, not N individual fixes.
-2. For each planned fix, re-read the new text through each active agent's lens *before* staging: would code-reviewer flag this phrasing? Would comment-analyzer flag a stale assertion? Revise until the fix itself wouldn't draw a new comment.
+2. When a comment, docstring or PR-body passage is flagged, prefer deleting it to rewriting it. Don't answer a doc finding with a longer, more defensive comment; that feeds the next round.
 3. Commit once per round, not once per comment. Note deliberate trade-offs in the commit message body so reviewers see the reasoning rather than re-flagging it.
 
 ### Indicators of a Broader Pattern
@@ -267,6 +268,23 @@ a round is clean, the loop is done.
 instruction. Do not cap the loop at N rounds; a stuck loop is a reason to stop
 and ask the user, not a number to count to.
 
+### Escalating Scrutiny Past Round 5
+
+From round 6 on, a round that wasn't clean must justify the next one, and the
+bar rises each round. Answer these in your reasoning and in the round's commit
+message body:
+
+1. **Was the P1/P2 that blocked convergence genuinely new?** A finding in code
+   the loop itself wrote, or a re-flag of ground already reviewed, is churn.
+2. **Would it have been a P1/P2 on round 1?** Past round 5, a P2 needs a
+   concrete failure scenario (inputs or state leading to a wrong result).
+   Without one, reclassify it to P3 with that reason.
+3. **Are finding counts falling?** Flat or rising counts at the same severity
+   mean the reviewers are generating findings, not discovering them.
+
+By round 8, only a clear correctness or security P1 justifies another round on
+its own. If you can't justify the next round, stop and ask the user.
+
 ### What makes a round clean
 
 Some of these rules are fixed and some are the running agent's judgement. Keep
@@ -283,7 +301,7 @@ that distinction — they are not a flat list of equal-force bullets.
 | **A P1/P2 disposed of by anything other than a fix blocks convergence.** | Four reply words decline a finding, and **each one needs a path** — a word with no path is a P1/P2 that leaves by a door nobody is watching. **Out of scope** and **Deferred** are resolved by a ticket that carries the finding: file it with the reviewer's own text and the comment id, reply with the ticket id, and confirm the ticket exists **and is open** (`bd show` exits 0 on a closed ticket, so existence alone lets a shut ticket carry a live P1 — the open-ness check is in [`references/round-workflow.md`](references/round-workflow.md)). Out of scope means the fix lives outside this PR's diff, not that you would rather not do it now. **Won't fix** and **Acknowledged** take the other route: (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. An in-scope P1/P2 always needs (i), (ii) or (iii). Found by the thread's last reply text, never by its resolve state. Query in [`references/round-workflow.md`](references/round-workflow.md). |
 | **A CI fix is a fix.** | A fix pushed at F5 to get CI green changed the code as surely as a review fix did. The round that contained it is not clean. |
 | **A round the branch moved under is INCOMPLETE.** | Reviewers must all read the same commit. Record the head SHA at dispatch, compare it at F7, and if the branch was pushed in between, discard the round and re-dispatch against the new head — the round proves nothing about what would ship. The comparison is the point: an invariant nothing checks is a wish, and this row shipped for one round with no detector anywhere in the skill. Query in [`references/round-workflow.md`](references/round-workflow.md), which also shows how to reconstruct the SHAs of a round you forgot to record, from `original_commit_id`. Working-tree edits are the same hazard one step earlier and take a different remedy: nobody read them either, so the round still stands, but they must not ride along in its F4 commit as though they had been reviewed. `.beads/` is exempt — `bd show` restages its JSONL, so the ticket rule below would otherwise forbid the check it requires. |
-| **A self-contradiction stops the loop.** | A round that reverses a previous round's fix means the loop is oscillating, not converging. Stop and ask the user; more rounds do not fix it. |
+| **A self-contradiction must be settled before the round can be clean.** | A round that reverses a previous round's fix means the loop is oscillating, and more rounds won't fix it. Settle it or ask the user, per Self-Contradiction Detection. |
 | **A reviewer that will not report stops the loop.** | Re-run it inside the same round. Two failures **in that round** stops the loop and asks the user — whether it failed to report or the check for it failed; one counter, both causes, because alternating them would otherwise trip neither. Nothing crosses a round boundary, so nothing has to survive one. See [`references/reviewer-reported.md`](references/reviewer-reported.md). |
 
 **Agent's judgement — explicitly discretionary:**
@@ -1429,6 +1447,7 @@ Task tool:
 
     2. **Evaluate replies to your prior comments**:
        - If the response is reasonable (good explanation, valid fix, or acceptable tradeoff), do NOT re-raise
+       - A reasoned decline on wording or style grounds is final. Do NOT reopen it
        - If the response is UNREASONABLE (dismissive, incorrect, or ignores the issue), reopen:
          ```bash
          scripts/reopen-comment.sh <PR> <comment-id> <agent-name> "Reopening - <reason why response is insufficient>"
