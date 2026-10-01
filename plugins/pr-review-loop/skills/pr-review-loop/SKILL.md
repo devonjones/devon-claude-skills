@@ -694,7 +694,7 @@ Project-level config lives in a `# Configuration` H1 section in the **root** `AG
 
 Fields:
 
-- **`defaults_version_checked`** — plugin version (matches the value in `.claude-plugin/plugin.json`) whose defaults the user has reviewed. The `/pr-review-loop:audit-agents` tool (q2h) bumps this when the user accepts/rejects each recommendation.
+- **`defaults_version_checked`** — plugin version (matches the value in `.claude-plugin/plugin.json`) whose defaults the user has reviewed. It is stale only if it's older than `DEFAULTS_VERSION` (see Stale Pin Detection). The `/pr-review-loop:audit-agents` tool (q2h) bumps this when the user accepts/rejects each recommendation.
 - **`disabled`** — list of default agent names the user does NOT want spawned. Per-name opt-out.
 - **`overlap_acknowledged`** — map from a user agent name to `{ overlaps_with, reason }`. Both agents continue to spawn; this entry documents intentional duplication so the audit tool doesn't recommend renaming. **`reason` is REQUIRED** — the parser rejects entries without it, so future readers see why both agents are intentionally running.
 - **`independent_validator`** — controls the per-finding validation step (see "Independent Validator Pipeline" below). All three nested fields are optional; defaults are `enabled: true`, `skip_for: []`, `uncertain_action: "post_with_annotation"`.
@@ -947,9 +947,11 @@ Just continue to step 3 (stale-pin check). The template install stays in place; 
 
 ### Stale Pin Detection (at loop start)
 
-Before round 1, the loop checks `defaults_version_checked` against the installed plugin version. The check is deterministic — a pure version-string compare, no LLM inference.
+Before round 1, the loop checks `defaults_version_checked` against `DEFAULTS_VERSION` (plugin root): the plugin version in which the default reviewers last changed. A pin at or above it is current, so most version bumps don't trigger a re-audit. The check is a deterministic semver compare, no LLM inference.
 
-If the pin is missing or stale:
+**When you change the default reviewers** (add, remove or rename an agent in `agents/`, or change what one checks enough that a user should rethink their overrides), set `DEFAULTS_VERSION` to the new plugin version. Otherwise leave it alone.
+
+If the pin is missing, unparseable, or older than `DEFAULTS_VERSION`:
 
 ```
 ⚠️  AGENT-REVIEWERS.md was last audited against pr-review-loop v1.2.5.
