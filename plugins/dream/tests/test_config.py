@@ -81,3 +81,48 @@ def test_project_slug_falls_back_when_no_common_dir(monkeypatch):
 
     monkeypatch.setattr(config, "_run", fake_run)
     assert config.project_slug() == "proj"
+
+
+# --- slug is identical from every worktree, in every git layout --------------
+# Keying on the worktree dir gave each worktree an orphan ~/.dream/<slug>. The
+# old fix only handled a common dir ending in /.git, so separate-git-dir and
+# submodule layouts still fell back to the worktree path. These use real git,
+# not mocks, because the bug was in what git reports, not in our string logic.
+
+import subprocess as _sp
+
+
+def _git(*a, cwd):
+    _sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c",
+             "protocol.file.allow=always", *a], cwd=cwd, check=True,
+            capture_output=True)
+
+
+def _slug(path, monkeypatch):
+    monkeypatch.setenv("DREAM_PROJECT_DIR", str(path))
+    return config.project_slug()
+
+
+def test_slug_same_from_worktree_normal_clone(tmp_path, monkeypatch):
+    _git("init", "-q", "repo", cwd=tmp_path)
+    _git("commit", "-q", "--allow-empty", "-m", "i", cwd=tmp_path / "repo")
+    _git("worktree", "add", "-q", "../repo-wt", "-b", "w", cwd=tmp_path / "repo")
+    assert _slug(tmp_path / "repo-wt", monkeypatch) == _slug(tmp_path / "repo", monkeypatch) == "repo"
+
+
+def test_slug_same_from_worktree_separate_git_dir(tmp_path, monkeypatch):
+    _git("init", "-q", f"--separate-git-dir={tmp_path}/store.git", "repo", cwd=tmp_path)
+    _git("commit", "-q", "--allow-empty", "-m", "i", cwd=tmp_path / "repo")
+    _git("worktree", "add", "-q", "../repo-wt", "-b", "w", cwd=tmp_path / "repo")
+    main, wt = _slug(tmp_path / "repo", monkeypatch), _slug(tmp_path / "repo-wt", monkeypatch)
+    assert main == wt
+    assert wt != "repo-wt"
+
+
+def test_slug_submodule_is_not_the_superproject(tmp_path, monkeypatch):
+    _git("init", "-q", "lib", cwd=tmp_path)
+    _git("commit", "-q", "--allow-empty", "-m", "i", cwd=tmp_path / "lib")
+    _git("init", "-q", "app", cwd=tmp_path)
+    _git("commit", "-q", "--allow-empty", "-m", "i", cwd=tmp_path / "app")
+    _git("submodule", "add", "-q", str(tmp_path / "lib"), "sub", cwd=tmp_path / "app")
+    assert _slug(tmp_path / "app" / "sub", monkeypatch) not in ("app", "")

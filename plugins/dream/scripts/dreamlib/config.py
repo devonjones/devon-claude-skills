@@ -33,20 +33,33 @@ def git_root(cwd: str | None = None) -> str:
 
 
 def main_checkout(cwd: str | None = None) -> str:
-    """The MAIN checkout's root, even when called from a linked worktree.
+    """A path whose basename is the SAME from every worktree of a repo.
 
-    `--show-toplevel` returns the *worktree* dir, so a review round run from
-    `wyrd-tombstone/` used to key its own `~/.dream/wyrd-tombstone/` — a slug that
-    dies with the worktree, taking its markers with it. The common dir is shared by
-    every worktree of a repo, so its parent is the one stable identity. Falls back
-    to the worktree root on old git (no `--path-format`) or a bare/odd layout."""
+    `--show-toplevel` returns the worktree dir, so keying on it gives each
+    worktree its own orphan slug. The common git dir is shared by every
+    worktree, so it is the identity:
+
+      /repo/.git              -> /repo           (normal clone; slug unchanged)
+      /x/store.git            -> /x/store        (--separate-git-dir)
+      /super/.git/modules/sub -> .../modules/sub (submodule)
+
+    For the last two the main checkout's own name is not recorded anywhere git
+    can reach from a linked worktree - there is no core.worktree and nothing in
+    the store points back at it - so the common dir's name is used instead. It
+    is stable across worktrees, which is what the slug needs.
+
+    Falls back to the worktree root only when git cannot report a common dir
+    at all (git older than 2.13)."""
     common = _run(
         ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
         cwd=cwd or project_dir(),
     )
+    if not common:
+        return git_root(cwd)
+    common = common.rstrip("/")
     if common.endswith("/.git"):
         return os.path.dirname(common)
-    return git_root(cwd)
+    return common[:-4] if common.endswith(".git") else common
 
 
 def project_slug(cwd: str | None = None) -> str:

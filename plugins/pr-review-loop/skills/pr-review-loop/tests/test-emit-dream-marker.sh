@@ -60,4 +60,11 @@ rec="$(tail -1 "$T/args/markers/pr-review-loop.jsonl")"
   && ok "record keeps its own ts and kind" || bad "provenance overwritten: $rec"
 [[ "$(jq -r .pr <<<"$rec")" == "2" ]] && ok "valid fields still land alongside rejected ones" || bad "pr lost: $rec"
 
+echo "=== slug: same from a worktree of a separate-git-dir repo (mirrors config.py) ==="
+G(){ git -c user.email=t@t -c user.name=t "$@" >/dev/null 2>&1; }
+( cd "$T" && G init -q --separate-git-dir="$T/store.git" sg && cd sg && G commit -q --allow-empty -m i && G worktree add -q ../sg-wt -b w )
+for d in "$T/sg" "$T/sg-wt"; do ( cd "$d" && HOME="$T/h-$(basename "$d")" bash "$EMIT" k a=1 ); done
+main_slug="$(ls "$T/h-sg/.dream")"; wt_slug="$(ls "$T/h-sg-wt/.dream")"
+[[ -n "$main_slug" && "$main_slug" == "$wt_slug" ]] && ok "worktree slug '$wt_slug' matches main" || bad "orphan slug: main='$main_slug' worktree='$wt_slug'"
+
 echo ""; echo "Passed: $PASSED  Failed: $FAILED"; [[ "$FAILED" -eq 0 ]]

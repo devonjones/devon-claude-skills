@@ -43,15 +43,18 @@ _emit() {
   local kind="$1"; shift
 
   local root common slug home dir ts
-  # Slug from the MAIN checkout, not the worktree: --show-toplevel returns the
-  # worktree dir, so a round run from a worktree (the mandated workflow in some
-  # repos) wrote to ~/.dream/<worktree-name>/ — an orphan slug the dream skill
-  # never reads. The common dir is shared by every worktree of a repo, so its
-  # parent is the one stable identity. Mirrors dreamlib/config.py:main_checkout.
+  # Slug from the common git dir, which every worktree of a repo shares.
+  # --show-toplevel is the worktree dir, so keying on it gives each worktree an
+  # orphan slug. /repo/.git -> repo; otherwise (separate git dir, submodule)
+  # the common dir's own name, minus .git. Mirrors dreamlib/config.py:main_checkout.
   root="$(git rev-parse --show-toplevel 2>/dev/null)" || root="$PWD"
   common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+  common="${common%/}"
   case "$common" in
-    */.git) root="${common%/.git}" ;;
+    "")      ;;                          # git too old or not a repo: keep root
+    */.git)  root="${common%/.git}" ;;
+    *.git)   root="${common%.git}" ;;
+    *)       root="$common" ;;
   esac
   slug="$(basename "$root")"
   home="${DREAM_HOME:-$HOME/.dream/$slug}"
