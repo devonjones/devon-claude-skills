@@ -20,6 +20,16 @@ cat >/dev/null 2>&1 || true
 
 proj="${CLAUDE_PROJECT_DIR:-$PWD}"
 root="$(git -C "$proj" rev-parse --show-toplevel 2>/dev/null)" || exit 0
+# Key on the common git dir so every worktree reads the same stream the writers
+# use. Mirrors dreamlib/config.py:main_checkout and emit-dream-marker.sh.
+common="$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+common="${common%/}"
+case "$common" in
+  "")      ;;
+  */.git)  root="${common%/.git}" ;;
+  *.git)   root="${common%.git}" ;;
+  *)       root="$common" ;;
+esac
 slug="$(basename "$root")"
 home="${DREAM_HOME:-$HOME/.dream/$slug}"
 [ -d "$home" ] || exit 0
