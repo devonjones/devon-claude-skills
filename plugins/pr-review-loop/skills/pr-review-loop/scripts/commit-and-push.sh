@@ -38,10 +38,21 @@ fi
 # Stage all changes
 git add -A
 
-# Check if there are changes to commit
+# Check if there are changes to commit.
+#
+# "Nothing to commit" is not "nothing to do": the branch may still be missing
+# from the remote, because a previous run committed and then failed to push.
+# Exiting 0 here without looking at the remote is how a branch stays local
+# while two runs in a row report success.
 if git diff --cached --quiet; then
-    echo "No changes to commit."
-    exit 0
+    if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+        echo "No changes to commit."
+        exit 0
+    fi
+    echo "No changes to commit, but this branch has no upstream - pushing it." >&2
+    NOTHING_TO_COMMIT=true
+else
+    NOTHING_TO_COMMIT=false
 fi
 
 # Commit with standard footer
@@ -54,9 +65,18 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
 
-# Push
+# Push. `-u origin HEAD` rather than a bare `git push`, which fails outright
+# under push.default=simple when the branch has no upstream.
 echo "Pushing to origin..."
-git push
+git push -u origin HEAD || {
+    echo "Error: push failed. The commit is local only; the branch is NOT on the remote." >&2
+    echo "Re-run this script - it will detect the missing upstream and retry the push." >&2
+    exit 1
+}
+
+if [[ "$NOTHING_TO_COMMIT" == "true" ]]; then
+    echo "Pushed existing commits; nothing new to commit."
+fi
 
 # Optionally trigger new review. Only exit 1 from bot-enabled.sh means the user
 # turned Gemini off; exit 2 means its config couldn't be read (already warned),

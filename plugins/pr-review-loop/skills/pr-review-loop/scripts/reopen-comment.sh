@@ -177,13 +177,23 @@ REPLY_RESULT=$(gh api graphql -f query='
     echo "Reply posted. Thread is now reopened."
 } || {
     # Fallback to REST API if GraphQL fails (REST requires numeric DB_ID)
-    gh api \
+    # Capture THIS call's output. Sending it to /dev/null and then reporting
+    # $REPLY_RESULT - assigned far above from the GraphQL attempt - hands the
+    # reader a plausible reason belonging to a different request. A missing
+    # error makes you look; a wrong one sends you somewhere else and satisfies
+    # you when you arrive.
+    REST_RESULT=$(gh api \
         --method POST \
         "repos/$REPO/pulls/$PR_NUMBER/comments/$DB_ID/replies" \
-        -f body="$REOPEN_COMMENT" > /dev/null 2>&1 && {
+        -f body="$REOPEN_COMMENT" 2>&1) && {
         echo "Reply posted via REST API. Thread is now reopened."
     } || {
-        echo "Warning: Could not post reply, but thread was unresolved." >&2
-        echo "Error: $REPLY_RESULT" >&2
+        echo "Error: could not post the reopen comment via REST." >&2
+        echo "REST response: $REST_RESULT" >&2
+        echo "(The earlier GraphQL attempt failed separately: $REPLY_RESULT)" >&2
+        echo "The thread was unresolved, so the finding is visible - but it" >&2
+        echo "carries no reopen comment explaining why. Post one before relying" >&2
+        echo "on this thread as an audit record." >&2
+        exit 1
     }
 }
