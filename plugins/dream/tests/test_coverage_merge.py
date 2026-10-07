@@ -104,3 +104,10 @@ def test_synth_keeps_one_file_per_source(review_out, monkeypatch):
         assert cli.cmd_reviews_synth(argparse.Namespace(source=src)) == 0
     assert json.loads((review_out / "scorecards-markers.json").read_text())["who"] == "markers"
     assert (review_out / "SCORECARDS-all.md").read_text() == "all"
+
+
+def test_no_merge_ignores_prior_history(review_out, monkeypatch):
+    (review_out / "coverage.json").write_text(json.dumps(_cov(100, 9)), encoding="utf-8")
+    monkeypatch.setattr(rv, "coverage_from_logs", lambda: _cov(7, 2))
+    assert cli.cmd_reviews_coverage(argparse.Namespace(no_merge=True)) == 0
+    assert json.loads((review_out / "coverage.json").read_text())["total_spawns"] == 7

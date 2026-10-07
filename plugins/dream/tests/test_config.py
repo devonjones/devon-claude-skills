@@ -1,5 +1,8 @@
 """config.py — repo-slug remote-URL parsing + DECISIONS.md corpus discovery."""
 
+import os
+import pathlib
+
 from dreamlib import config
 
 
@@ -115,8 +118,26 @@ def test_slug_same_from_worktree_separate_git_dir(tmp_path, monkeypatch):
     _git("commit", "-q", "--allow-empty", "-m", "i", cwd=tmp_path / "repo")
     _git("worktree", "add", "-q", "../repo-wt", "-b", "w", cwd=tmp_path / "repo")
     main, wt = _slug(tmp_path / "repo", monkeypatch), _slug(tmp_path / "repo-wt", monkeypatch)
-    assert main == wt
-    assert wt != "repo-wt"
+    assert main == wt == "store"
+
+
+def test_bash_writer_and_python_reader_agree_on_the_slug(tmp_path, monkeypatch):
+    """emit-dream-marker.sh writes under the slug; dreamlib reads under it. Each
+    is tested alone elsewhere - this checks they name the same directory."""
+    emit = (pathlib.Path(__file__).resolve().parents[2]
+            / "pr-review-loop/skills/pr-review-loop/scripts/emit-dream-marker.sh")
+    _git("init", "-q", f"--separate-git-dir={tmp_path}/store.git", "repo", cwd=tmp_path)
+    _git("commit", "-q", "--allow-empty", "-m", "i", cwd=tmp_path / "repo")
+    _git("worktree", "add", "-q", "../repo-wt", "-b", "w", cwd=tmp_path / "repo")
+    for tree in ("repo", "repo-wt", "normal"):
+        if tree == "normal":
+            _git("init", "-q", "normal", cwd=tmp_path)
+        home = tmp_path / f"home-{tree}"
+        env = {**os.environ, "HOME": str(home)}
+        env.pop("DREAM_HOME", None)
+        _sp.run(["bash", str(emit), "k", "a=1"], cwd=tmp_path / tree, env=env, check=True)
+        written = [d.name for d in (home / ".dream").iterdir()]
+        assert written == [_slug(tmp_path / tree, monkeypatch)], tree
 
 
 def test_slug_submodule_is_not_the_superproject(tmp_path, monkeypatch):

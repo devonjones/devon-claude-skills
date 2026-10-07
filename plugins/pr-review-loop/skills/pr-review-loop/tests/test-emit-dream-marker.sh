@@ -51,13 +51,26 @@ echo "=== fields ==="
 run "$T/args" noeq ts=forged kind=forged pr=2
 rec="$(tail -1 "$T/args/markers/pr-review-loop.jsonl")"
 [[ "$ERR" == *"'noeq' has no '='"* ]] && ok "bare argument is reported, not turned into a field" || bad "bare arg: $ERR"
-# jq keeps the first binding of a repeated --arg, so these were never forgeable;
-# what was wrong is that they vanished without a word. Assert the word.
-[[ "$ERR" == *"'ts' is reserved"* && "$ERR" == *"'kind' is reserved"* ]] \
-  && ok "reserved keys are reported, not silently dropped" || bad "reserved keys dropped silently: $ERR"
+[[ "$ERR" == *"'ts' is set by this script"* && "$ERR" == *"'kind' is set by this script"* ]] \
+  && ok "caller-supplied ts/kind are reported, not silently dropped" || bad "reserved keys dropped silently: $ERR"
 [[ "$(jq -r .ts <<<"$rec")" != "forged" && "$(jq -r .kind <<<"$rec")" == "reviewer-finding" ]] \
   && ok "record keeps its own ts and kind" || bad "provenance overwritten: $rec"
 [[ "$(jq -r .pr <<<"$rec")" == "2" ]] && ok "valid fields still land alongside rejected ones" || bad "pr lost: $rec"
+
+run "$T/dup" pr=7 pr=8
+[[ "$ERR" == *"'pr' given twice"* && "$(jq -r .pr "$T/dup/markers/pr-review-loop.jsonl")" == "7" ]] \
+  && ok "a repeated field is reported and the first kept" || bad "repeat handled silently: $ERR"
+
+echo "=== field names are data, never jq variables ==="
+# Referenced as $name, a field called ENV became jq's whole environment and
+# __loc__ a source location. A sentinel stands in for real secrets.
+set +e
+ERR=$(DREAM_HOME="$T/env" LEAK_SENTINEL=do-not-write-me bash "$EMIT" reviewer-finding ENV=prod __loc__=x 2>&1 >/dev/null)
+set -e
+rec="$(cat "$T/env/markers/pr-review-loop.jsonl")"
+[[ "$rec" != *do-not-write-me* ]] && ok "environment never written to the marker" || bad "environment leaked into the marker"
+[[ "$(jq -r .ENV <<<"$rec")" == "prod" && "$(jq -r .__loc__ <<<"$rec")" == "x" ]] \
+  && ok "ENV and __loc__ stored as the literal values given" || bad "names evaluated as jq variables: $rec"
 
 echo "=== slug: same from a worktree of a separate-git-dir repo (mirrors config.py) ==="
 G(){ git -c user.email=t@t -c user.name=t "$@" >/dev/null 2>&1; }
