@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# emit-dream-marker.sh is best-effort by contract: it must always exit 0 so it
+# can never block the review loop. It must NOT be silent about it. Before this,
+# four different write failures each returned 0 with empty stderr and no marker
+# - indistinguishable from success.
+#
+# So every failure case asserts BOTH halves: exit 0, and a warning on stderr.
+# And the healthy case asserts the opposite: exit 0, no warning, marker written.
+#
+# Usage: tests/test-emit-dream-marker.sh
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EMIT="$SCRIPT_DIR/../scripts/emit-dream-marker.sh"
+T="$(mktemp -d)"; trap 'chmod -R u+w "$T" 2>/dev/null; rm -rf -- "$T"' EXIT
+PASSED=0; FAILED=0
+ok(){ PASSED=$((PASSED+1)); echo "  PASS: $1"; }
+bad(){ FAILED=$((FAILED+1)); echo "  FAIL: $1"; }
+
+# run <home> [args...] -> sets RC and ERR
+run(){ local home="$1"; shift
+  set +e; ERR=$(DREAM_HOME="$home" bash "$EMIT" reviewer-finding "$@" 2>&1 >/dev/null); RC=$?; set -e; }
+
+expect_loud(){ local label="$1"
+  if [[ "$RC" -eq 0 && "$ERR" == *"emit-dream-marker: marker dropped"* ]]; then ok "$label: exit 0 and says why"
+  else bad "$label: rc=$RC stderr='${ERR}'"; fi; }
+
+echo "=== healthy: silent, exit 0, marker actually written ==="
+run "$T/ok" pr=1 reviewer=x-reviewer
+if [[ "$RC" -eq 0 && -z "$ERR" && $(wc -l < "$T/ok/markers/pr-review-loop.jsonl") -eq 1 ]]; then
+  ok "healthy write is silent and lands"; else bad "healthy: rc=$RC err='$ERR'"; fi
+
+echo "=== failures: still exit 0, but never silent ==="
+mkdir -p "$T/ro" && chmod 555 "$T/ro"
+run "$T/ro/sub" pr=1;                         expect_loud "unwritable dir"
+mkdir -p "$T/rof/markers" && : > "$T/rof/markers/pr-review-loop.jsonl" && chmod 444 "$T/rof/markers/pr-review-loop.jsonl"
+run "$T/rof" pr=1;                            expect_loud "read-only file"
+if [[ -e /dev/full ]]; then
+  mkdir -p "$T/full/markers" && ln -s /dev/full "$T/full/markers/pr-review-loop.jsonl"
+  run "$T/full" pr=1;                         expect_loud "disk full"
+fi
+mkdir -p "$T/nojq"; for b in bash git date mkdir basename printf tr sed; do
+  p="$(command -v "$b" || true)"; [[ -n "$p" ]] && ln -sf "$p" "$T/nojq/"; done
+set +e; ERR=$(PATH="$T/nojq" DREAM_HOME="$T/nj" bash "$EMIT" reviewer-finding pr=1 2>&1 >/dev/null); RC=$?; set -e
+expect_loud "jq absent"
+
+echo "=== a failure leaks no raw shell error ==="
+run "$T/rof" pr=1
+[[ "$ERR" != *"Permission denied"* ]] && ok "only the script's own message, not bash's" || bad "raw shell error leaked: $ERR"
+
+echo "=== fields ==="
+run "$T/args" noeq ts=forged kind=forged pr=2
+rec="$(tail -1 "$T/args/markers/pr-review-loop.jsonl")"
+[[ "$ERR" == *"'noeq' has no '='"* ]] && ok "bare argument is reported, not turned into a field" || bad "bare arg: $ERR"
+# jq keeps the first binding of a repeated --arg, so these were never forgeable;
+# what was wrong is that they vanished without a word. Assert the word.
+[[ "$ERR" == *"'ts' is reserved"* && "$ERR" == *"'kind' is reserved"* ]] \
+  && ok "reserved keys are reported, not silently dropped" || bad "reserved keys dropped silently: $ERR"
+[[ "$(jq -r .ts <<<"$rec")" != "forged" && "$(jq -r .kind <<<"$rec")" == "reviewer-finding" ]] \
+  && ok "record keeps its own ts and kind" || bad "provenance overwritten: $rec"
+[[ "$(jq -r .pr <<<"$rec")" == "2" ]] && ok "valid fields still land alongside rejected ones" || bad "pr lost: $rec"
+
+echo ""; echo "Passed: $PASSED  Failed: $FAILED"; [[ "$FAILED" -eq 0 ]]
