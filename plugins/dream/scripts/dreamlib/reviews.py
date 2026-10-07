@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import glob as _glob
 import json
+import sys
 import os
 import re
 import subprocess
@@ -359,10 +360,15 @@ def _canonical_reviewers() -> set[str]:
         "comment-analyzer", "type-design-analyzer", "code-simplifier",
     }
     names = set(defaults)
-    sc = os.path.join(REVIEW_OUT, "scorecards.json")
-    if os.path.exists(sc):
-        with open(sc) as fh:
-            names |= {c["reviewer"] for c in json.load(fh).get("scorecards", [])}
+    # synth writes scorecards-<source>.json. A bare scorecards.json is a
+    # leftover from before that rename and is never refreshed, so reading it
+    # would mean silently reading stale names.
+    for sc in sorted(_glob.glob(os.path.join(REVIEW_OUT, "scorecards-*.json"))):
+        try:
+            with open(sc) as fh:
+                names |= {c["reviewer"] for c in json.load(fh).get("scorecards", [])}
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            print(f"reviews: skipping unreadable {sc} ({e})", file=sys.stderr)
     # Keep only reviewer-shaped names — excludes stray tokens like "verify"
     # (the /verify skill) that leaked in via a single GitHub finding.
     return {n for n in names if n.endswith("-reviewer") or n in defaults}

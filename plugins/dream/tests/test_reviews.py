@@ -248,3 +248,33 @@ def test_roster_reviewers_reads_specs_and_headings(tmp_path, monkeypatch):
     names = reviews.roster_reviewers()
     assert "spec-reviewer" in names and "heading-reviewer" in names
     assert "Not A Name" not in names  # prose heading, not a reviewer slug
+
+
+# --- _canonical_reviewers reads what synth actually writes -------------------
+# synth was renamed to write scorecards-<source>.json; this reader kept opening
+# scorecards.json, which on a live box was a month-stale leftover that nothing
+# refreshes. The guard (os.path.exists) succeeded on the stale file, so the
+# reader quietly returned old names instead of failing or falling back.
+
+def _sc(path, *names):
+    path.write_text(json.dumps({"scorecards": [{"reviewer": n} for n in names]}))
+
+
+def test_canonical_reviewers_reads_per_source_scorecards(tmp_path, monkeypatch):
+    monkeypatch.setattr(reviews, "REVIEW_OUT", str(tmp_path))
+    _sc(tmp_path / "scorecards-markers.json", "fresh-reviewer")
+    assert "fresh-reviewer" in reviews._canonical_reviewers()
+
+
+def test_canonical_reviewers_ignores_the_stale_legacy_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(reviews, "REVIEW_OUT", str(tmp_path))
+    _sc(tmp_path / "scorecards.json", "stale-reviewer")
+    assert "stale-reviewer" not in reviews._canonical_reviewers()
+
+
+def test_canonical_reviewers_survives_an_unreadable_scorecard(tmp_path, monkeypatch):
+    monkeypatch.setattr(reviews, "REVIEW_OUT", str(tmp_path))
+    (tmp_path / "scorecards-github.json").write_text("{truncated")
+    _sc(tmp_path / "scorecards-markers.json", "fresh-reviewer")
+    names = reviews._canonical_reviewers()
+    assert "fresh-reviewer" in names and "code-reviewer" in names
