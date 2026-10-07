@@ -422,8 +422,8 @@ def _gate_state_path() -> str:
 
 def _gate_state() -> tuple[dict, bool]:
     """Returns (state, readable). A corrupt file is not treated as empty:
-    writing over it would destroy the other check's watermark. The caller runs
-    the job instead and leaves the file for someone to look at."""
+    writing over it would destroy the other check's watermark. The peek leaves
+    the file for someone to look at and the record step fails the unit."""
     path = _gate_state_path()
     if not os.path.exists(path):
         return {}, True
@@ -532,7 +532,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
     --peek (the condition) exits 0 to run or SKIP when there is nothing new,
     and remembers the fingerprint it saw as pending. It runs when it cannot
     tell: an unreadable corpus, a failed gh call or an unusable state file all
-    exit 0.
+    exit 0, unless the corpus is readable and holds nothing to mine (SKIP).
 
     Without --peek (after the job) it records the pending fingerprint as
     consumed, so input that arrived during the run is still new tomorrow. It
@@ -567,8 +567,6 @@ def _record(key: str) -> int:
     if seen is not None:
         state[entry] = seen
         state[f"{entry}_at"] = _now()
-    # Written even when unchanged: a state dir that has gone unwritable must
-    # fail the unit, not rerun the job silently every night.
     _write_gate_state(state)
     if blind:
         _echo(f"gate[{key}]: the job ran blind (signal unavailable at {blind})")
@@ -659,8 +657,10 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--check", choices=["sessions", "prs"], required=True,
                    help="sessions = new minable session content; prs = PR activity")
     g.add_argument("--peek", action="store_true",
-                   help="check without recording (ExecCondition); omit it after "
-                        "the job (ExecStartPost) to record what was seen")
+                   help="decide whether to run (ExecCondition); it stores what it "
+                        "saw for the record step, so do not run it by hand during a "
+                        "scheduled run. Omit it after the job (ExecStartPost) to "
+                        "record what was seen")
     g.set_defaults(func=cmd_gate)
 
     args = p.parse_args(argv)

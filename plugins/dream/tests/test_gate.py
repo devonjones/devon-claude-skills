@@ -16,7 +16,8 @@ import pytest
 from dreamlib import cli
 
 DREAM = os.path.join(os.path.dirname(__file__), "..", "scripts", "dream")
-# Subprocesses must not inherit the caller's dream configuration.
+# Subprocesses must not inherit the caller's DREAM_* settings or PYTHON*
+# interpreter flags (the PYTHONSAFEPATH test sets its own).
 _ENV = {k: v for k, v in os.environ.items()
         if not k.startswith(("DREAM_", "PYTHON"))}
 
@@ -197,9 +198,8 @@ def test_a_later_peek_clears_a_blind_mark_left_by_a_failed_job(home, monkeypatch
 
 
 def test_a_record_step_with_no_peek_fails_and_records_nothing(home, monkeypatch):
-    """Miswired units - the record line names another check, or no peek ran.
-    It never probes either: what it saw after the job would include input
-    that arrived during the run."""
+    """No peek ran. The record step never probes either: what it saw after
+    the job would include input that arrived during the run."""
     monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "fp1")
     assert cli.cmd_gate(_args(peek=False)) == cli.STATE_FAILED
     assert cli.cmd_gate(_args()) == 0  # fp1 was not marked consumed
@@ -244,8 +244,7 @@ def test_unknown_peek_drops_a_pending_left_by_a_failed_job(home, monkeypatch):
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")
 def test_an_unwritable_state_dir_fails_the_record_step(home, monkeypatch):
-    """Steady state: the lock file already exists, the peek fails open and
-    leaves nothing pending, so the record step must still notice."""
+    """Steady state: the lock file already exists and the peek fails open."""
     monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "fp1")
     cli.cmd_gate(_args())
     cli.cmd_gate(_args(peek=False))
@@ -381,7 +380,8 @@ def test_wrapper_fails_the_unit_on_any_bad_argument(home, bad):
 @pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")
 def test_wrapper_record_step_fails_the_unit_on_unwritable_state(home):
     """Real wrapper, real CLI: STATE_FAILED reaches systemd as 255."""
-    (home / "gate.json").write_text("{}")
+    # A real pending value, so only the unwritable dir can fail the record step.
+    (home / "gate.json").write_text(json.dumps({"prs_pending": "p1"}))
     (home / "gate.json.lock").write_text("")
     for sub in ("digests", "review", "reviews"):
         (home / sub).mkdir()
@@ -460,3 +460,11 @@ def test_the_wrapper_works_with_pythonsafepath_set(home):
                        capture_output=True, text=True)
     assert "ModuleNotFoundError" not in r.stderr
     assert "invalid choice" in r.stderr  # the real CLI parsed the arguments
+
+
+def test_check_is_required(home):
+    """A default would let two lines that both omit --check gate on the
+    wrong signal and stay green."""
+    r = _wrapper("gate", "--peek", home=home)
+    assert r.returncode == 255
+    assert "--check" in r.stderr

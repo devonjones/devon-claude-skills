@@ -72,7 +72,7 @@ TimeoutStartSec=2400
   nothing is new. When it cannot tell (unreadable logs, `gh` failing) it runs
   the job anyway.
 - The plain line (ExecStartPost) records what the peek saw. It fails the unit
-  when the state under `~/.dream/<project>/` cannot be written, when the peek
+  when the state under `~/.dream/<slug>/` cannot be read or written, when the peek
   ran blind, or when no peek ran for that check.
 - Any other failure (a crash, a misspelt option) exits 255, which systemd
   treats as a failed unit under either line. A skipped night is only ever a
