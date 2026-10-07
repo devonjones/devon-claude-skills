@@ -12,3 +12,17 @@
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Marketplace install artifacts. Installing a plugin from this repo's own
+# marketplace copies plugins/<name> to /<name>/<version>/ and writes an
+# .in_use marker inside it. The source of truth is plugins/.
+/nano-banana/
+/pr-review-loop/
+
+# Stale server-mode pid file, tracked in history before the embedded-dolt
+# migration. Ignored here rather than in .beads/.gitignore because `bd init`
+# refreshes that file and drops entries it does not know about - which is how
+# this became visible on another repo and got auto-committed. Left tracked
+# deliberately: untracking it is a change the other box inherits, so it waits
+# for agreement rather than being decided on one machine.
+.beads/dolt-monitor.pid

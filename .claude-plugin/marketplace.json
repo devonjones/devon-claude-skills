@@ -9,7 +9,7 @@
     {
       "name": "pr-review-loop",
       "description": "Autonomous PR review automation with multi-bot support (Gemini, Cursor, Claude)",
-      "version": "1.7.0",
+      "version": "1.8.0",
       "source": "./plugins/pr-review-loop",
       "category": "productivity",
       "author": {
@@ -81,6 +81,16 @@
       "description": "Turn a web article into a faithful-capture literature note in an Obsidian vault (fetch + structured extraction; the article sibling of youtube-synthesizer)",
       "version": "1.0.0",
       "source": "./plugins/article-synthesizer",
+      "category": "productivity",
+      "author": {
+        "name": "Devon Jones"
+      }
+    },
+    {
+      "name": "rodney",
+      "description": "Drive Chrome from the shell with the rodney CLI: pages, clicks, waits, JS, asserts, screenshots.",
+      "version": "1.0.0",
+      "source": "./plugins/rodney",
       "category": "productivity",
       "author": {
         "name": "Devon Jones"

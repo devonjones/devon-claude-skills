@@ -74,6 +74,17 @@ else
     CURRENT_PLUGIN_VERSION=""
 fi
 
+# DEFAULTS_VERSION is the plugin version in which the default reviewers last
+# changed. A pin at or above it is current, so ordinary version bumps don't
+# force a re-audit. Bump that file only when the defaults change. Missing
+# file → fall back to the plugin version (every bump re-audits).
+DEFAULTS_VERSION_FILE="$SCRIPT_DIR/../../../DEFAULTS_VERSION"
+DEFAULTS_VERSION="$(tr -d '[:space:]' < "$DEFAULTS_VERSION_FILE" 2>/dev/null || true)"
+if [[ -z "$DEFAULTS_VERSION" ]]; then
+    echo "Warning: $DEFAULTS_VERSION_FILE missing or empty — any plugin version change will mark the pin stale" >&2
+    DEFAULTS_VERSION="$CURRENT_PLUGIN_VERSION"
+fi
+
 # Get changed files in the PR. Let gh errors propagate (set -e) so a missing
 # gh, unauthenticated user, or bad PR number fails loudly instead of silently
 # returning an empty agent list.
@@ -351,24 +362,29 @@ JQ_INPUT=$(
     CONFIGURATION_JSON="$CONFIGURATION_JSON" \
     FILES_JSON="$CHANGED_FILES_JSON" \
     LANGUAGE_DETECTION_JSON="$LANGUAGE_DETECTION_JSON" \
-    jq -n --arg current_version "$CURRENT_PLUGIN_VERSION" '
+    jq -n --arg current_version "$CURRENT_PLUGIN_VERSION" --arg defaults_version "$DEFAULTS_VERSION" '
         {
             sections: (env.SECTIONS_JSON | fromjson),
             defaults: (env.DEFAULTS_JSON | fromjson),
             configuration: (env.CONFIGURATION_JSON | fromjson),
             files: (env.FILES_JSON | fromjson),
             current_version: $current_version,
+            defaults_version: $defaults_version,
             language_detection: (env.LANGUAGE_DETECTION_JSON | fromjson)
         }'
 )
 
 echo "$JQ_INPUT" | jq '
+    # "1.4.2" → [1,4,2]; prerelease suffix ignored. null on anything unparseable.
+    def semver: try (split("-")[0] | split(".") | map(tonumber)) catch null;
+
     # ---- 1. Parse the existing AGENT-REVIEWERS.md output (sections) ----
     .sections as $sections |
     .defaults as $defaults |
     .configuration as $config |
     .files as $files |
     .current_version as $current_version |
+    .defaults_version as $defaults_version |
     .language_detection as $language_detection |
 
     # ---- 2. Resolve user agents from sections (existing hierarchical-scope logic) ----
@@ -431,7 +447,10 @@ echo "$JQ_INPUT" | jq '
     ($user_agents + $effective_defaults) as $merged_agents |
 
     # ---- 7. Stale-pin check ----
-    (($config.defaults_version_checked // null) != $current_version) as $stale_pin |
+    # Stale only if the pin predates the last defaults change. Missing or
+    # unparseable pin → stale.
+    (($config.defaults_version_checked // null | if type == "string" then semver else null end) as $pin |
+        $pin == null or $pin < ($defaults_version | semver)) as $stale_pin |
 
     # ---- 8. Compose output ----
     {
@@ -450,6 +469,7 @@ echo "$JQ_INPUT" | jq '
         configuration: {
             defaults_version_checked: ($config.defaults_version_checked // null),
             current_plugin_version: $current_version,
+            defaults_version: $defaults_version,
             stale_pin: $stale_pin,
             disabled_defaults: $disabled_defaults,
             disabled_defaults_unknown: ($disabled_defaults - $default_agent_names),
