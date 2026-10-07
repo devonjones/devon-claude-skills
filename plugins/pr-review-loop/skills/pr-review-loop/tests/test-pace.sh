@@ -28,7 +28,7 @@ span() {
     out=$(mktemp)
     (
         export PR_REVIEW_LOOP_PACE_S="$interval"
-        export TMPDIR="$(mktemp -d)"   # fresh pacer state per measurement
+        export PR_REVIEW_LOOP_PACE_DIR="$(mktemp -d)"   # isolated pacer per measurement
         # shellcheck source=../scripts/_pace.sh
         source "$PACE"
         for _ in $(seq "$n"); do ( pace_github; date +%s.%N ) & done
@@ -65,20 +65,33 @@ fi
 echo "=== a broken pacer must never block a post ==="
 out=$(
     export PR_REVIEW_LOOP_PACE_S=1
-    export TMPDIR=/proc/nonexistent-cannot-mkdir
+    export PR_REVIEW_LOOP_PACE_DIR=/proc/nonexistent-cannot-mkdir
     source "$PACE"
     pace_github && echo reached
 )
 [[ "$out" == "reached" ]] && ok "unwritable pacer state returns 0 rather than aborting the caller" \
                           || bad "pacer failure blocked the caller"
 
-echo "=== both content-creating scripts call it ==="
+echo "=== the lock is machine-wide, not per-TMPDIR ==="
+dir="$( unset PR_REVIEW_LOOP_PACE_DIR; TMPDIR=/tmp/private-session-x; source "$PACE"; echo "$_PACE_DIR" )"
+[[ "$dir" != /tmp/private-session-x* ]] && ok "a private TMPDIR does not split the pacer ($dir)" \
+                                       || bad "pacer follows TMPDIR, so a session with its own TMPDIR paces alone"
+
+echo "=== the default is the spacing measured clean ==="
+d="$( unset PR_REVIEW_LOOP_PACE_S; source "$PACE"; echo "$PR_REVIEW_LOOP_PACE_S" )"
+[[ "$d" == "4" ]] && ok "default interval is 4s" || bad "default interval is ${d}s"
+
+echo "=== each content-creating script paces immediately BEFORE its gh command ==="
+# Presence is not enough: a pace call inserted inside a backslash-continued
+# command becomes an argument to gh and drops the body. Check position.
 for f in post-line-comment.sh reply-to-comment.sh; do
-    if grep -q '^pace_github$' "$SCRIPT_DIR/../scripts/$f"; then
-        ok "$f paces before its POST"
-    else
-        bad "$f posts without pacing"
-    fi
+    s="$SCRIPT_DIR/../scripts/$f"
+    n="$(grep -n '^pace_github$' "$s" | cut -d: -f1)"
+    if [[ -z "$n" || "$(grep -c '^pace_github$' "$s")" -ne 1 ]]; then bad "$f: expected exactly one pace_github line"; continue; fi
+    prev="$(sed -n "$((n-1))p" "$s")"; next="$(sed -n "$((n+1))p" "$s")"
+    if [[ "$prev" == *\\ ]]; then bad "$f: pace_github is inside a continued command (previous line ends in \\)"
+    elif [[ "$next" != *'=$(gh api'* ]]; then bad "$f: line after pace_github is not the gh command: $next"
+    else ok "$f paces on the line before its gh command"; fi
 done
 
 echo ""

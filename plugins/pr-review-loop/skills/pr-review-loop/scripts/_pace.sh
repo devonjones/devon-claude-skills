@@ -11,14 +11,21 @@
 # The pacer therefore has to be GLOBAL, so this serialises on one lock and
 # spaces by wall clock across every concurrent caller.
 #
+# The default interval is 4s because that is the spacing measured clean (23
+# posts, no errors); 40 posts inside a minute tripped the limit, and a 1s
+# interval would allow 60.
+#
+# The lock lives at a fixed per-user path, not under $TMPDIR, so every session
+# on the machine shares one pacer even if one of them has a private TMPDIR.
+#
 # Usage:  pace_github            # blocks until it is this caller's turn
 #         PR_REVIEW_LOOP_PACE_S=2 pace_github
 #
-# Set PR_REVIEW_LOOP_PACE_S=0 to disable (a single sequential caller posting a
-# handful of comments does not need it).
+# PR_REVIEW_LOOP_PACE_S=0 disables it. PR_REVIEW_LOOP_PACE_DIR overrides the
+# lock location (tests use it to get an isolated pacer).
 
-: "${PR_REVIEW_LOOP_PACE_S:=1}"
-_PACE_DIR="${TMPDIR:-/tmp}/pr-review-loop-pace"
+: "${PR_REVIEW_LOOP_PACE_S:=4}"
+_PACE_DIR="${PR_REVIEW_LOOP_PACE_DIR:-/tmp/pr-review-loop-pace-$(id -u)}"
 _PACE_STAMP="$_PACE_DIR/last-post"
 _PACE_LOCK="$_PACE_DIR/lock"
 

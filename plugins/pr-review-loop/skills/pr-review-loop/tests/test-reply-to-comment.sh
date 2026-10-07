@@ -32,7 +32,7 @@ GH
 chmod +x "$T/bin/gh"
 
 run(){ : > "$T/log"; set +e
-  OUT=$(PATH="$T/bin:$PATH" GH_LOG="$T/log" PR_REVIEW_LOOP_PACE_S=0 TMPDIR="$T" \
+  OUT=$(PATH="$T/bin:$PATH" GH_LOG="$T/log" PR_REVIEW_LOOP_PACE_S=0 PR_REVIEW_LOOP_PACE_DIR="$T/pace" \
         bash "$REPLY" 42 123 "the reply text" "$@" 2>&1); RC=$?; set -e; }
 post_call(){ tr '\0' ' ' < "$T/log" | grep -- '--method POST' || true; }
 
