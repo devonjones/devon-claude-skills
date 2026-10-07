@@ -407,8 +407,8 @@ NOTHING = "nothing"     # the probe worked and there is nothing to mine
 # A deliberate "nothing new" exits SKIP, not 1: Python exits 1 on any uncaught
 # exception, and a crash must not read as a skip.
 SKIP = 75
-# The record step could not use the state file (EX_IOERR). The wrapper passes
-# it through so ExecStartPost marks the unit failed; --peek never returns it.
+# The record step could not use its state file (EX_IOERR); --peek never
+# returns it.
 STATE_FAILED = 74
 
 
@@ -542,7 +542,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
         # read-modify-write so two units finishing together don't drop an entry.
         with open(_gate_state_path() + ".lock", "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            return _record(args.check) if not args.peek else _peek(args.check)
+            return _peek(args.check) if args.peek else _record(args.check)
     except OSError as exc:
         _echo(f"gate[{args.check}]: state unusable ({exc})")
         return 0 if args.peek else STATE_FAILED

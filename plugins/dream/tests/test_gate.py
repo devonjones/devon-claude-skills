@@ -5,7 +5,8 @@
                                                  STATE_FAILED (74) if state is unusable
 
 ExecCondition reads every exit from 1 to 254 as "skip", so a deliberate skip
-uses 75 and the `dream` wrapper turns any exit but 0/74/75 into a loud 0.
+uses 75. The `dream` wrapper turns any other exit into a loud 0 for --peek
+and into STATE_FAILED for the record step, which fails the unit.
 """
 
 import argparse
@@ -318,12 +319,43 @@ def _wrapper(*args, home):
                           capture_output=True, text=True)
 
 
-def test_wrapper_turns_a_bad_argument_into_a_loud_run(home):
-    for bad in (["--check", "nonsense", "--peek"], ["--check", "nonsense"],
-                ["--pee", "--bogus"]):
-        r = _wrapper("gate", *bad, home=home)
-        assert r.returncode == 0, bad
-        assert "FAILED" in r.stderr, bad
+@pytest.mark.parametrize("bad,want", [
+    (["--check", "nonsense", "--peek"], 0),
+    (["--pee", "--bogus"], 0),           # argparse abbreviation of --peek
+    (["--check", "nonsense"], cli.STATE_FAILED),
+    (["--chek", "sessions"], cli.STATE_FAILED),
+])
+def test_wrapper_maps_a_bad_argument_by_hook(home, bad, want):
+    r = _wrapper("gate", *bad, home=home)
+    assert r.returncode == want
+    assert "FAILED" in r.stderr
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")
+def test_wrapper_record_step_fails_the_unit_on_unwritable_state(home):
+    """Real wrapper, real CLI: ties STATE_FAILED to the wrapper's pass-through."""
+    (home / "gate.json").write_text("{}")
+    (home / "gate.json.lock").write_text("")
+    for sub in ("digests", "review", "reviews"):
+        (home / sub).mkdir()
+    home.chmod(0o500)
+    try:
+        r = _wrapper("gate", "--check", "prs", home=home)
+    finally:
+        home.chmod(0o700)
+    assert r.returncode == cli.STATE_FAILED == 74
+    assert "FAILED" not in r.stderr
+
+
+def test_a_dreamlib_in_the_cwd_does_not_shadow_the_real_one(tmp_path, home):
+    plant = tmp_path / "plant"
+    (plant / "dreamlib").mkdir(parents=True)
+    (plant / "dreamlib" / "__init__.py").write_text("")
+    (plant / "dreamlib" / "cli.py").write_text("raise SystemExit(75)\n")
+    r = subprocess.run([DREAM, "gate", "--check", "sessions", "--peek"], cwd=plant,
+                       env={**os.environ, "HOME": str(tmp_path), "DREAM_HOME": str(home)},
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr  # real gate: no log dir -> UNKNOWN -> run
 
 
 def test_wrapper_passes_a_deliberate_skip_through(tmp_path, home):
@@ -348,14 +380,14 @@ def _fake_cli(tmp_path, rc):
     return str(w)
 
 
-@pytest.mark.parametrize("rc,want", [(0, 0), (75, 75), (74, 74), (1, 0), (2, 0), (120, 0)])
-def test_wrapper_maps_every_unexpected_exit_to_a_run(tmp_path, rc, want):
-    # cwd matters: `python3 -m` puts it ahead of PYTHONPATH, and from
-    # plugins/dream/scripts the real dreamlib would shadow the stub.
-    r = subprocess.run([_fake_cli(tmp_path, rc), "gate", "--check", "sessions"],
+@pytest.mark.parametrize("mode,unexpected", [(["--peek"], 0), ([], 74)])
+@pytest.mark.parametrize("rc", [0, 74, 75, 1, 2, 120])
+def test_wrapper_maps_unexpected_exits_by_hook(tmp_path, mode, unexpected, rc):
+    want = rc if rc in (0, 74, 75) else unexpected
+    r = subprocess.run([_fake_cli(tmp_path, rc), "gate", "--check", "sessions", *mode],
                        cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == want
-    assert ("FAILED" in r.stderr) == (want != rc)
+    assert ("FAILED" in r.stderr) == (rc not in (0, 74, 75))
 
 
 def test_a_full_stderr_does_not_turn_a_skip_into_a_run(tmp_path, home):
