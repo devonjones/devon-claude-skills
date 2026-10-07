@@ -1,8 +1,13 @@
-"""Run the dream CLI as a script, not with `python3 -m`.
+"""Run the dream CLI with this directory, never the cwd, first on sys.path.
 
-A script puts its own directory first on sys.path; `-m` puts the cwd first,
-where a stray dreamlib/ would replace the real package. This holds on every
-Python 3, unlike PYTHONSAFEPATH (3.11+)."""
-from dreamlib.cli import main
+`python3 -m` would put the cwd first, where a stray dreamlib/ replaces the
+real package. Inserting the path explicitly does not depend on how the
+interpreter builds sys.path (PYTHONSAFEPATH, -P, -I)."""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from dreamlib.cli import main  # noqa: E402
 
 raise SystemExit(main())

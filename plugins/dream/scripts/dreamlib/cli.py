@@ -1,9 +1,10 @@
 """Dream stage-1 CLI: distill Claude Code session logs into behavioral digests.
 
-    python -m dreamlib.cli distill            # distill the backlog (cached)
-    python -m dreamlib.cli distill --no-model # heuristic only (fast, no ollama)
-    python -m dreamlib.cli distill --session <uuid>
-    python -m dreamlib.cli stats              # summarize existing digests
+    dream distill            # distill the backlog (cached)
+    dream distill --no-model # heuristic only (fast, no ollama)
+    dream distill --session <uuid>
+    dream stats              # summarize existing digests
+    dream gate --check sessions --peek   # see references/SCHEDULING.md
 
 Digests are cached in digests/{session_id}.json keyed by input_hash, so a
 re-run only re-distills sessions whose source file changed. The live/most-recent
@@ -407,8 +408,9 @@ NOTHING = "nothing"     # the probe worked and there is nothing to mine
 # A deliberate "nothing new" exits SKIP, not 1: Python exits 1 on any uncaught
 # exception, and a crash must not read as a skip.
 SKIP = 75
-# The record step could not record a watermark (EX_IOERR); --peek never
-# returns it.
+# The record step could not vouch for what the job consumed: the state file
+# was unusable, the peek ran the job blind, or no peek ran for this check.
+# --peek never returns it.
 STATE_FAILED = 74
 
 
@@ -534,9 +536,10 @@ def cmd_gate(args: argparse.Namespace) -> int:
 
     Without --peek (after the job) it records the pending fingerprint as
     consumed, so input that arrived during the run is still new tomorrow. It
-    exits STATE_FAILED - failing the unit - when the state file cannot be read
-    or written, or when the peek ran the job blind, so a signal that stays
-    unknown does not rerun the job every night behind a green unit."""
+    exits STATE_FAILED - failing the unit - when it cannot do that: the state
+    file cannot be read or written, the peek ran the job blind, or nothing was
+    left by a peek for this check (miswired units). A job that reruns every
+    night must not do so behind a green unit."""
     try:
         # The state file is shared by every check and worktree; serialise the
         # read-modify-write so two units finishing together don't drop an entry.
@@ -548,45 +551,51 @@ def cmd_gate(args: argparse.Namespace) -> int:
         return 0 if args.peek else STATE_FAILED
 
 
-def _keys(key: str) -> tuple[str, str]:
+def _keys(key: str) -> tuple[str, str, str]:
     entry = _sessions_scope() if key == "sessions" else key
-    return entry, f"{entry}_pending"
+    return entry, f"{entry}_pending", f"{entry}_blind"
 
 
 def _record(key: str) -> int:
-    entry, pending = _keys(key)
+    entry, pending, blind_key = _keys(key)
     state, readable = _gate_state()
     if not readable:
         _echo(f"gate[{key}]: state unreadable — watermark not recorded")
         return STATE_FAILED
     seen = state.pop(pending, None)
-    blind = state.pop(f"{entry}_blind", None)
-    if seen is None:
-        _echo(f"gate[{key}]: nothing pending — watermark unchanged")
-    else:
+    blind = state.pop(blind_key, None)
+    if seen is not None:
         state[entry] = seen
         state[f"{entry}_at"] = _now()
-        _echo(f"gate[{key}]: watermark recorded")
     # Written even when unchanged: a state dir that has gone unwritable must
     # fail the unit, not rerun the job silently every night.
     _write_gate_state(state)
     if blind:
         _echo(f"gate[{key}]: the job ran blind (signal unavailable at {blind})")
         return STATE_FAILED
+    if seen is None:
+        _echo(f"gate[{key}]: no peek left anything for this check — is the "
+              "unit's ExecCondition the same check with --peek?")
+        return STATE_FAILED
+    _echo(f"gate[{key}]: watermark recorded")
     return 0
 
 
 def _peek(key: str) -> int:
-    entry, pending = _keys(key)
+    entry, pending, blind_key = _keys(key)
     state, readable = _gate_state()
     # Pending means "what this peek saw". Drop whatever an earlier peek left -
     # its job may have failed - so the record step never marks consumed input
     # that no peek tonight saw.
     dirty = state.pop(pending, None) is not None
-    dirty = state.pop(f"{entry}_blind", None) is not None or dirty
-    current = _sessions_fingerprint() if key == "sessions" else _prs_fingerprint()
+    dirty = state.pop(blind_key, None) is not None or dirty
+    try:
+        current = _sessions_fingerprint() if key == "sessions" else _prs_fingerprint()
+    except Exception as exc:  # noqa: BLE001 — e.g. a log pruned between glob and stat
+        _echo(f"gate[{key}]: probe failed ({exc})")
+        current = UNKNOWN
     if current is UNKNOWN:
-        state[f"{entry}_blind"] = _now()
+        state[blind_key] = _now()
         dirty = True
         rc, why = 0, "signal unavailable — failing open, run proceeds"
     elif current == NOTHING:
@@ -647,7 +656,7 @@ def main(argv: list[str] | None = None) -> int:
         "gate",
         help="--peek: exit 0 to run, 75 when nothing is new; without it: record the watermark",
     )
-    g.add_argument("--check", choices=["sessions", "prs"], default="sessions",
+    g.add_argument("--check", choices=["sessions", "prs"], required=True,
                    help="sessions = new minable session content; prs = PR activity")
     g.add_argument("--peek", action="store_true",
                    help="check without recording (ExecCondition); omit it after "

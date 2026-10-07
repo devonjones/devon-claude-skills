@@ -16,6 +16,9 @@ import pytest
 from dreamlib import cli
 
 DREAM = os.path.join(os.path.dirname(__file__), "..", "scripts", "dream")
+# Subprocesses must not inherit the caller's dream configuration.
+_ENV = {k: v for k, v in os.environ.items()
+        if not k.startswith(("DREAM_", "PYTHON"))}
 
 
 def _args(check="sessions", peek=True):
@@ -177,8 +180,6 @@ def test_record_keeps_what_peek_saw_so_mid_run_input_stays_new(home, monkeypatch
 
 
 def test_a_blind_run_fails_the_record_step_once(home, monkeypatch):
-    """A signal that stays unknown must not rerun the job nightly behind a
-    green unit: the job runs, the record step fails."""
     monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: cli.UNKNOWN)
     assert cli.cmd_gate(_args()) == 0
     assert cli.cmd_gate(_args(peek=False)) == cli.STATE_FAILED
@@ -195,12 +196,40 @@ def test_a_later_peek_clears_a_blind_mark_left_by_a_failed_job(home, monkeypatch
     assert cli.cmd_gate(_args(peek=False)) == 0
 
 
-def test_record_with_nothing_pending_records_nothing(home, monkeypatch):
-    """The record step never probes: anything it saw after the job would
-    include input that arrived during the run."""
+def test_a_record_step_with_no_peek_fails_and_records_nothing(home, monkeypatch):
+    """Miswired units - the record line names another check, or no peek ran.
+    It never probes either: what it saw after the job would include input
+    that arrived during the run."""
     monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "fp1")
-    assert cli.cmd_gate(_args(peek=False)) == 0
+    assert cli.cmd_gate(_args(peek=False)) == cli.STATE_FAILED
     assert cli.cmd_gate(_args()) == 0  # fp1 was not marked consumed
+
+
+def test_a_record_for_another_check_fails(home, monkeypatch):
+    monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "s1")
+    assert cli.cmd_gate(_args()) == 0
+    assert cli.cmd_gate(_args("prs", peek=False)) == cli.STATE_FAILED
+    assert cli.cmd_gate(_args(peek=False)) == 0  # control: the matching check
+
+
+def test_a_blind_mark_belongs_to_one_check(home, monkeypatch):
+    monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: cli.UNKNOWN)
+    monkeypatch.setattr(cli, "_prs_fingerprint", lambda: "p1")
+    cli.cmd_gate(_args())              # sessions runs blind
+    cli.cmd_gate(_args("prs"))         # prs peeks meanwhile
+    cli.cmd_gate(_args("prs", peek=False))
+    state = json.loads((home / "gate.json").read_text())
+    assert f"{cli._sessions_scope()}_blind" in state  # prs did not consume it
+    assert cli.cmd_gate(_args(peek=False)) == cli.STATE_FAILED
+
+
+def test_a_probe_that_raises_runs_blind(home, logs, monkeypatch):
+    """A log pruned between glob and stat, or a dangling symlink."""
+    (logs / "gone.jsonl").symlink_to(logs / "nowhere")
+    assert cli.cmd_gate(_args()) == 0
+    state = json.loads((home / "gate.json").read_text())
+    assert f"{cli._sessions_scope()}_blind" in state
+    assert cli.cmd_gate(_args(peek=False)) == cli.STATE_FAILED
 
 
 def test_unknown_peek_drops_a_pending_left_by_a_failed_job(home, monkeypatch):
@@ -227,7 +256,8 @@ def test_an_unwritable_state_dir_fails_the_record_step(home, monkeypatch):
         assert cli.cmd_gate(_args(peek=False)) == cli.STATE_FAILED
     finally:
         home.chmod(0o700)
-    assert cli.cmd_gate(_args(peek=False)) == 0  # control: writable again
+    assert cli.cmd_gate(_args()) == 0                 # control: writable again
+    assert cli.cmd_gate(_args(peek=False)) == 0
 
 
 def test_every_peek_drops_a_pending_left_by_a_failed_job(home, monkeypatch):
@@ -253,8 +283,8 @@ def test_the_gate_waits_for_the_state_lock(home, tmp_path):
     with open(home / "gate.json.lock", "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_SH)
         with pytest.raises(subprocess.TimeoutExpired):
-            subprocess.run([DREAM, "gate", "--peek"], cwd=proj, timeout=2,
-                           env={**os.environ, "HOME": str(h), "DREAM_HOME": str(home)},
+            subprocess.run([DREAM, "gate", "--check", "sessions", "--peek"], cwd=proj, timeout=2,
+                           env={**_ENV, "HOME": str(h), "DREAM_HOME": str(home)},
                            capture_output=True)
 
 
@@ -328,10 +358,10 @@ def test_prs_probe_failures_are_unknown(monkeypatch, result):
     assert cli._prs_fingerprint() is cli.UNKNOWN
 
 
-# --- the `dream` wrapper: a broken gate must run, never skip ----------------
+# --- the `dream` wrapper ------------------------------------------------------
 
 def _wrapper(*args, home):
-    return subprocess.run([DREAM, *args], env={**os.environ, "DREAM_HOME": str(home)},
+    return subprocess.run([DREAM, *args], env={**_ENV, "DREAM_HOME": str(home)},
                           capture_output=True, text=True)
 
 
@@ -374,7 +404,7 @@ def test_a_dreamlib_in_the_cwd_does_not_shadow_the_real_one(tmp_path, home, args
     (plant / "dreamlib" / "__init__.py").write_text("")
     (plant / "dreamlib" / "cli.py").write_text("raise SystemExit(75)\n")
     r = subprocess.run([DREAM, *args], cwd=plant,
-                       env={**os.environ, "HOME": str(tmp_path), "DREAM_HOME": str(home)},
+                       env={**_ENV, "HOME": str(tmp_path), "DREAM_HOME": str(home)},
                        capture_output=True, text=True)
     assert r.returncode != 75, r.stderr  # the plant exits 75
     assert real in r.stderr               # output only the real CLI prints
@@ -385,7 +415,7 @@ def test_wrapper_passes_a_deliberate_skip_through(tmp_path, home):
     proj.mkdir()
     (h / ".claude" / "projects" / str(proj).replace("/", "-")).mkdir(parents=True)
     r = subprocess.run([DREAM, "gate", "--check", "sessions", "--peek"], cwd=proj,
-                       env={**os.environ, "HOME": str(h), "DREAM_HOME": str(home)},
+                       env={**_ENV, "HOME": str(h), "DREAM_HOME": str(home)},
                        capture_output=True, text=True)
     assert r.returncode == cli.SKIP, r.stderr
 
@@ -419,6 +449,14 @@ def test_a_full_stderr_does_not_turn_a_skip_into_a_run(tmp_path, home):
     (h / ".claude" / "projects" / str(proj).replace("/", "-")).mkdir(parents=True)
     with open("/dev/full", "w") as full:
         r = subprocess.run([DREAM, "gate", "--check", "sessions", "--peek"], cwd=proj,
-                           env={**os.environ, "HOME": str(h), "DREAM_HOME": str(home)},
+                           env={**_ENV, "HOME": str(h), "DREAM_HOME": str(home)},
                            stderr=full)
     assert r.returncode == cli.SKIP
+
+
+def test_the_wrapper_works_with_pythonsafepath_set(home):
+    r = subprocess.run([DREAM, "gate", "--check", "nonsense", "--peek"],
+                       env={**_ENV, "DREAM_HOME": str(home), "PYTHONSAFEPATH": "1"},
+                       capture_output=True, text=True)
+    assert "ModuleNotFoundError" not in r.stderr
+    assert "invalid choice" in r.stderr  # the real CLI parsed the arguments

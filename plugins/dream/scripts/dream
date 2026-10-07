@@ -8,11 +8,11 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 # argument or a misspelt subcommand would silently skip the job every night.
 # Only 0 and 75 (the gate's deliberate "nothing new") pass through; any other
 # exit becomes 255, which fails the unit under ExecCondition and is still a
-# failure anywhere else. No subcommand or hook is guessed from the arguments.
+# failure anywhere else.
 /usr/bin/env python3 "$DIR/dream_main.py" "$@"
 rc=$?
 case "$rc" in
   0|75) exit "$rc" ;;
-  *) echo "dream: FAILED with exit $rc - failing the unit so this is noticed" >&2
+  *) echo "dream: FAILED with exit $rc (reported as 255)" >&2
      exit 255 ;;
 esac
