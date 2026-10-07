@@ -18,7 +18,7 @@ description: |
 
 The scripts are in `scripts/` under the "Base directory for this skill" shown
 when the skill loaded. Use that directory. Never search `~/.claude/plugins/cache`
-for them: it can hold stale versions, and a search picks one at random.
+for them: it can hold stale versions, and a search can return one of those.
 
 **Then use the full literal path for every script call.** For example:
 ```bash
