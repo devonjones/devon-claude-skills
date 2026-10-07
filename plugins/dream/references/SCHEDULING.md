@@ -56,9 +56,31 @@ WorkingDirectory=/home/<you>/path/to/<project>
 Environment=PATH=/home/<you>/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Optional: point at a non-default ollama for the model pass.
 Environment=WYRD_OLLAMA_URL=http://localhost:11434
+# Skip the night when there is nothing new to mine (see "Gating" below).
+ExecCondition=/path/to/plugins/dream/scripts/dream gate --check sessions --peek
 ExecStart=/home/<you>/.local/bin/claude -p "Run the dream skill on this project: distill new sessions, synth, consolidate. Auto-write only genuinely-new memories; collect proposals into the skill's review/pending/ file; do NOT auto-edit CLAUDE.md, skills, or DECISIONS.md. Print a per-bucket count. Do not manufacture insights." --permission-mode auto
+ExecStartPost=/path/to/plugins/dream/scripts/dream gate --check sessions
 TimeoutStartSec=2400
 ```
+
+### Gating
+
+`dream gate` runs the job only when there is new input. Use the same
+`--check` on both lines: `sessions` for dream, `prs` for dream-reviewers.
+
+- The `--peek` line (ExecCondition) exits 0 to run or 75 to skip quietly when
+  nothing is new. When it cannot tell (unreadable logs, `gh` failing) it runs
+  the job anyway.
+- The plain line (ExecStartPost) records what the peek saw. It fails the unit
+  when the state under `~/.dream/<slug>/` cannot be read or written, when the peek
+  ran blind, or when no peek ran for that check.
+- Any other failure (a crash, a misspelt option) exits 255, which systemd
+  treats as a failed unit under either line. A skipped night is only ever a
+  deliberate 75.
+
+`--check prs` calls `gh pr list` from WorkingDirectory: `gh` must be on the
+unit's PATH and authenticated non-interactively (`gh auth status` as that
+user). Otherwise every peek runs blind and every record step fails the unit.
 
 `~/.config/systemd/user/dream-<project>.timer`:
 

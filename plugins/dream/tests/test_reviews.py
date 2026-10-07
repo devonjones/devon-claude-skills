@@ -210,3 +210,66 @@ def test_read_markers_enforces_kind_contract(markers_home):
     assert out[0]["reviewer"] == "code-reviewer"
     assert out[0]["disposition_by"] == "user"
     assert out[0]["pr"] == "33"
+
+
+# --- roster-seeded reviewer canonicalization -------------------------------
+# The fold is seeded from the roster as well as the finding set, so a bare name
+# folds the same way whichever source ran.
+
+
+def test_canonical_map_folds_bare_name_onto_roster_name(monkeypatch):
+    monkeypatch.setattr(reviews, "roster_reviewers", lambda: {"clarity-reviewer"})
+    findings = [{"reviewer": "clarity"}]  # suffixed form absent from THIS set
+    assert reviews._canonical_reviewer_map(findings)["clarity"] == "clarity-reviewer"
+
+
+def test_canonical_map_leaves_non_roster_names_alone(monkeypatch):
+    monkeypatch.setattr(reviews, "roster_reviewers", lambda: {"clarity-reviewer"})
+    findings = [{"reviewer": "gemini"}, {"reviewer": "both"}]
+    m = reviews._canonical_reviewer_map(findings)
+    assert m["gemini"] == "gemini" and m["both"] == "both"
+
+
+def test_canonical_map_still_folds_within_finding_set(monkeypatch):
+    """Original behavior survives when the roster is empty (non-roster repo)."""
+    monkeypatch.setattr(reviews, "roster_reviewers", lambda: set())
+    findings = [{"reviewer": "test-coverage"}, {"reviewer": "test-coverage-reviewer"}]
+    m = reviews._canonical_reviewer_map(findings)
+    assert m["test-coverage"] == "test-coverage-reviewer"
+
+
+def test_roster_reviewers_reads_headings(tmp_path, monkeypatch):
+    (tmp_path / "AGENT-REVIEWERS.md").write_text(
+        "# Agents\n\n## heading-reviewer\n\n## Not A Name\n", encoding="utf-8")
+    monkeypatch.setattr(reviews.config, "git_root", lambda cwd=None: str(tmp_path))
+    names = reviews.roster_reviewers()
+    assert "heading-reviewer" in names
+    assert "Not A Name" not in names  # prose heading, not a reviewer slug
+
+
+# --- _canonical_reviewers reads what synth writes ---------------------------
+# synth writes scorecards-<source>.json. A bare scorecards.json is never
+# refreshed, so reading it would silently return stale names.
+
+def _sc(path, *names):
+    path.write_text(json.dumps({"scorecards": [{"reviewer": n} for n in names]}))
+
+
+def test_canonical_reviewers_reads_per_source_scorecards(tmp_path, monkeypatch):
+    monkeypatch.setattr(reviews, "REVIEW_OUT", str(tmp_path))
+    _sc(tmp_path / "scorecards-markers.json", "fresh-reviewer")
+    assert "fresh-reviewer" in reviews._canonical_reviewers()
+
+
+def test_canonical_reviewers_ignores_the_stale_legacy_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(reviews, "REVIEW_OUT", str(tmp_path))
+    _sc(tmp_path / "scorecards.json", "stale-reviewer")
+    assert "stale-reviewer" not in reviews._canonical_reviewers()
+
+
+def test_canonical_reviewers_survives_an_unreadable_scorecard(tmp_path, monkeypatch):
+    monkeypatch.setattr(reviews, "REVIEW_OUT", str(tmp_path))
+    (tmp_path / "scorecards-github.json").write_text("{truncated")
+    _sc(tmp_path / "scorecards-markers.json", "fresh-reviewer")
+    names = reviews._canonical_reviewers()
+    assert "fresh-reviewer" in names and "code-reviewer" in names

@@ -6,7 +6,7 @@
 # project's .claude/hooks/ and register it as a SessionStart "command" hook.
 #
 # Self-contained: it derives the SAME per-project slug the dream tool uses
-# (git-root basename — see dreamlib/config.project_slug) so it points at the same
+# (the common git dir name — see dreamlib/config.project_slug) so it points at the same
 # ~/.dream/<slug>/ home, with no dependency on the dream scripts being importable.
 #
 # Contract: always exits 0 and never errors out — a SessionStart hook must never
@@ -20,6 +20,11 @@ cat >/dev/null 2>&1 || true
 
 proj="${CLAUDE_PROJECT_DIR:-$PWD}"
 root="$(git -C "$proj" rev-parse --show-toplevel 2>/dev/null)" || exit 0
+# Key on the common git dir so every worktree reads the same stream the writers
+# use. Mirrors dreamlib/config.py:main_checkout and emit-dream-marker.sh.
+common="$(git -C "$proj" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+common="${common%/}"
+[ -n "$common" ] && root="${common%.git}"
 slug="$(basename "$root")"
 home="${DREAM_HOME:-$HOME/.dream/$slug}"
 [ -d "$home" ] || exit 0

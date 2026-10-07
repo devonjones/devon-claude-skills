@@ -2,4 +2,17 @@
 # Entry point for the dream pipeline CLI. Pure-stdlib, so system python is fine.
 # Derives the target project from $DREAM_PROJECT_DIR or the current directory.
 DIR="$(cd "$(dirname "$0")" && pwd)"
-PYTHONPATH="$DIR" exec /usr/bin/env python3 -m dreamlib.cli "$@"
+
+# `dream gate --peek` runs as a systemd ExecCondition, which reads every exit
+# from 1 to 254 as "skip" without marking anything failed - so a crash, a bad
+# argument or a misspelt subcommand would silently skip the job every night.
+# Only 0 and 75 (the gate's deliberate "nothing new") pass through; any other
+# exit becomes 255, which fails the unit under ExecCondition and is still a
+# failure anywhere else.
+/usr/bin/env python3 "$DIR/dream_main.py" "$@"
+rc=$?
+case "$rc" in
+  0|75) exit "$rc" ;;
+  *) echo "dream: FAILED with exit $rc (reported as 255)" >&2
+     exit 255 ;;
+esac

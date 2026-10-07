@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import glob as _glob
 import json
+import sys
 import os
 import re
 import subprocess
@@ -234,20 +235,39 @@ def _rate(num: int, den: int) -> float | None:
 
 
 def _canonical_reviewer_map(findings: list[dict]) -> dict[str, str]:
-    """Fold trailing-``-reviewer`` suffix drift so one reviewer isn't split across
-    scorecard rows. A name and that name + ``-reviewer`` are the same reviewer
-    (``-reviewer`` is a naming-convention suffix, not identity); when BOTH forms
-    appear in the finding set, canonicalize to the ``-reviewer`` form (the
-    AGENT-REVIEWERS.md convention). Folds ONLY when both variants are actually
-    present — e.g. ``test-coverage`` (7) → ``test-coverage-reviewer`` (483),
-    ``api-correctness`` ↔ ``api-correctness-reviewer`` — so genuinely-distinct
-    one-off names are never merged into a canonical they don't belong to."""
+    """Map each reviewer name to one canonical form, so a reviewer is not split
+    across scorecard rows. A name and that name + ``-reviewer`` are the same
+    reviewer, and the suffixed form wins. A bare name folds when its suffixed
+    form appears in this finding set OR in the repo's roster - the roster is
+    the naming authority, so the result does not depend on which source ran.
+    A bare name with no suffixed match anywhere is left as it is."""
     names = {f["reviewer"] for f in findings if f.get("reviewer")}
+    known = names | roster_reviewers()
     out: dict[str, str] = {}
     for n in names:
         suffixed = n if n.endswith("-reviewer") else n + "-reviewer"
-        out[n] = suffixed if suffixed in names else n
+        out[n] = suffixed if suffixed in known else n
     return out
+
+
+def roster_reviewers() -> set[str]:
+    """Reviewer names declared by the repo: the ``## <name>`` headings in every
+    AGENT-REVIEWERS.md, keeping only lowercase kebab-case names (so prose
+    headings like ``## Guidelines`` drop out, though a one-word lowercase
+    heading would not). Empty when the repo has no roster - callers must treat
+    that as "no extra knowledge", never as "this reviewer is unknown"."""
+    names: set[str] = set()
+    root = config.git_root() or config.project_dir()
+    for roster in _glob.glob(os.path.join(root, "**", "AGENT-REVIEWERS.md"),
+                             recursive=True):
+        try:
+            with open(roster, encoding="utf-8") as fh:
+                for line in fh:
+                    if line.startswith("## "):
+                        names.add(line[3:].strip())
+        except OSError:
+            continue
+    return {n for n in names if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", n)}
 
 
 def synth(findings: list[dict]) -> dict:
@@ -328,10 +348,14 @@ def _canonical_reviewers() -> set[str]:
         "comment-analyzer", "type-design-analyzer", "code-simplifier",
     }
     names = set(defaults)
-    sc = os.path.join(REVIEW_OUT, "scorecards.json")
-    if os.path.exists(sc):
-        with open(sc) as fh:
-            names |= {c["reviewer"] for c in json.load(fh).get("scorecards", [])}
+    # synth writes scorecards-<source>.json. A bare scorecards.json is never
+    # refreshed, so reading it would return stale names.
+    for sc in sorted(_glob.glob(os.path.join(REVIEW_OUT, "scorecards-*.json"))):
+        try:
+            with open(sc) as fh:
+                names |= {c["reviewer"] for c in json.load(fh).get("scorecards", [])}
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            print(f"reviews: skipping unreadable {sc} ({e})", file=sys.stderr)
     # Keep only reviewer-shaped names — excludes stray tokens like "verify"
     # (the /verify skill) that leaked in via a single GitHub finding.
     return {n for n in names if n.endswith("-reviewer") or n in defaults}
