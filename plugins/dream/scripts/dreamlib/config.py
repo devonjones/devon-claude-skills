@@ -32,10 +32,41 @@ def git_root(cwd: str | None = None) -> str:
     return _run(["git", "rev-parse", "--show-toplevel"], cwd=cwd or project_dir())
 
 
+def main_checkout(cwd: str | None = None) -> str:
+    """A path whose basename is the SAME from every worktree of a repo.
+
+    `--show-toplevel` returns the worktree dir, so keying on it gives each
+    worktree its own orphan slug. The common git dir is shared by every
+    worktree, so it is the identity:
+
+      /repo/.git              -> /repo           (normal clone; slug unchanged)
+      /x/store.git            -> /x/store        (--separate-git-dir)
+      /super/.git/modules/sub -> .../modules/sub (submodule)
+
+    For the last two the main checkout's own name is not recorded anywhere git
+    can reach from a linked worktree - there is no core.worktree and nothing in
+    the store points back at it - so the common dir's name is used instead. It
+    is stable across worktrees, which is what the slug needs.
+
+    Falls back to the worktree root only when git cannot report a common dir
+    at all (git older than 2.13)."""
+    common = _run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        cwd=cwd or project_dir(),
+    )
+    if not common:
+        return git_root(cwd)
+    common = common.rstrip("/")
+    if common.endswith("/.git"):
+        return os.path.dirname(common)
+    return common[:-4] if common.endswith(".git") else common
+
+
 def project_slug(cwd: str | None = None) -> str:
-    """Stable per-project key: the git-root basename (so a sibling producer like
-    pr-review-loop computes the SAME markers path with one `git rev-parse`)."""
-    root = git_root(cwd)
+    """Stable per-project key: the MAIN checkout's basename (so a sibling producer
+    like pr-review-loop computes the SAME markers path, and every worktree of a repo
+    writes to one stream)."""
+    root = main_checkout(cwd)
     return os.path.basename(root or os.path.abspath(cwd or project_dir()))
 
 

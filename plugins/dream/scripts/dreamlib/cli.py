@@ -1,9 +1,10 @@
 """Dream stage-1 CLI: distill Claude Code session logs into behavioral digests.
 
-    python -m dreamlib.cli distill            # distill the backlog (cached)
-    python -m dreamlib.cli distill --no-model # heuristic only (fast, no ollama)
-    python -m dreamlib.cli distill --session <uuid>
-    python -m dreamlib.cli stats              # summarize existing digests
+    dream distill            # distill the backlog (cached)
+    dream distill --no-model # heuristic only (fast, no ollama)
+    dream distill --session <uuid>
+    dream stats              # summarize existing digests
+    dream gate --check sessions --peek   # see references/SCHEDULING.md
 
 Digests are cached in digests/{session_id}.json keyed by input_hash, so a
 re-run only re-distills sessions whose source file changed. The live/most-recent
@@ -13,10 +14,12 @@ session is skipped by default (it may still be appended to).
 from __future__ import annotations
 
 import argparse
+import fcntl
 import glob
+import hashlib
 import json
 import os
-import sys
+import subprocess
 import time
 from datetime import datetime, timezone
 
@@ -35,7 +38,13 @@ def _now() -> str:
 
 
 def _echo(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
+    # Unbuffered and best-effort: a full or closed stderr must not change the
+    # exit code, which is the gate's signal. A failed buffered write is
+    # retried at exit and turns a deliberate skip into exit 120.
+    try:
+        os.write(2, (msg + "\n").encode())
+    except OSError:
+        pass
 
 
 def _session_files(logs_dir: str, skip_live: bool) -> list[str]:
@@ -88,6 +97,12 @@ def cmd_distill(args: argparse.Namespace) -> int:
         from .model import enrich as _enrich
 
         enrich = _enrich
+        # Name the model host up front: with $WYRD_OLLAMA_URL unset it defaults
+        # to localhost, which may be much weaker than the intended host.
+        if not os.environ.get("WYRD_OLLAMA_URL"):
+            _echo(f"WARN: WYRD_OLLAMA_URL unset — distilling against {args.url}")
+        else:
+            _echo(f"distill model: {args.model} @ {args.url}")
 
     done = skipped = failed = selfrun = 0
     t0 = time.time()
@@ -290,25 +305,76 @@ def cmd_reviews_synth(args: argparse.Namespace) -> int:
     s = rv.synth(findings)
     s["source"] = args.source
     s["generated_at"] = _now()
-    with open(os.path.join(rv.REVIEW_OUT, "scorecards.json"), "w") as fh:
+    # One file pair per source, so running several sources keeps each. The
+    # markers scorecard is the only one carrying operator taste.
+    with open(os.path.join(rv.REVIEW_OUT, f"scorecards-{args.source}.json"), "w") as fh:
         json.dump(s, fh, indent=2)
-    md = _render_scorecards(s)
-    with open(os.path.join(rv.REVIEW_OUT, "SCORECARDS.md"), "w") as fh:
-        fh.write(md)
+    with open(os.path.join(rv.REVIEW_OUT, f"SCORECARDS-{args.source}.md"), "w") as fh:
+        fh.write(_render_scorecards(s))
     _echo(
         f"reviews-synth: {s['reviewer_count']} scorecards "
-        f"→ {rv.REVIEW_OUT}/SCORECARDS.md"
+        f"→ {rv.REVIEW_OUT}/SCORECARDS-{args.source}.md"
     )
     return 0
 
 
+def _merge_coverage(old: dict, new: dict) -> dict:
+    """Merge coverage records, keeping each reviewer's highest counts and widest
+    seen-window. Coverage comes from the session-log window, which is pruned,
+    so a fresh computation undercounts; merging makes the count a high-water
+    mark. A reviewer absent from the new window is kept, not dropped."""
+    merged: dict[str, dict] = {r["reviewer"]: dict(r) for r in old.get("reviewers", [])}
+    for r in new.get("reviewers", []):
+        prev = merged.get(r["reviewer"])
+        if prev is None:
+            merged[r["reviewer"]] = dict(r)
+            continue
+        prev["spawns"] = max(prev.get("spawns") or 0, r.get("spawns") or 0)
+        prev["prs"] = max(prev.get("prs") or 0, r.get("prs") or 0)
+        seens = [s for s in (prev.get("first_seen"), r.get("first_seen")) if s]
+        prev["first_seen"] = min(seens) if seens else None
+        seens = [s for s in (prev.get("last_seen"), r.get("last_seen")) if s]
+        prev["last_seen"] = max(seens) if seens else None
+    out = dict(new)
+    out["reviewers"] = sorted(
+        merged.values(), key=lambda r: (-(r.get("spawns") or 0), r["reviewer"])
+    )
+    out["total_spawns"] = sum(r.get("spawns") or 0 for r in out["reviewers"])
+    out["live_window_spawns"] = new.get("total_spawns", 0)
+    return out
+
+
 def cmd_reviews_coverage(args: argparse.Namespace) -> int:
     cov = rv.coverage_from_logs()
-    cov["generated_at"] = _now()
     os.makedirs(rv.REVIEW_OUT, exist_ok=True)
-    with open(os.path.join(rv.REVIEW_OUT, "coverage.json"), "w") as fh:
+    path = os.path.join(rv.REVIEW_OUT, "coverage.json")
+    merged = False
+    if not args.no_merge and os.path.exists(path):
+        try:
+            with open(path) as fh:
+                prior = json.load(fh)
+        except Exception as e:  # noqa: BLE001
+            # Never fall through to the write: this file is the only copy of
+            # cumulative history, and the live window can be recomputed.
+            _echo(f"reviews-coverage: prior coverage unreadable ({e})")
+            _echo(f"reviews-coverage: REFUSING to write — {path} holds the only "
+                  "cumulative history and overwriting it with the live window "
+                  "would destroy it. Inspect or move that file, then re-run.")
+            return 1
+        cov = _merge_coverage(prior, cov)
+        merged = True
+    cov["generated_at"] = _now()
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as fh:
         json.dump(cov, fh, indent=2)
-    lines = ["# Reviewer firing coverage (from logs — complete, unbiased)", ""]
+    os.replace(tmp, path)
+    lines = [
+        "# Reviewer firing coverage "
+        + ("(cumulative high-water mark, merged forward across runs — the live "
+           "log window is pruned)" if merged
+           else "(THIS RUN'S LIVE WINDOW ONLY — not merged with prior history)"),
+        "",
+    ]
     lines.append(f"{cov['total_spawns']} reviewer spawns\n")
     lines.append("| reviewer | spawns | PRs | first seen | last seen |")
     lines.append("|---|--:|--:|---|---|")
@@ -319,9 +385,12 @@ def cmd_reviews_coverage(args: argparse.Namespace) -> int:
         )
     with open(os.path.join(rv.REVIEW_OUT, "COVERAGE.md"), "w") as fh:
         fh.write("\n".join(lines))
+    spawns = (f"{cov['total_spawns']} spawns cumulative "
+              f"({cov['live_window_spawns']} in the live window)" if merged
+              else f"{cov['total_spawns']} spawns in the live window only")
     _echo(
-        f"reviews-coverage: {len(cov['reviewers'])} reviewers, "
-        f"{cov['total_spawns']} spawns → {rv.REVIEW_OUT}/COVERAGE.md"
+        f"reviews-coverage: {len(cov['reviewers'])} reviewers, {spawns} "
+        f"→ {rv.REVIEW_OUT}/COVERAGE.md"
     )
     return 0
 
@@ -329,6 +398,218 @@ def cmd_reviews_coverage(args: argparse.Namespace) -> int:
 def cmd_reviews_harvest(args: argparse.Namespace) -> int:
     rv.harvest(_echo)
     return 0
+
+
+# Signal states. "Nothing to mine" is determinate and means skip; "could not
+# look" is not, and means run.
+UNKNOWN: None = None    # the probe failed; nobody can say
+NOTHING = "nothing"     # the probe worked and there is nothing to mine
+
+# A deliberate "nothing new" exits SKIP, not 1: Python exits 1 on any uncaught
+# exception, and a crash must not read as a skip.
+SKIP = 75
+# The record step could not vouch for what the job consumed: the state file
+# was unusable, the peek ran the job blind, or no peek ran for this check.
+# --peek never returns it.
+STATE_FAILED = 74
+
+
+def _gate_state_path() -> str:
+    """Resolved per call, not at import: $DREAM_HOME is repointable by tests and
+    by callers, and importing a module should not create directories."""
+    return os.path.join(config.dream_home(), "gate.json")
+
+
+def _gate_state() -> tuple[dict, bool]:
+    """Returns (state, readable). A corrupt file is not treated as empty:
+    writing over it would destroy the other check's watermark. The peek leaves
+    the file for someone to look at and the record step fails the unit."""
+    path = _gate_state_path()
+    if not os.path.exists(path):
+        return {}, True
+    try:
+        with open(path) as fh:
+            loaded = json.load(fh)
+    except (OSError, ValueError) as exc:
+        _echo(f"gate: state file unreadable ({exc}) — not overwriting it")
+        return {}, False
+    if not isinstance(loaded, dict):
+        _echo(f"gate: state file is {type(loaded).__name__}, expected object — not overwriting it")
+        return {}, False
+    return loaded, True
+
+
+def _write_gate_state(state: dict) -> None:
+    path = _gate_state_path()
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as fh:
+        json.dump(state, fh, indent=2)
+    os.replace(tmp, path)
+
+
+def _sessions_fingerprint() -> str | None:
+    """Fingerprint of the minable corpus: the sorted input_hashes of every
+    non-self-run session. Keyed on content, not mtime, because dream's own reads
+    and the log pruner change mtimes without changing anything minable.
+
+    Includes the newest, possibly still-live, session. Excluding it would
+    deadlock the gate: with jobs gated off no new log appears, so that session
+    stays newest and never becomes eligible. Including it costs at most an
+    extra run.
+
+    Returns NOTHING when the log dir is readable and holds nothing minable, and
+    UNKNOWN when it cannot be read, a session fails to load, or no session has
+    any events - a missing dir usually means the probe is looking in the wrong
+    place, not that there is no work."""
+    if not os.path.isdir(PROJECT_LOGS) or not os.access(PROJECT_LOGS, os.R_OK | os.X_OK):
+        _echo(f"gate[sessions]: cannot read {PROJECT_LOGS}")
+        return UNKNOWN
+    files = _session_files(PROJECT_LOGS, skip_live=False)
+    hashes, loaded = [], 0
+    for f in files:
+        try:
+            session = load_session(f)
+        except Exception as exc:  # noqa: BLE001
+            # Usually an unreadable file. Skipping it could turn real input
+            # into NOTHING and skip the job, so the whole signal is unknown.
+            _echo(f"gate[sessions]: cannot load {f} ({exc})")
+            return UNKNOWN
+        if not session.events:  # nothing parsed out of it; not minable
+            continue
+        loaded += 1
+        if not is_self_run(session):
+            hashes.append(session.input_hash)
+    if files and not loaded:
+        _echo(f"gate[sessions]: none of {len(files)} session logs has any events")
+        return UNKNOWN
+    if not hashes:
+        return NOTHING
+    return hashlib.sha256("".join(sorted(hashes)).encode()).hexdigest()
+
+
+def _prs_fingerprint() -> str | None:
+    """Most recently touched PR (number + updatedAt). Catches a merge, a new PR,
+    and new review comments on an existing one."""
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "list", "--state", "all", "--limit", "1",
+             "--search", "sort:updated-desc", "--json", "number,updatedAt"],
+            # gh finds the repo from its cwd. A systemd unit runs with its own
+            # WorkingDirectory, so without this the probe never finds the repo.
+            cwd=config.project_dir(),
+            capture_output=True, text=True, timeout=60,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _echo(f"gate[prs]: gh failed to run ({exc})")
+        return UNKNOWN
+    if r.returncode != 0:
+        _echo(f"gate[prs]: gh exited {r.returncode}: {r.stderr.strip()[:200]}")
+        return UNKNOWN
+    out = r.stdout.strip()
+    if not out:
+        _echo("gate[prs]: gh returned no output")
+        return UNKNOWN
+    return out
+
+
+def _sessions_scope() -> str:
+    """Which watermark the sessions signal belongs to.
+
+    The signal is computed over PROJECT_LOGS, which Claude Code keys on the
+    cwd, so it is per-worktree; the state file is shared by every worktree of
+    the repo. Keying the entry by the log dir gives each worktree its own
+    watermark. Comparing one worktree's signal with another's would never
+    match, and the gate would never close."""
+    return f"sessions@{os.path.basename(PROJECT_LOGS)}"
+
+
+def cmd_gate(args: argparse.Namespace) -> int:
+    """Gate a nightly job on new input. Wire it as
+
+      ExecCondition=dream gate --check X --peek
+      ExecStartPost=dream gate --check X
+
+    --peek (the condition) exits 0 to run or SKIP when there is nothing new,
+    and remembers the fingerprint it saw as pending. It runs when it cannot
+    tell: an unreadable corpus, a failed gh call or an unusable state file all
+    exit 0, unless the corpus is readable and holds nothing to mine (SKIP).
+
+    Without --peek (after the job) it records the pending fingerprint as
+    consumed, so input that arrived during the run is still new tomorrow. It
+    exits STATE_FAILED - failing the unit - when it cannot do that: the state
+    file cannot be read or written, the peek ran the job blind, or nothing was
+    left by a peek for this check (miswired units). A job that reruns every
+    night must not do so behind a green unit."""
+    try:
+        # The state file is shared by every check and worktree; serialise the
+        # read-modify-write so two units finishing together don't drop an entry.
+        with open(_gate_state_path() + ".lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            return _peek(args.check) if args.peek else _record(args.check)
+    except OSError as exc:
+        _echo(f"gate[{args.check}]: state unusable ({exc})")
+        return 0 if args.peek else STATE_FAILED
+
+
+def _keys(key: str) -> tuple[str, str, str]:
+    entry = _sessions_scope() if key == "sessions" else key
+    return entry, f"{entry}_pending", f"{entry}_blind"
+
+
+def _record(key: str) -> int:
+    entry, pending, blind_key = _keys(key)
+    state, readable = _gate_state()
+    if not readable:
+        _echo(f"gate[{key}]: state unreadable — watermark not recorded")
+        return STATE_FAILED
+    seen = state.pop(pending, None)
+    blind = state.pop(blind_key, None)
+    if seen is not None:
+        state[entry] = seen
+        state[f"{entry}_at"] = _now()
+    _write_gate_state(state)
+    if blind:
+        _echo(f"gate[{key}]: the job ran blind (signal unavailable at {blind})")
+        return STATE_FAILED
+    if seen is None:
+        _echo(f"gate[{key}]: no peek left anything for this check — is the "
+              "unit's ExecCondition the same check with --peek?")
+        return STATE_FAILED
+    _echo(f"gate[{key}]: watermark recorded")
+    return 0
+
+
+def _peek(key: str) -> int:
+    entry, pending, blind_key = _keys(key)
+    state, readable = _gate_state()
+    # Pending means "what this peek saw". Drop whatever an earlier peek left -
+    # its job may have failed - so the record step never marks consumed input
+    # that no peek tonight saw.
+    dirty = state.pop(pending, None) is not None
+    dirty = state.pop(blind_key, None) is not None or dirty
+    try:
+        current = _sessions_fingerprint() if key == "sessions" else _prs_fingerprint()
+    except Exception as exc:  # noqa: BLE001 — e.g. a log pruned between glob and stat
+        _echo(f"gate[{key}]: probe failed ({exc})")
+        current = UNKNOWN
+    if current is UNKNOWN:
+        state[blind_key] = _now()
+        dirty = True
+        rc, why = 0, "signal unavailable — failing open, run proceeds"
+    elif current == NOTHING:
+        rc, why = SKIP, "nothing to mine — skipping"
+    elif not readable:
+        rc, why = 0, "state unreadable — failing open, run proceeds"
+    elif state.get(entry) == current:
+        rc, why = SKIP, "no new input since last run — skipping"
+    else:
+        state[pending] = current
+        dirty = True
+        rc, why = 0, "new input since last run — run proceeds"
+    if dirty and readable:
+        _write_gate_state(state)
+    _echo(f"gate[{key}]: {why}")
+    return rc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -362,10 +643,25 @@ def main(argv: list[str] | None = None) -> int:
     rs.set_defaults(func=cmd_reviews_synth)
 
     rc = sub.add_parser("reviews-coverage", help="reviewer firing coverage from logs")
+    rc.add_argument("--no-merge", action="store_true",
+                    help="live log window only; do not merge the prior cumulative file")
     rc.set_defaults(func=cmd_reviews_coverage)
 
     rh = sub.add_parser("reviews-harvest", help="capture durable + /tmp reviewer findings")
     rh.set_defaults(func=cmd_reviews_harvest)
+
+    g = sub.add_parser(
+        "gate",
+        help="--peek: exit 0 to run, 75 when nothing is new; without it: record the watermark",
+    )
+    g.add_argument("--check", choices=["sessions", "prs"], required=True,
+                   help="sessions = new minable session content; prs = PR activity")
+    g.add_argument("--peek", action="store_true",
+                   help="decide whether to run (ExecCondition); it stores what it "
+                        "saw for the record step, so do not run it by hand during a "
+                        "scheduled run. Omit it after the job (ExecStartPost) to "
+                        "record what was seen")
+    g.set_defaults(func=cmd_gate)
 
     args = p.parse_args(argv)
     return args.func(args)

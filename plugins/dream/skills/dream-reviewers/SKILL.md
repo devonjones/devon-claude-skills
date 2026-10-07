@@ -49,7 +49,7 @@ GitHub backfill.
 skipped posting), so `--source github` UNDER-counts. `reviews-coverage` (every
 Agent spawn) is the complete, unbiased firing record — use it to contextualize
 acceptance rates ("fired 353× but only N findings posted"). Outputs land in
-`~/.dream/<slug>/reviews/` (`SCORECARDS.md`, `COVERAGE.md`).
+`~/.dream/<slug>/reviews/` (`SCORECARDS-<source>.md`, `COVERAGE.md`).
 
 Metrics per reviewer: `acceptance_value` (was it RIGHT — valid/total resolved),
 `acceptance_fixstrict` (did it drive a CHANGE), `false_positive_rate`,
@@ -58,7 +58,7 @@ the OPERATOR made — only markers carry this).
 
 ## 2. Propose roster changes (YOU, or a spawned Opus Task)
 
-Read `reviews/scorecards.json` + `coverage.json` + the reviewer definitions
+Read `reviews/scorecards-all.json` + `coverage.json` + the reviewer definitions
 (`AGENT-REVIEWERS.md` at root and in subtrees; the 6 pr-review-loop plugin
 defaults are config-only, not file-editable). If the project has `DECISIONS.md`
 file(s), read them too: a low-fix reviewer that enforces a *documented invariant*
@@ -76,7 +76,8 @@ contradicts a current decision, that is `DECISIONS.md` drift worth flagging
 
 Weight `taste(user)` heavily — an operator overruling a reviewer is the strongest
 signal. Keep the detailed scorecards/coverage artifacts in `~/.dream/<slug>/reviews/`
-(`SCORECARDS.md`, `COVERAGE.md`, `scorecards.json`) as backing data.
+(`SCORECARDS-<source>.md`, `COVERAGE.md`, `scorecards-<source>.json`) as backing data.
+A bare `scorecards.json` is not written by synth and goes stale — ignore it.
 
 ## 3. Promote
 

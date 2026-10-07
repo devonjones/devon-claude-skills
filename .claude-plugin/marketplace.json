@@ -9,7 +9,7 @@
     {
       "name": "pr-review-loop",
       "description": "Autonomous PR review automation with multi-bot support (Gemini, Cursor, Claude)",
-      "version": "1.8.0",
+      "version": "1.8.1",
       "source": "./plugins/pr-review-loop",
       "category": "productivity",
       "author": {
@@ -19,7 +19,7 @@
     {
       "name": "dream",
       "description": "Mine Claude Code session logs and PR review history into durable project improvements (memories, CLAUDE.md, docs, reviewer-roster tuning) — async 'AI dreaming'.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "source": "./plugins/dream",
       "category": "productivity",
       "author": {
