@@ -107,10 +107,10 @@ fi
 
 # Post reply using REST API (the only way to reply to existing review comments)
 REPLY_POSTED=false
+pace_github
 REPLY_RESULT=$(gh api \
     --method POST \
     "repos/$REPO/pulls/$PR_NUMBER/comments/$DATABASE_ID/replies" \
-pace_github
     -f body="$REPLY" 2>&1) && REPLY_POSTED=true || {
     echo "ERROR: Failed to post reply via REST API." >&2
     echo "" >&2
@@ -134,11 +134,13 @@ pace_github
     fi
 }
 
-if [[ "$REPLY_POSTED" == "true" ]]; then
-    echo "Reply posted successfully."
-else
-    echo "Warning: Could not post reply. Will still attempt to resolve thread."
+if [[ "$REPLY_POSTED" != "true" ]]; then
+    # Never resolve a thread whose reply did not post. A resolved thread with no
+    # reply reads as handled; an open one can still be found and answered.
+    echo "ERROR: reply not posted - thread left UNRESOLVED." >&2
+    exit 1
 fi
+echo "Reply posted successfully."
 
 # Resolve the thread unless --no-resolve is specified
 if [[ "$NO_RESOLVE" != "--no-resolve" ]]; then
