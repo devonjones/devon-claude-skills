@@ -66,7 +66,7 @@ Automate PR review feedback loops with Gemini Code Assist, Cursor Bugbot, and Cl
 - Automatic comment resolution with reply templates
 - Rate limit detection and fallback
 - Skeptical review evaluation (not all suggestions should be implemented)
-- Diminishing returns detection with "ONE MORE LOOP" verification
+- Converges on one clean round — no round cap
 
 **Usage:**
 ```bash

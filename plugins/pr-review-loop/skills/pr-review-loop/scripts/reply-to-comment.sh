@@ -11,6 +11,10 @@
 
 set -euo pipefail
 
+# Pace GitHub content creation globally - secondary limits are velocity-based.
+# shellcheck source=_pace.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_pace.sh"
+
 PR_NUMBER="${1:?Usage: reply-to-comment.sh <pr-number> <comment-id> \"reply message\" [--no-resolve]}"
 COMMENT_ID="${2:?Usage: reply-to-comment.sh <pr-number> <comment-id> \"reply message\" [--no-resolve]}"
 REPLY="${3:?Usage: reply-to-comment.sh <pr-number> <comment-id> \"reply message\" [--no-resolve]}"
@@ -106,6 +110,7 @@ REPLY_POSTED=false
 REPLY_RESULT=$(gh api \
     --method POST \
     "repos/$REPO/pulls/$PR_NUMBER/comments/$DATABASE_ID/replies" \
+pace_github
     -f body="$REPLY" 2>&1) && REPLY_POSTED=true || {
     echo "ERROR: Failed to post reply via REST API." >&2
     echo "" >&2

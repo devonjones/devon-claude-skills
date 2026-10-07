@@ -278,6 +278,42 @@ assert_jq "defaults_version_checked echoes back" "$t7" '.configuration.defaults_
 rm -rf "$repo"
 
 echo
+echo "=== Test 7b: pin == DEFAULTS_VERSION, below plugin version → stale_pin false ==="
+DEFAULTS_VERSION="$(tr -d '[:space:]' < "$SCRIPT_DIR/../../../DEFAULTS_VERSION")"
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<EOF
+# Configuration
+
+\`\`\`json
+{
+  "defaults_version_checked": "${DEFAULTS_VERSION}"
+}
+\`\`\`
+EOF
+run_discover "$repo" "src/foo.py" t7b
+assert_exit "exit 0" "$t7b_exit" "0"
+assert_jq "stale_pin false" "$t7b" '.configuration.stale_pin == false'
+assert_jq "defaults_version reported" "$t7b" ".configuration.defaults_version == \"$DEFAULTS_VERSION\""
+rm -rf "$repo"
+
+echo
+echo "=== Test 7c: pin just below DEFAULTS_VERSION → stale_pin true ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+```json
+{
+  "defaults_version_checked": "1.2.99"
+}
+```
+EOF
+run_discover "$repo" "src/foo.py" t7c
+assert_exit "exit 0" "$t7c_exit" "0"
+assert_jq "stale_pin true" "$t7c" '.configuration.stale_pin == true'
+rm -rf "$repo"
+
+echo
 echo "=== Test 8: overlap_acknowledged without reason → exit 1 ==="
 repo="$(make_temp_repo)"
 cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
