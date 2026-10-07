@@ -18,7 +18,6 @@ import hashlib
 import json
 import os
 import subprocess
-import traceback
 import sys
 import time
 from datetime import datetime, timezone
@@ -394,10 +393,16 @@ def cmd_reviews_harvest(args: argparse.Namespace) -> int:
 
 
 # Signal states. "Nothing to mine" is determinate and means skip; "could not
-# look" is not, and means run. One sentinel for both would make a corpus of
-# only self-runs fail open on every run.
-UNKNOWN = None          # probe failed; we cannot say
-NOTHING = "nothing"     # probe succeeded; there is genuinely nothing to mine
+# look" is not, and means run.
+UNKNOWN: None = None    # the probe failed; nobody can say
+NOTHING = "nothing"     # the probe worked and there is nothing to mine
+
+# A deliberate "nothing new" exits SKIP. It is not 1 because Python exits 1 on
+# any uncaught exception, so a crash would read as a deliberate skip. The
+# `dream` wrapper passes 0 and SKIP through and turns every other non-zero
+# exit - a crash, a bad argument, an unknown subcommand - into 0, so a broken
+# gate runs the job loudly instead of skipping it silently.
+SKIP = 75
 
 
 def _gate_state_path() -> str:
@@ -407,16 +412,16 @@ def _gate_state_path() -> str:
 
 
 def _gate_state() -> tuple[dict, bool]:
-    """Returns (state, readable). A corrupt file is NOT an empty state — writing
-    over it would destroy the other check's watermark, and treating it as "never
-    ran" makes a corrupt file look like a quiet day."""
+    """Returns (state, readable). A corrupt file is not treated as empty:
+    writing over it would destroy the other check's watermark. The caller runs
+    the job instead and leaves the file for someone to look at."""
     path = _gate_state_path()
     if not os.path.exists(path):
         return {}, True
     try:
         with open(path) as fh:
             loaded = json.load(fh)
-    except Exception as exc:  # noqa: BLE001
+    except (OSError, ValueError) as exc:
         _echo(f"gate: state file unreadable ({exc}) — not overwriting it")
         return {}, False
     if not isinstance(loaded, dict):
@@ -425,7 +430,15 @@ def _gate_state() -> tuple[dict, bool]:
     return loaded, True
 
 
-def _sessions_fingerprint() -> str:
+def _write_gate_state(state: dict) -> None:
+    path = _gate_state_path()
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as fh:
+        json.dump(state, fh, indent=2)
+    os.replace(tmp, path)
+
+
+def _sessions_fingerprint() -> str | None:
     """Fingerprint of the minable corpus: the sorted input_hashes of every
     non-self-run session. Keyed on content, not mtime, because dream's own reads
     and the log pruner change mtimes without changing anything minable.
@@ -435,38 +448,42 @@ def _sessions_fingerprint() -> str:
     stays newest and never becomes eligible. Including it costs at most an
     extra run.
 
-    Returns NOTHING when the corpus is readable but has nothing to mine, and
-    UNKNOWN when it cannot be read."""
-    try:
-        files = _session_files(PROJECT_LOGS, skip_live=False)
-    except Exception as exc:  # noqa: BLE001 — could not even list the logs
-        _echo(f"gate[sessions]: cannot read {PROJECT_LOGS} ({exc})")
+    Returns NOTHING when the log dir is readable and holds nothing minable, and
+    UNKNOWN when it cannot be read or none of its sessions load - a missing
+    dir usually means the probe is looking in the wrong place, not that there
+    is no work."""
+    if not os.path.isdir(PROJECT_LOGS) or not os.access(PROJECT_LOGS, os.R_OK | os.X_OK):
+        _echo(f"gate[sessions]: cannot read {PROJECT_LOGS}")
         return UNKNOWN
-    hashes = []
+    files = _session_files(PROJECT_LOGS, skip_live=False)
+    hashes, loaded = [], 0
     for f in files:
         try:
             session = load_session(f)
         except Exception:  # noqa: BLE001 — an unparseable log is not new input
             continue
+        if not session.events:  # nothing parsed out of it; not minable
+            continue
+        loaded += 1
         if not is_self_run(session):
             hashes.append(session.input_hash)
+    if files and not loaded:
+        _echo(f"gate[sessions]: none of {len(files)} session logs could be loaded")
+        return UNKNOWN
     if not hashes:
-        # Determinate: the corpus is readable and holds nothing minable.
         return NOTHING
     return hashlib.sha256("".join(sorted(hashes)).encode()).hexdigest()
 
 
-def _prs_fingerprint() -> str:
-    """Most recently touched PR (number + updatedAt). Catches a merge, a new PR, and
-    new review comments on an existing one — the three things that give the reviewer
-    roster new evidence."""
+def _prs_fingerprint() -> str | None:
+    """Most recently touched PR (number + updatedAt). Catches a merge, a new PR,
+    and new review comments on an existing one."""
     try:
         r = subprocess.run(
             ["gh", "pr", "list", "--state", "all", "--limit", "1",
              "--search", "sort:updated-desc", "--json", "number,updatedAt"],
             # gh finds the repo from its cwd. A systemd unit runs with its own
-            # WorkingDirectory, so without this the probe never finds the repo,
-            # reports unknown, and the prs gate fails open on every run.
+            # WorkingDirectory, so without this the probe never finds the repo.
             cwd=config.project_dir(),
             capture_output=True, text=True, timeout=60,
         )
@@ -474,8 +491,6 @@ def _prs_fingerprint() -> str:
         _echo(f"gate[prs]: gh failed to run ({exc})")
         return UNKNOWN
     if r.returncode != 0:
-        # Keep gh's own stderr: a permanently dead probe and a transient blip
-        # look identical once the reason is discarded.
         _echo(f"gate[prs]: gh exited {r.returncode}: {r.stderr.strip()[:200]}")
         return UNKNOWN
     out = r.stdout.strip()
@@ -497,59 +512,55 @@ def _sessions_scope() -> str:
 
 
 def cmd_gate(args: argparse.Namespace) -> int:
-    """Decide whether this run has anything to work on.
+    """Gate a nightly job on new input. Wire it as
 
-    Exit codes are the contract with systemd ``ExecCondition=``, which skips a
-    unit without marking it failed on 1-254:
+      ExecCondition=dream gate --check X --peek
+      ExecStartPost=dream gate --check X
 
-      0  run   - there is new input, or the gate could not tell
-      1  skip  - determinate: nothing new to mine
+    --peek (the condition) exits 0 to run or SKIP when there is nothing new,
+    and remembers the fingerprint it saw. Without --peek (after the job) it
+    records that remembered fingerprint as consumed and always exits 0, so a
+    successful job is never marked failed and input that arrived during the
+    run is still new tomorrow. If nothing was remembered it records the current
+    fingerprint.
 
-    Any unexpected error exits 0. An unhandled exception would exit 1, which
-    ExecCondition treats as an ordinary skip, so a broken gate would look like
-    a quiet night and skip indefinitely. A wasted run is visible; a silent
-    stall is not.
-
-    The watermark advances only with --advance, so input is recorded as seen
-    only by a run that consumed it. Wire it as
-    ``ExecCondition=dream gate --check X`` plus
-    ``ExecStartPost=dream gate --check X --advance``."""
+    Runs when it cannot tell: an unreadable corpus, a failed gh call or an
+    unreadable state file all exit 0."""
     key = args.check
-    try:
-        current = _sessions_fingerprint() if key == "sessions" else _prs_fingerprint()
+    entry = _sessions_scope() if key == "sessions" else key
+    current = _sessions_fingerprint() if key == "sessions" else _prs_fingerprint()
+    state, readable = _gate_state()
 
-        if current is UNKNOWN:
-            _echo(f"gate[{key}]: signal unavailable — failing open, run proceeds")
-            return 0
-        if current == NOTHING:
-            _echo(f"gate[{key}]: nothing to mine — skipping")
-            return 1
-
-        state, readable = _gate_state()
+    if not args.peek:
         if not readable:
-            _echo(f"gate[{key}]: state unreadable — failing open, run proceeds")
+            _echo(f"gate[{key}]: state unreadable — watermark not recorded")
             return 0
-
-        entry = _sessions_scope() if key == "sessions" else key
-        if state.get(entry) == current:
-            _echo(f"gate[{key}]: no new input since last run — skipping")
-            return 1
-
-        if args.advance:
-            state[entry] = current
-            state[f"{entry}_at"] = _now()
-            path = _gate_state_path()
-            tmp = f"{path}.tmp"
-            with open(tmp, "w") as fh:
-                json.dump(state, fh, indent=2)
-            os.replace(tmp, path)
-            _echo(f"gate[{key}]: watermark advanced")
-        _echo(f"gate[{key}]: new input since last run — run proceeds")
+        seen = state.pop(f"{entry}_pending", None) or current
+        if seen is UNKNOWN or seen == NOTHING:
+            _echo(f"gate[{key}]: nothing to record")
+            return 0
+        state[entry] = seen
+        state[f"{entry}_at"] = _now()
+        _write_gate_state(state)
+        _echo(f"gate[{key}]: watermark recorded")
         return 0
-    except Exception:  # noqa: BLE001 — see the exit-code contract above
-        _echo(f"gate[{key}]: GATE FAILED — {traceback.format_exc().strip()}")
-        _echo(f"gate[{key}]: failing open so this is visible; run proceeds")
+
+    if current is UNKNOWN:
+        _echo(f"gate[{key}]: signal unavailable — failing open, run proceeds")
         return 0
+    if current == NOTHING:
+        _echo(f"gate[{key}]: nothing to mine — skipping")
+        return SKIP
+    if not readable:
+        _echo(f"gate[{key}]: state unreadable — failing open, run proceeds")
+        return 0
+    if state.get(entry) == current:
+        _echo(f"gate[{key}]: no new input since last run — skipping")
+        return SKIP
+    state[f"{entry}_pending"] = current
+    _write_gate_state(state)
+    _echo(f"gate[{key}]: new input since last run — run proceeds")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -592,13 +603,13 @@ def main(argv: list[str] | None = None) -> int:
 
     g = sub.add_parser(
         "gate",
-        help="exit 0 = run, 1 = nothing new; --advance records the watermark",
+        help="--peek: exit 0 to run, 75 when nothing is new; without it: record the watermark",
     )
     g.add_argument("--check", choices=["sessions", "prs"], default="sessions",
                    help="sessions = new minable session content; prs = PR activity")
-    g.add_argument("--advance", action="store_true",
-                   help="record the watermark; use from ExecStartPost, after the "
-                        "run that consumed the input succeeded")
+    g.add_argument("--peek", action="store_true",
+                   help="check without recording (ExecCondition); omit it after "
+                        "the job (ExecStartPost) to record what was seen")
     g.set_defaults(func=cmd_gate)
 
     args = p.parse_args(argv)

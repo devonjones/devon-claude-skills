@@ -2,4 +2,20 @@
 # Entry point for the dream pipeline CLI. Pure-stdlib, so system python is fine.
 # Derives the target project from $DREAM_PROJECT_DIR or the current directory.
 DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# `dream gate` runs as a systemd ExecCondition, which treats every exit from 1
+# to 254 as "skip this run" without marking anything failed. So a crash, a bad
+# argument or an unknown subcommand would silently skip the job every night.
+# Only 0 (run) and 75 (deliberately nothing new) mean what they say; anything
+# else is reported and turned into 0, so the job runs and the failure shows.
+if [ "${1:-}" = "gate" ]; then
+  PYTHONPATH="$DIR" /usr/bin/env python3 -m dreamlib.cli "$@"
+  rc=$?
+  case "$rc" in
+    0|75) exit "$rc" ;;
+    *) echo "dream gate: FAILED with exit $rc - running the job anyway so this is noticed" >&2
+       exit 0 ;;
+  esac
+fi
+
 PYTHONPATH="$DIR" exec /usr/bin/env python3 -m dreamlib.cli "$@"
