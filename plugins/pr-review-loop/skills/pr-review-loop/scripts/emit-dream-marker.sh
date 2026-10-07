@@ -58,9 +58,8 @@ _emit() {
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   # Fields go in as named args and come out through $ARGS.named, so a field
-  # name is never read as a jq variable. Built as `$name` references, a field
-  # called ENV became jq's whole process environment - API keys included -
-  # written to a plaintext file, and __loc__ became a source location.
+  # name is never read as a jq variable - $ENV is the whole process environment
+  # and $__loc__ a source location.
   local jqargs=(--arg ts "$ts" --arg skill "pr-review-loop" --arg kind "$kind")
   local kv k v seen=" ts skill kind "
   for kv in "$@"; do

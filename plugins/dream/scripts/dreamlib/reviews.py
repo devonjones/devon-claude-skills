@@ -348,9 +348,8 @@ def _canonical_reviewers() -> set[str]:
         "comment-analyzer", "type-design-analyzer", "code-simplifier",
     }
     names = set(defaults)
-    # synth writes scorecards-<source>.json. A bare scorecards.json is a
-    # leftover from before that rename and is never refreshed, so reading it
-    # would mean silently reading stale names.
+    # synth writes scorecards-<source>.json. A bare scorecards.json is never
+    # refreshed, so reading it would return stale names.
     for sc in sorted(_glob.glob(os.path.join(REVIEW_OUT, "scorecards-*.json"))):
         try:
             with open(sc) as fh:

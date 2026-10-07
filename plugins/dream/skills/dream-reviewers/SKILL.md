@@ -77,7 +77,7 @@ contradicts a current decision, that is `DECISIONS.md` drift worth flagging
 Weight `taste(user)` heavily — an operator overruling a reviewer is the strongest
 signal. Keep the detailed scorecards/coverage artifacts in `~/.dream/<slug>/reviews/`
 (`SCORECARDS-<source>.md`, `COVERAGE.md`, `scorecards-<source>.json`) as backing data.
-A bare `scorecards.json` is a pre-rename leftover that is never refreshed — ignore it.
+A bare `scorecards.json` is not written by synth and goes stale — ignore it.
 
 ## 3. Promote
 

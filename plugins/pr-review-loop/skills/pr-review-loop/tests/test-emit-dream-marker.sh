@@ -62,8 +62,8 @@ run "$T/dup" pr=7 pr=8
   && ok "a repeated field is reported and the first kept" || bad "repeat handled silently: $ERR"
 
 echo "=== field names are data, never jq variables ==="
-# Referenced as $name, a field called ENV became jq's whole environment and
-# __loc__ a source location. A sentinel stands in for real secrets.
+# $ENV is jq's whole environment and $__loc__ a source location; neither may
+# reach the marker. A sentinel stands in for real secrets.
 set +e
 ERR=$(DREAM_HOME="$T/env" LEAK_SENTINEL=do-not-write-me bash "$EMIT" reviewer-finding ENV=prod __loc__=x 2>&1 >/dev/null)
 set -e

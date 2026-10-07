@@ -87,10 +87,8 @@ def test_project_slug_falls_back_when_no_common_dir(monkeypatch):
 
 
 # --- slug is identical from every worktree, in every git layout --------------
-# Keying on the worktree dir gave each worktree an orphan ~/.dream/<slug>. The
-# old fix only handled a common dir ending in /.git, so separate-git-dir and
-# submodule layouts still fell back to the worktree path. These use real git,
-# not mocks, because the bug was in what git reports, not in our string logic.
+# Every worktree must resolve to one slug, in every git layout. Real git, not
+# mocks, because what matters is what git reports.
 
 import subprocess as _sp
 
