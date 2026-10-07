@@ -87,8 +87,7 @@ def test_project_slug_falls_back_when_no_common_dir(monkeypatch):
 
 
 # --- slug is identical from every worktree, in every git layout --------------
-# Every worktree must resolve to one slug, in every git layout. Real git, not
-# mocks, because what matters is what git reports.
+# Real git, not mocks: the test depends on what git reports.
 
 import subprocess as _sp
 

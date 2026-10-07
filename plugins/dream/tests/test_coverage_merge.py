@@ -80,13 +80,14 @@ def test_readable_prior_is_merged_and_written(review_out, monkeypatch):
     assert json.loads(path.read_text(encoding="utf-8"))["total_spawns"] == 100
 
 
-def test_heading_says_which_mode_it_ran_in(review_out, monkeypatch):
-    """The heading claimed "cumulative ... merged forward" unconditionally, which
-    is false under --no-merge, and that heading is what a reader uses to decide
-    whether a zero means a quiet reviewer or a pruned window."""
+def test_heading_says_which_mode_it_ran_in(review_out, monkeypatch, capfd):
+    """The heading names the mode (merged vs LIVE WINDOW ONLY), so a reader can
+    tell a quiet reviewer from a pruned window. The summary line must agree."""
     monkeypatch.setattr(rv, "coverage_from_logs", lambda: _cov(3, 1))
     assert cli.cmd_reviews_coverage(argparse.Namespace(no_merge=True)) == 0
     assert "LIVE WINDOW ONLY" in (review_out / "COVERAGE.md").read_text(encoding="utf-8")
+    err = capfd.readouterr().err
+    assert "live window only" in err and "cumulative" not in err
 
     (review_out / "coverage.json").write_text(json.dumps(_cov(100, 9)), encoding="utf-8")
     assert cli.cmd_reviews_coverage(argparse.Namespace(no_merge=False)) == 0

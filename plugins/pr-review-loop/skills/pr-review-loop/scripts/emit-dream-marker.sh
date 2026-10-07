@@ -61,7 +61,7 @@ _emit() {
   # name is never read as a jq variable - $ENV is the whole process environment
   # and $__loc__ a source location.
   local jqargs=(--arg ts "$ts" --arg skill "pr-review-loop" --arg kind "$kind")
-  local kv k v seen=" ts skill kind "
+  local kv k v seen=" "
   for kv in "$@"; do
     case "$kv" in
       *=*) ;;

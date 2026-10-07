@@ -1,10 +1,11 @@
 """cli.py gate — the contract with systemd ExecCondition / ExecStartPost.
 
   ExecCondition=dream gate --check X --peek   -> 0 run, SKIP (75) nothing new
-  ExecStartPost=dream gate --check X          -> records what --peek saw, exit 0
+  ExecStartPost=dream gate --check X          -> records what --peek saw;
+                                                 1 only if state is unusable
 
 ExecCondition reads every exit from 1 to 254 as "skip", so a deliberate skip
-uses 75 and the `dream` wrapper turns any other failure into a loud 0.
+uses 75 and the `dream` wrapper turns any other --peek failure into a loud 0.
 """
 
 import argparse
@@ -70,9 +71,23 @@ def test_empty_log_dir_is_nothing(logs):
     assert cli.NOTHING is not cli.UNKNOWN
 
 
-def test_all_logs_unparseable_is_unknown(logs):
+def test_logs_with_no_events_are_unknown(logs):
     (logs / "bad.jsonl").write_text("{not json")
     assert cli._sessions_fingerprint() is cli.UNKNOWN
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads mode-000 files")
+def test_one_unreadable_log_makes_the_signal_unknown(logs):
+    """Skipping the unreadable one would leave only the self-run, read as
+    NOTHING, and skip the job with real input on disk."""
+    _session(logs, "a", "/dream")
+    _session(logs, "b", "real work")
+    assert cli._sessions_fingerprint() not in (cli.NOTHING, cli.UNKNOWN)  # control
+    (logs / "b.jsonl").chmod(0)
+    try:
+        assert cli._sessions_fingerprint() is cli.UNKNOWN
+    finally:
+        (logs / "b.jsonl").chmod(0o600)
 
 
 def test_self_runs_are_not_minable(logs):
@@ -144,7 +159,7 @@ def test_wrong_shape_state_runs_and_is_left_alone(home, monkeypatch):
     (home / "gate.json").write_text("[1]")
     monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "fp1")
     assert cli.cmd_gate(_args()) == 0
-    assert cli.cmd_gate(_args(peek=False)) == 0
+    assert cli.cmd_gate(_args(peek=False)) == 1  # ExecStartPost: unit failed
     assert (home / "gate.json").read_text() == "[1]"
 
 
@@ -165,14 +180,30 @@ def test_record_keeps_what_peek_saw_so_mid_run_input_stays_new(home, monkeypatch
     assert cli.cmd_gate(_args()) == 0  # the mid-run input is still new
 
 
-def test_record_never_exits_nonzero(home, monkeypatch):
-    """A non-zero ExecStartPost marks a successful job as failed."""
-    for fp in ("fp1", cli.NOTHING, cli.UNKNOWN):
-        monkeypatch.setattr(cli, "_sessions_fingerprint", lambda fp=fp: fp)
-        assert cli.cmd_gate(_args(peek=False)) == 0
+def test_record_with_nothing_pending_records_nothing(home, monkeypatch):
+    """The record step never probes: anything it saw after the job would
+    include input that arrived during the run."""
     monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "fp1")
+    assert cli.cmd_gate(_args(peek=False)) == 0
+    assert cli.cmd_gate(_args()) == 0  # fp1 was not marked consumed
+
+
+def test_unknown_peek_drops_a_pending_left_by_a_failed_job(home, monkeypatch):
+    monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "old")
+    cli.cmd_gate(_args())               # night 1: job fails, no record step
+    monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: cli.UNKNOWN)
+    assert cli.cmd_gate(_args()) == 0   # night 2: runs blind
     cli.cmd_gate(_args(peek=False))
-    assert cli.cmd_gate(_args(peek=False)) == 0  # already recorded
+    state = json.loads((home / "gate.json").read_text())
+    assert cli._sessions_scope() not in state
+
+
+def test_unwritable_state_fails_the_record_step(home, monkeypatch):
+    monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "fp1")
+    cli.cmd_gate(_args())
+    monkeypatch.setattr(cli, "_write_gate_state", lambda s: (_ for _ in ()).throw(OSError("ro")))
+    with pytest.raises(OSError):
+        cli.cmd_gate(_args(peek=False))
 
 
 def test_recording_one_check_preserves_the_other(home, monkeypatch):
@@ -181,6 +212,17 @@ def test_recording_one_check_preserves_the_other(home, monkeypatch):
     cli.cmd_gate(_args())
     cli.cmd_gate(_args(peek=False))
     assert json.loads((home / "gate.json").read_text())["prs"] == "p1"
+
+
+def test_pending_belongs_to_one_check(home, monkeypatch):
+    """Recording sessions must not consume what the prs peek saw."""
+    monkeypatch.setattr(cli, "_prs_fingerprint", lambda: "p1")
+    monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "s1")
+    cli.cmd_gate(_args("prs"))
+    cli.cmd_gate(_args())
+    cli.cmd_gate(_args(peek=False))
+    cli.cmd_gate(_args("prs", peek=False))
+    assert cli.cmd_gate(_args("prs")) == cli.SKIP
 
 
 def test_two_worktrees_get_separate_watermarks(home, monkeypatch):
@@ -242,7 +284,7 @@ def _wrapper(*args, home):
 
 
 def test_wrapper_turns_a_bad_argument_into_a_loud_run(home):
-    r = _wrapper("gate", "--check", "nonsense", home=home)
+    r = _wrapper("gate", "--check", "nonsense", "--peek", home=home)
     assert r.returncode == 0
     assert "FAILED" in r.stderr
 
@@ -255,3 +297,41 @@ def test_wrapper_passes_a_deliberate_skip_through(tmp_path, home):
                        env={**os.environ, "HOME": str(h), "DREAM_HOME": str(home)},
                        capture_output=True, text=True)
     assert r.returncode == cli.SKIP, r.stderr
+
+
+def _fake_cli(tmp_path, rc):
+    """A copy of the wrapper whose Python just exits rc."""
+    d = tmp_path / "fake"
+    (d / "dreamlib").mkdir(parents=True)
+    (d / "dreamlib" / "__init__.py").write_text("")
+    (d / "dreamlib" / "cli.py").write_text(f"raise SystemExit({rc})\n")
+    w = d / "dream"
+    w.write_text(open(DREAM).read())
+    w.chmod(0o755)
+    return str(w)
+
+
+@pytest.mark.parametrize("rc,want", [(0, 0), (75, 75), (1, 0), (2, 0), (120, 0)])
+def test_wrapper_peek_maps_every_failure_to_a_run(tmp_path, rc, want):
+    r = subprocess.run([_fake_cli(tmp_path, rc), "gate", "--check", "sessions", "--peek"],
+                       capture_output=True, text=True)
+    assert r.returncode == want
+    assert ("FAILED" in r.stderr) == (want != rc)
+
+
+def test_wrapper_record_step_passes_a_failure_through(tmp_path):
+    """ExecStartPost: non-zero marks the unit failed, which is the loud signal."""
+    r = subprocess.run([_fake_cli(tmp_path, 1), "gate", "--check", "sessions"],
+                       capture_output=True, text=True)
+    assert r.returncode == 1
+
+
+def test_a_full_stderr_does_not_turn_a_skip_into_a_run(tmp_path, home):
+    proj, h = tmp_path / "proj", tmp_path / "fakehome"
+    proj.mkdir()
+    (h / ".claude" / "projects" / str(proj).replace("/", "-")).mkdir(parents=True)
+    with open("/dev/full", "w") as full:
+        r = subprocess.run([DREAM, "gate", "--check", "sessions", "--peek"], cwd=proj,
+                           env={**os.environ, "HOME": str(h), "DREAM_HOME": str(home)},
+                           stderr=full)
+    assert r.returncode == cli.SKIP

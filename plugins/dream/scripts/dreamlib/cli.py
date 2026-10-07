@@ -13,12 +13,12 @@ session is skipped by default (it may still be appended to).
 from __future__ import annotations
 
 import argparse
+import fcntl
 import glob
 import hashlib
 import json
 import os
 import subprocess
-import sys
 import time
 from datetime import datetime, timezone
 
@@ -37,7 +37,13 @@ def _now() -> str:
 
 
 def _echo(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
+    # Unbuffered and best-effort: a full or closed stderr must not change the
+    # exit code, which is the gate's signal. A failed buffered write is
+    # retried at exit and turns a deliberate skip into exit 120.
+    try:
+        os.write(2, (msg + "\n").encode())
+    except OSError:
+        pass
 
 
 def _session_files(logs_dir: str, skip_live: bool) -> list[str]:
@@ -378,10 +384,11 @@ def cmd_reviews_coverage(args: argparse.Namespace) -> int:
         )
     with open(os.path.join(rv.REVIEW_OUT, "COVERAGE.md"), "w") as fh:
         fh.write("\n".join(lines))
+    spawns = (f"{cov['total_spawns']} spawns cumulative "
+              f"({cov['live_window_spawns']} in the live window)" if merged
+              else f"{cov['total_spawns']} spawns in the live window only")
     _echo(
-        f"reviews-coverage: {len(cov['reviewers'])} reviewers, "
-        f"{cov['total_spawns']} spawns cumulative "
-        f"({cov.get('live_window_spawns', cov['total_spawns'])} in the live window) "
+        f"reviews-coverage: {len(cov['reviewers'])} reviewers, {spawns} "
         f"→ {rv.REVIEW_OUT}/COVERAGE.md"
     )
     return 0
@@ -397,11 +404,8 @@ def cmd_reviews_harvest(args: argparse.Namespace) -> int:
 UNKNOWN: None = None    # the probe failed; nobody can say
 NOTHING = "nothing"     # the probe worked and there is nothing to mine
 
-# A deliberate "nothing new" exits SKIP. It is not 1 because Python exits 1 on
-# any uncaught exception, so a crash would read as a deliberate skip. The
-# `dream` wrapper passes 0 and SKIP through and turns every other non-zero
-# exit - a crash, a bad argument, an unknown subcommand - into 0, so a broken
-# gate runs the job loudly instead of skipping it silently.
+# A deliberate "nothing new" exits SKIP, not 1: Python exits 1 on any uncaught
+# exception, and a crash must not read as a skip.
 SKIP = 75
 
 
@@ -460,8 +464,11 @@ def _sessions_fingerprint() -> str | None:
     for f in files:
         try:
             session = load_session(f)
-        except Exception:  # noqa: BLE001 — an unparseable log is not new input
-            continue
+        except Exception as exc:  # noqa: BLE001
+            # Usually an unreadable file. Skipping it could turn real input
+            # into NOTHING and skip the job, so the whole signal is unknown.
+            _echo(f"gate[sessions]: cannot load {f} ({exc})")
+            return UNKNOWN
         if not session.events:  # nothing parsed out of it; not minable
             continue
         loaded += 1
@@ -518,26 +525,34 @@ def cmd_gate(args: argparse.Namespace) -> int:
       ExecStartPost=dream gate --check X
 
     --peek (the condition) exits 0 to run or SKIP when there is nothing new,
-    and remembers the fingerprint it saw. Without --peek (after the job) it
-    records that remembered fingerprint as consumed and always exits 0, so a
-    successful job is never marked failed and input that arrived during the
-    run is still new tomorrow. If nothing was remembered it records the current
-    fingerprint.
+    and remembers the fingerprint it saw as pending. Without --peek (after the
+    job) it records that pending fingerprint as consumed, so input that arrived
+    during the run is still new tomorrow. With nothing pending - the condition
+    could not tell what it saw - it records nothing, and the next run compares
+    against the last good watermark. It exits 1 only when the state file
+    cannot be read or written, which marks the unit failed.
 
-    Runs when it cannot tell: an unreadable corpus, a failed gh call or an
-    unreadable state file all exit 0."""
-    key = args.check
+    The condition runs when it cannot tell: an unreadable corpus, a failed gh
+    call or an unreadable state file all exit 0."""
+    # The state file is shared by every check and worktree; serialise the
+    # read-modify-write so two units finishing together don't drop an entry.
+    with open(_gate_state_path() + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _gate(args.check, args.peek)
+
+
+def _gate(key: str, peek: bool) -> int:
     entry = _sessions_scope() if key == "sessions" else key
-    current = _sessions_fingerprint() if key == "sessions" else _prs_fingerprint()
+    pending = f"{entry}_pending"
     state, readable = _gate_state()
 
-    if not args.peek:
+    if not peek:
         if not readable:
             _echo(f"gate[{key}]: state unreadable — watermark not recorded")
-            return 0
-        seen = state.pop(f"{entry}_pending", None) or current
-        if seen is UNKNOWN or seen == NOTHING:
-            _echo(f"gate[{key}]: nothing to record")
+            return 1
+        seen = state.pop(pending, None)
+        if seen is None:
+            _echo(f"gate[{key}]: nothing pending — watermark unchanged")
             return 0
         state[entry] = seen
         state[f"{entry}_at"] = _now()
@@ -545,7 +560,12 @@ def cmd_gate(args: argparse.Namespace) -> int:
         _echo(f"gate[{key}]: watermark recorded")
         return 0
 
+    current = _sessions_fingerprint() if key == "sessions" else _prs_fingerprint()
     if current is UNKNOWN:
+        # A pending value left by a job that failed is older than this run's
+        # input; recording it afterwards would mark that input consumed.
+        if readable and state.pop(pending, None) is not None:
+            _write_gate_state(state)
         _echo(f"gate[{key}]: signal unavailable — failing open, run proceeds")
         return 0
     if current == NOTHING:
@@ -557,7 +577,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
     if state.get(entry) == current:
         _echo(f"gate[{key}]: no new input since last run — skipping")
         return SKIP
-    state[f"{entry}_pending"] = current
+    state[pending] = current
     _write_gate_state(state)
     _echo(f"gate[{key}]: new input since last run — run proceeds")
     return 0
