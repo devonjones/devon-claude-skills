@@ -4,10 +4,8 @@ The live log window is pruned, so recomputing from it destroys the count. Two
 things must hold: the merge must keep the larger value, and an unreadable prior
 must stop the write rather than be logged and then overwritten.
 
-The pre-existing merge tests passed against a plain overwrite, because their
-fixture had new > old in every field and the high-water case passed an empty
-reviewer list so the loop body never ran. Every fixture here is discriminating:
-old > new, so max and overwrite give different answers.
+Fixtures use old > new, so a plain overwrite and a max-merge give different
+answers - a fixture with new > old cannot tell them apart.
 """
 
 import argparse
@@ -64,8 +62,8 @@ def review_out(tmp_path, monkeypatch):
 
 
 def test_unreadable_prior_refuses_to_write_and_leaves_the_file(review_out, monkeypatch):
-    """The whole P1: it used to log 'unreadable — not merged' and then write the
-    pruned live window over the only cumulative record."""
+    """An unreadable prior must stop the write, not be logged and then
+    overwritten with the pruned live window."""
     path = review_out / "coverage.json"
     path.write_text("{truncated", encoding="utf-8")
     monkeypatch.setattr(rv, "coverage_from_logs", lambda: _cov(1, 1))
@@ -93,3 +91,16 @@ def test_heading_says_which_mode_it_ran_in(review_out, monkeypatch):
     (review_out / "coverage.json").write_text(json.dumps(_cov(100, 9)), encoding="utf-8")
     assert cli.cmd_reviews_coverage(argparse.Namespace(no_merge=False)) == 0
     assert "merged forward" in (review_out / "COVERAGE.md").read_text(encoding="utf-8")
+
+
+def test_synth_keeps_one_file_per_source(review_out, monkeypatch):
+    """Running synth for two sources must leave both scorecards. With a shared
+    filename the second run overwrites the first, and the markers scorecard is
+    the only one carrying operator taste."""
+    monkeypatch.setattr(rv, "load_findings", lambda src: [{"reviewer": src}])
+    monkeypatch.setattr(rv, "synth", lambda f: {"reviewer_count": 1, "who": f[0]["reviewer"]})
+    monkeypatch.setattr(cli, "_render_scorecards", lambda s: s["who"])
+    for src in ("markers", "all"):
+        assert cli.cmd_reviews_synth(argparse.Namespace(source=src)) == 0
+    assert json.loads((review_out / "scorecards-markers.json").read_text())["who"] == "markers"
+    assert (review_out / "SCORECARDS-all.md").read_text() == "all"

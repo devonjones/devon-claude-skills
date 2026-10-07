@@ -213,9 +213,8 @@ def test_read_markers_enforces_kind_contract(markers_home):
 
 
 # --- roster-seeded reviewer canonicalization -------------------------------
-# Seeding the fold from the finding set alone made it source-dependent: under
-# `--source markers`, `clarity` had no `clarity-reviewer` sibling to fold onto,
-# so one reviewer scored as two rows there and one row under `--source all`.
+# The fold is seeded from the roster as well as the finding set, so a bare name
+# folds the same way whichever source ran.
 
 
 def test_canonical_map_folds_bare_name_onto_roster_name(monkeypatch):

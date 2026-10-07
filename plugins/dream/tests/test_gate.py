@@ -1,9 +1,7 @@
 """cli.py — the gate's exit-code contract with systemd ExecCondition.
 
-0 = run, 1 = nothing new, and anything we did not anticipate must still be 0.
-Every test here is paired with the mutation it is meant to catch, because a
-rewrite of cmd_gate left all 60 pre-existing tests green: the gate had no
-coverage at all, so the suite passing said nothing about it.
+0 = run, 1 = nothing new, and anything unanticipated must still be 0. Each
+test is written to fail if the behaviour it names is reverted.
 """
 
 import argparse
@@ -26,11 +24,9 @@ def home(tmp_path, monkeypatch):
 
 
 def test_nothing_to_mine_skips_rather_than_failing_open(home, monkeypatch):
-    """A readable corpus with nothing minable is a DETERMINATE answer.
-
-    Collapsing it into the probe-failed sentinel made an all-self-run corpus —
-    the steady state at 90 of 93 sessions — open the gate on every run forever.
-    """
+    """A readable corpus with nothing minable is a determinate answer. Treating
+    it as a probe failure would open the gate on every run for a corpus of only
+    self-runs."""
     monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: cli.NOTHING)
     assert cli.cmd_gate(_args()) == 1
 
@@ -79,9 +75,8 @@ def test_advance_records_then_the_same_input_skips(home, monkeypatch):
 
 
 def test_corrupt_state_is_not_overwritten(home, monkeypatch):
-    """Valid JSON of the wrong shape used to raise AttributeError (exit 1 = skip
-    forever), and treating it as an empty dict destroys the other check's
-    watermark on the next write."""
+    """Valid JSON of the wrong shape must not crash the gate (exit 1 = skip) or
+    be treated as empty, which would overwrite the other check's watermark."""
     (home / "gate.json").write_text("[1]", encoding="utf-8")
     monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "deadbeef")
     assert cli.cmd_gate(_args(advance=True)) == 0
@@ -98,11 +93,8 @@ def test_advancing_one_check_preserves_the_other(home, monkeypatch):
 
 
 def test_two_worktrees_get_separate_watermarks(home, monkeypatch):
-    """The sessions signal is computed over PROJECT_LOGS, which is per-worktree,
-    while the state file is keyed on the main checkout and shared by every
-    worktree. One watermark fed by two signals never matches, so the gate never
-    closes — reproduced on this repo's own two worktrees.
-    """
+    """The sessions signal is per-worktree while the state file is shared, so
+    each worktree needs its own watermark or the gate never closes."""
     monkeypatch.setattr(cli, "PROJECT_LOGS", "/logs/-wt-a")
     monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "a1")
     assert cli.cmd_gate(_args(advance=True)) == 0

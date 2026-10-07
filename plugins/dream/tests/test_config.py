@@ -57,8 +57,8 @@ def test_known_corpus_dedups_extra_corpus(tmp_path, monkeypatch):
 
 
 def test_project_slug_uses_main_checkout_from_worktree(monkeypatch):
-    """A linked worktree must key the SAME slug as its main checkout — otherwise
-    every worktree-based review round writes markers to an orphan dir."""
+    """A linked worktree must key the same slug as its main checkout, so its
+    markers land in the repo's one stream."""
     def fake_run(cmd, cwd=None):
         if "--git-common-dir" in cmd:
             return "/home/dev/proj/.git"

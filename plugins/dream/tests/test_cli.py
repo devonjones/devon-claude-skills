@@ -43,8 +43,8 @@ def test_cache_fresh_model_error_is_retried_not_poisoned(tmp_path):
 
 
 # --- coverage merge-forward ------------------------------------------------
-# The session-log window is pruned, so recomputing coverage each run destroys
-# history (wyrd went 1,360 spawns -> 0 with no reviewer actually going quiet).
+# The session-log window is pruned, so recomputing coverage each run would
+# lose history; the merge keeps a high-water mark.
 
 
 def test_merge_coverage_keeps_high_water_mark():

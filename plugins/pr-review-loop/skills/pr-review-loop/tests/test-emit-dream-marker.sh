@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # emit-dream-marker.sh is best-effort by contract: it must always exit 0 so it
-# can never block the review loop. It must NOT be silent about it. Before this,
-# four different write failures each returned 0 with empty stderr and no marker
-# - indistinguishable from success.
+# can never block the review loop. It must not be silent about it either, or a
+# failed write is indistinguishable from a successful one.
 #
 # So every failure case asserts BOTH halves: exit 0, and a warning on stderr.
 # And the healthy case asserts the opposite: exit 0, no warning, marker written.

@@ -91,11 +91,8 @@ def cmd_distill(args: argparse.Namespace) -> int:
         from .model import enrich as _enrich
 
         enrich = _enrich
-        # Say which box is doing the thinking. With $WYRD_OLLAMA_URL unset (an
-        # interactive run, or a cron unit missing the Environment= line) this
-        # silently defaults to localhost — which on some hosts is a weak-GPU box
-        # capped well below the intended model. Degrading quietly is worse than
-        # a loud line at the top of the run.
+        # Name the model host up front: with $WYRD_OLLAMA_URL unset it defaults
+        # to localhost, which may be much weaker than the intended host.
         if not os.environ.get("WYRD_OLLAMA_URL"):
             _echo(f"WARN: WYRD_OLLAMA_URL unset — distilling against {args.url}")
         else:
@@ -302,15 +299,12 @@ def cmd_reviews_synth(args: argparse.Namespace) -> int:
     s = rv.synth(findings)
     s["source"] = args.source
     s["generated_at"] = _now()
-    # Suffix by source: both `--source markers` and `--source all` used to write
-    # the same two filenames, so running both left only the second — the markers
-    # scorecard (the only one carrying operator taste) was silently destroyed.
-    for name, blob in (
-        (f"scorecards-{args.source}.json", json.dumps(s, indent=2)),
-        (f"SCORECARDS-{args.source}.md", _render_scorecards(s)),
-    ):
-        with open(os.path.join(rv.REVIEW_OUT, name), "w") as fh:
-            fh.write(blob)
+    # One file pair per source, so running several sources keeps each. The
+    # markers scorecard is the only one carrying operator taste.
+    with open(os.path.join(rv.REVIEW_OUT, f"scorecards-{args.source}.json"), "w") as fh:
+        json.dump(s, fh, indent=2)
+    with open(os.path.join(rv.REVIEW_OUT, f"SCORECARDS-{args.source}.md"), "w") as fh:
+        fh.write(_render_scorecards(s))
     _echo(
         f"reviews-synth: {s['reviewer_count']} scorecards "
         f"→ {rv.REVIEW_OUT}/SCORECARDS-{args.source}.md"
@@ -319,13 +313,10 @@ def cmd_reviews_synth(args: argparse.Namespace) -> int:
 
 
 def _merge_coverage(old: dict, new: dict) -> dict:
-    """Cumulative max-by-reviewer merge.
-
-    Coverage is computed from the Claude Code session-log window, which is pruned:
-    the wyrd record went 1,360 spawns → 0 across six weeks with no reviewer actually
-    going quiet. Recomputing from the live window therefore *destroys* history, and
-    a naive reader would retire a productive reviewer for showing zero. Merging
-    forward makes the count a high-water mark instead of a snapshot."""
+    """Merge coverage records, keeping each reviewer's highest counts and widest
+    seen-window. Coverage comes from the session-log window, which is pruned,
+    so a fresh computation undercounts; merging makes the count a high-water
+    mark. A reviewer absent from the new window is kept, not dropped."""
     merged: dict[str, dict] = {r["reviewer"]: dict(r) for r in old.get("reviewers", [])}
     for r in new.get("reviewers", []):
         prev = merged.get(r["reviewer"])
@@ -357,10 +348,8 @@ def cmd_reviews_coverage(args: argparse.Namespace) -> int:
             with open(path) as fh:
                 prior = json.load(fh)
         except Exception as e:  # noqa: BLE001
-            # Do NOT fall through to the write. The cumulative record is the only
-            # copy of history; the live window is recomputable at any time. The
-            # previous behaviour logged this and then wrote the pruned window
-            # over the file, which is how a 1,360-spawn record becomes zero.
+            # Never fall through to the write: this file is the only copy of
+            # cumulative history, and the live window can be recomputed.
             _echo(f"reviews-coverage: prior coverage unreadable ({e})")
             _echo(f"reviews-coverage: REFUSING to write — {path} holds the only "
                   "cumulative history and overwriting it with the live window "
@@ -404,10 +393,9 @@ def cmd_reviews_harvest(args: argparse.Namespace) -> int:
     return 0
 
 
-# Signal states. "nothing to mine" and "could not look" are different answers:
-# the first is determinate and means skip, the second means we do not know and
-# must run. Collapsing them into one sentinel made an all-self-run corpus — the
-# steady state, at 90 of 93 sessions — fail open on every run forever.
+# Signal states. "Nothing to mine" is determinate and means skip; "could not
+# look" is not, and means run. One sentinel for both would make a corpus of
+# only self-runs fail open on every run.
 UNKNOWN = None          # probe failed; we cannot say
 NOTHING = "nothing"     # probe succeeded; there is genuinely nothing to mine
 
@@ -438,16 +426,17 @@ def _gate_state() -> tuple[dict, bool]:
 
 
 def _sessions_fingerprint() -> str:
-    """Content fingerprint of the minable corpus: the sorted input_hashes of every
-    non-self-run session. Content-keyed, never mtime — dream's own reads and the
-    log pruner both touch mtimes without changing what there is to mine.
+    """Fingerprint of the minable corpus: the sorted input_hashes of every
+    non-self-run session. Keyed on content, not mtime, because dream's own reads
+    and the log pruner change mtimes without changing anything minable.
 
-    Unlike distill this does NOT skip the newest (possibly still-live) session.
-    Skipping it deadlocks: with every job gated off, no new log is ever written,
-    so the last real work session stays "newest" forever and never becomes
-    eligible. Counting it can only cost an extra run — and an extra run on a day
-    real work happened is the correct outcome. The hash changes again as the
-    session grows, which simply re-arms the gate."""
+    Includes the newest, possibly still-live, session. Excluding it would
+    deadlock the gate: with jobs gated off no new log appears, so that session
+    stays newest and never becomes eligible. Including it costs at most an
+    extra run.
+
+    Returns NOTHING when the corpus is readable but has nothing to mine, and
+    UNKNOWN when it cannot be read."""
     try:
         files = _session_files(PROJECT_LOGS, skip_live=False)
     except Exception as exc:  # noqa: BLE001 — could not even list the logs
@@ -499,40 +488,32 @@ def _prs_fingerprint() -> str:
 def _sessions_scope() -> str:
     """Which watermark the sessions signal belongs to.
 
-    The signal is computed over PROJECT_LOGS, which Claude Code keys on the CWD,
-    so it is per-WORKTREE. The state file is keyed on the main checkout, so it is
-    per-REPO and shared by every worktree. One shared watermark fed by several
-    different signals never matches, so the gate never closes: demonstrated on
-    this repo's own two worktrees, whose log dirs differ while their slug does
-    not. Keying the entry by the log dir makes the watermark's scope match the
-    signal's. Markers and coverage still aggregate per repo, which is what the
-    shared slug is for."""
+    The signal is computed over PROJECT_LOGS, which Claude Code keys on the
+    cwd, so it is per-worktree; the state file is shared by every worktree of
+    the repo. Keying the entry by the log dir gives each worktree its own
+    watermark. Comparing one worktree's signal with another's would never
+    match, and the gate would never close."""
     return f"sessions@{os.path.basename(PROJECT_LOGS)}"
 
 
 def cmd_gate(args: argparse.Namespace) -> int:
-    """Decide whether tonight's run has anything to work on.
+    """Decide whether this run has anything to work on.
 
     Exit codes are the contract with systemd ``ExecCondition=``, which skips a
-    unit WITHOUT marking it failed on 1-254:
+    unit without marking it failed on 1-254:
 
-      0  run    - there is new input, or we could not tell and must look
-      1  skip   - determinate: nothing new to mine
-      2  broken - the gate itself failed; see the log
+      0  run   - there is new input, or the gate could not tell
+      1  skip  - determinate: nothing new to mine
 
-    Two is deliberate rather than tidy. An unhandled exception exits 1 by
-    default, and ExecCondition reads 1 as an ordinary skip, so a crashing gate
-    was indistinguishable in the journal from a quiet night and would skip every
-    night forever. Anything we did not anticipate therefore exits 0 and lets the
-    run proceed: a wasted run is visible and cheap, a silent permanent stall is
-    neither.
+    Any unexpected error exits 0. An unhandled exception would exit 1, which
+    ExecCondition treats as an ordinary skip, so a broken gate would look like
+    a quiet night and skip indefinitely. A wasted run is visible; a silent
+    stall is not.
 
-    Does NOT advance the watermark unless --advance is passed. The run that
-    consumes the input is the one that should record it; advancing here meant a
-    crashed run's input was marked seen and never mined. Wire it as
+    The watermark advances only with --advance, so input is recorded as seen
+    only by a run that consumed it. Wire it as
     ``ExecCondition=dream gate --check X`` plus
-    ``ExecStartPost=dream gate --check X --advance``.
-    """
+    ``ExecStartPost=dream gate --check X --advance``."""
     key = args.check
     try:
         current = _sessions_fingerprint() if key == "sessions" else _prs_fingerprint()
@@ -611,7 +592,7 @@ def main(argv: list[str] | None = None) -> int:
 
     g = sub.add_parser(
         "gate",
-        help="0 = run, 1 = nothing new, 2 reserved; --advance records the watermark",
+        help="exit 0 = run, 1 = nothing new; --advance records the watermark",
     )
     g.add_argument("--check", choices=["sessions", "prs"], default="sessions",
                    help="sessions = new minable session content; prs = PR activity")
