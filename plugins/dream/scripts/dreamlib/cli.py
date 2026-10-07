@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import subprocess
+import traceback
 import sys
 import time
 from datetime import datetime, timezone
@@ -350,17 +351,35 @@ def cmd_reviews_coverage(args: argparse.Namespace) -> int:
     cov = rv.coverage_from_logs()
     os.makedirs(rv.REVIEW_OUT, exist_ok=True)
     path = os.path.join(rv.REVIEW_OUT, "coverage.json")
+    merged = False
     if not args.no_merge and os.path.exists(path):
         try:
             with open(path) as fh:
-                cov = _merge_coverage(json.load(fh), cov)
-        except Exception as e:  # noqa: BLE001 — a corrupt prior file must not
-            _echo(f"reviews-coverage: prior coverage unreadable ({e}) — not merged")
+                prior = json.load(fh)
+        except Exception as e:  # noqa: BLE001
+            # Do NOT fall through to the write. The cumulative record is the only
+            # copy of history; the live window is recomputable at any time. The
+            # previous behaviour logged this and then wrote the pruned window
+            # over the file, which is how a 1,360-spawn record becomes zero.
+            _echo(f"reviews-coverage: prior coverage unreadable ({e})")
+            _echo(f"reviews-coverage: REFUSING to write — {path} holds the only "
+                  "cumulative history and overwriting it with the live window "
+                  "would destroy it. Inspect or move that file, then re-run.")
+            return 1
+        cov = _merge_coverage(prior, cov)
+        merged = True
     cov["generated_at"] = _now()
-    with open(path, "w") as fh:
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as fh:
         json.dump(cov, fh, indent=2)
-    lines = ["# Reviewer firing coverage (cumulative high-water mark, merged "
-             "forward across runs — the live log window is pruned)", ""]
+    os.replace(tmp, path)
+    lines = [
+        "# Reviewer firing coverage "
+        + ("(cumulative high-water mark, merged forward across runs — the live "
+           "log window is pruned)" if merged
+           else "(THIS RUN'S LIVE WINDOW ONLY — not merged with prior history)"),
+        "",
+    ]
     lines.append(f"{cov['total_spawns']} reviewer spawns\n")
     lines.append("| reviewer | spawns | PRs | first seen | last seen |")
     lines.append("|---|--:|--:|---|---|")
@@ -385,15 +404,37 @@ def cmd_reviews_harvest(args: argparse.Namespace) -> int:
     return 0
 
 
-GATE_STATE = os.path.join(config.dream_home(), "gate.json")
+# Signal states. "nothing to mine" and "could not look" are different answers:
+# the first is determinate and means skip, the second means we do not know and
+# must run. Collapsing them into one sentinel made an all-self-run corpus — the
+# steady state, at 90 of 93 sessions — fail open on every run forever.
+UNKNOWN = None          # probe failed; we cannot say
+NOTHING = "nothing"     # probe succeeded; there is genuinely nothing to mine
 
 
-def _gate_state() -> dict:
+def _gate_state_path() -> str:
+    """Resolved per call, not at import: $DREAM_HOME is repointable by tests and
+    by callers, and importing a module should not create directories."""
+    return os.path.join(config.dream_home(), "gate.json")
+
+
+def _gate_state() -> tuple[dict, bool]:
+    """Returns (state, readable). A corrupt file is NOT an empty state — writing
+    over it would destroy the other check's watermark, and treating it as "never
+    ran" makes a corrupt file look like a quiet day."""
+    path = _gate_state_path()
+    if not os.path.exists(path):
+        return {}, True
     try:
-        with open(GATE_STATE) as fh:
-            return json.load(fh)
-    except Exception:  # noqa: BLE001 — missing/corrupt state means "never ran"
-        return {}
+        with open(path) as fh:
+            loaded = json.load(fh)
+    except Exception as exc:  # noqa: BLE001
+        _echo(f"gate: state file unreadable ({exc}) — not overwriting it")
+        return {}, False
+    if not isinstance(loaded, dict):
+        _echo(f"gate: state file is {type(loaded).__name__}, expected object — not overwriting it")
+        return {}, False
+    return loaded, True
 
 
 def _sessions_fingerprint() -> str:
@@ -407,8 +448,13 @@ def _sessions_fingerprint() -> str:
     eligible. Counting it can only cost an extra run — and an extra run on a day
     real work happened is the correct outcome. The hash changes again as the
     session grows, which simply re-arms the gate."""
+    try:
+        files = _session_files(PROJECT_LOGS, skip_live=False)
+    except Exception as exc:  # noqa: BLE001 — could not even list the logs
+        _echo(f"gate[sessions]: cannot read {PROJECT_LOGS} ({exc})")
+        return UNKNOWN
     hashes = []
-    for f in _session_files(PROJECT_LOGS, skip_live=False):
+    for f in files:
         try:
             session = load_session(f)
         except Exception:  # noqa: BLE001 — an unparseable log is not new input
@@ -416,7 +462,8 @@ def _sessions_fingerprint() -> str:
         if not is_self_run(session):
             hashes.append(session.input_hash)
     if not hashes:
-        return "unavailable"
+        # Determinate: the corpus is readable and holds nothing minable.
+        return NOTHING
     return hashlib.sha256("".join(sorted(hashes)).encode()).hexdigest()
 
 
@@ -430,38 +477,94 @@ def _prs_fingerprint() -> str:
              "--search", "sort:updated-desc", "--json", "number,updatedAt"],
             capture_output=True, text=True, timeout=60,
         )
-    except Exception:  # noqa: BLE001
-        return "unavailable"
-    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else "unavailable"
+    except Exception as exc:  # noqa: BLE001
+        _echo(f"gate[prs]: gh failed to run ({exc})")
+        return UNKNOWN
+    if r.returncode != 0:
+        # Keep gh's own stderr: a permanently dead probe and a transient blip
+        # look identical once the reason is discarded.
+        _echo(f"gate[prs]: gh exited {r.returncode}: {r.stderr.strip()[:200]}")
+        return UNKNOWN
+    out = r.stdout.strip()
+    if not out:
+        _echo("gate[prs]: gh returned no output")
+        return UNKNOWN
+    return out
+
+
+def _sessions_scope() -> str:
+    """Which watermark the sessions signal belongs to.
+
+    The signal is computed over PROJECT_LOGS, which Claude Code keys on the CWD,
+    so it is per-WORKTREE. The state file is keyed on the main checkout, so it is
+    per-REPO and shared by every worktree. One shared watermark fed by several
+    different signals never matches, so the gate never closes: demonstrated on
+    this repo's own two worktrees, whose log dirs differ while their slug does
+    not. Keying the entry by the log dir makes the watermark's scope match the
+    signal's. Markers and coverage still aggregate per repo, which is what the
+    shared slug is for."""
+    return f"sessions@{os.path.basename(PROJECT_LOGS)}"
 
 
 def cmd_gate(args: argparse.Namespace) -> int:
-    """Exit 0 when there is new input since the last passing gate, 1 when there is
-    not. Built for systemd ``ExecCondition=``, which skips the unit — without
-    marking it failed — on a 1-254 exit. A quiet day then produces no run, and so
-    no review/pending/ file for the triage job to turn into a digest.
+    """Decide whether tonight's run has anything to work on.
 
-    Fails OPEN: when the signal can't be computed (gh down, no readable logs) the
-    run proceeds, so a broken probe never silently stalls the pipeline.
+    Exit codes are the contract with systemd ``ExecCondition=``, which skips a
+    unit WITHOUT marking it failed on 1-254:
+
+      0  run    - there is new input, or we could not tell and must look
+      1  skip   - determinate: nothing new to mine
+      2  broken - the gate itself failed; see the log
+
+    Two is deliberate rather than tidy. An unhandled exception exits 1 by
+    default, and ExecCondition reads 1 as an ordinary skip, so a crashing gate
+    was indistinguishable in the journal from a quiet night and would skip every
+    night forever. Anything we did not anticipate therefore exits 0 and lets the
+    run proceed: a wasted run is visible and cheap, a silent permanent stall is
+    neither.
+
+    Does NOT advance the watermark unless --advance is passed. The run that
+    consumes the input is the one that should record it; advancing here meant a
+    crashed run's input was marked seen and never mined. Wire it as
+    ``ExecCondition=dream gate --check X`` plus
+    ``ExecStartPost=dream gate --check X --advance``.
     """
     key = args.check
-    current = _sessions_fingerprint() if key == "sessions" else _prs_fingerprint()
-    if current == "unavailable":
-        _echo(f"gate[{key}]: signal unavailable — failing open, run proceeds")
+    try:
+        current = _sessions_fingerprint() if key == "sessions" else _prs_fingerprint()
+
+        if current is UNKNOWN:
+            _echo(f"gate[{key}]: signal unavailable — failing open, run proceeds")
+            return 0
+        if current == NOTHING:
+            _echo(f"gate[{key}]: nothing to mine — skipping")
+            return 1
+
+        state, readable = _gate_state()
+        if not readable:
+            _echo(f"gate[{key}]: state unreadable — failing open, run proceeds")
+            return 0
+
+        entry = _sessions_scope() if key == "sessions" else key
+        if state.get(entry) == current:
+            _echo(f"gate[{key}]: no new input since last run — skipping")
+            return 1
+
+        if args.advance:
+            state[entry] = current
+            state[f"{entry}_at"] = _now()
+            path = _gate_state_path()
+            tmp = f"{path}.tmp"
+            with open(tmp, "w") as fh:
+                json.dump(state, fh, indent=2)
+            os.replace(tmp, path)
+            _echo(f"gate[{key}]: watermark advanced")
+        _echo(f"gate[{key}]: new input since last run — run proceeds")
         return 0
-
-    state = _gate_state()
-    if state.get(key) == current:
-        _echo(f"gate[{key}]: no new input since last run — skipping")
-        return 1
-
-    if not args.peek:
-        state[key] = current
-        state[f"{key}_at"] = _now()
-        with open(GATE_STATE, "w") as fh:
-            json.dump(state, fh, indent=2)
-    _echo(f"gate[{key}]: new input since last run — run proceeds")
-    return 0
+    except Exception:  # noqa: BLE001 — see the exit-code contract above
+        _echo(f"gate[{key}]: GATE FAILED — {traceback.format_exc().strip()}")
+        _echo(f"gate[{key}]: failing open so this is visible; run proceeds")
+        return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -502,11 +605,15 @@ def main(argv: list[str] | None = None) -> int:
     rh = sub.add_parser("reviews-harvest", help="capture durable + /tmp reviewer findings")
     rh.set_defaults(func=cmd_reviews_harvest)
 
-    g = sub.add_parser("gate", help="exit 1 when there is no new input since last run")
+    g = sub.add_parser(
+        "gate",
+        help="0 = run, 1 = nothing new, 2 reserved; --advance records the watermark",
+    )
     g.add_argument("--check", choices=["sessions", "prs"], default="sessions",
                    help="sessions = new minable session content; prs = PR activity")
-    g.add_argument("--peek", action="store_true",
-                   help="report without advancing the watermark")
+    g.add_argument("--advance", action="store_true",
+                   help="record the watermark; use from ExecStartPost, after the "
+                        "run that consumed the input succeeded")
     g.set_defaults(func=cmd_gate)
 
     args = p.parse_args(argv)
