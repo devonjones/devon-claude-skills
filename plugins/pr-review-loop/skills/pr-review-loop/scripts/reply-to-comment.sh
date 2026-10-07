@@ -11,6 +11,10 @@
 
 set -euo pipefail
 
+# Pace GitHub content creation globally - secondary limits are velocity-based.
+# shellcheck source=_pace.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_pace.sh"
+
 PR_NUMBER="${1:?Usage: reply-to-comment.sh <pr-number> <comment-id> \"reply message\" [--no-resolve]}"
 COMMENT_ID="${2:?Usage: reply-to-comment.sh <pr-number> <comment-id> \"reply message\" [--no-resolve]}"
 REPLY="${3:?Usage: reply-to-comment.sh <pr-number> <comment-id> \"reply message\" [--no-resolve]}"
@@ -103,6 +107,7 @@ fi
 
 # Post reply using REST API (the only way to reply to existing review comments)
 REPLY_POSTED=false
+pace_github
 REPLY_RESULT=$(gh api \
     --method POST \
     "repos/$REPO/pulls/$PR_NUMBER/comments/$DATABASE_ID/replies" \
@@ -129,11 +134,13 @@ REPLY_RESULT=$(gh api \
     fi
 }
 
-if [[ "$REPLY_POSTED" == "true" ]]; then
-    echo "Reply posted successfully."
-else
-    echo "Warning: Could not post reply. Will still attempt to resolve thread."
+if [[ "$REPLY_POSTED" != "true" ]]; then
+    # Never resolve a thread whose reply did not post. A resolved thread with no
+    # reply reads as handled; an open one can still be found and answered.
+    echo "ERROR: reply not posted - thread left UNRESOLVED." >&2
+    exit 1
 fi
+echo "Reply posted successfully."
 
 # Resolve the thread unless --no-resolve is specified
 if [[ "$NO_RESOLVE" != "--no-resolve" ]]; then

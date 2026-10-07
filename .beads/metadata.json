@@ -1,7 +1,7 @@
 {
   "database": "dolt",
   "backend": "dolt",
-  "dolt_mode": "server",
+  "dolt_mode": "embedded",
   "dolt_database": "devon_claude_skills",
-  "project_id": "faf6a784-bed4-4570-87a2-19a03c5a3481"
+  "project_id": "c5596bc0-367f-4904-b4ae-8d06f8ddd7fb"
 }
