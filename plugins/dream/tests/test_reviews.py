@@ -239,22 +239,18 @@ def test_canonical_map_still_folds_within_finding_set(monkeypatch):
     assert m["test-coverage"] == "test-coverage-reviewer"
 
 
-def test_roster_reviewers_reads_specs_and_headings(tmp_path, monkeypatch):
-    (tmp_path / ".reviewers").mkdir()
-    (tmp_path / ".reviewers" / "spec-reviewer.md").write_text("x", encoding="utf-8")
+def test_roster_reviewers_reads_headings(tmp_path, monkeypatch):
     (tmp_path / "AGENT-REVIEWERS.md").write_text(
         "# Agents\n\n## heading-reviewer\n\n## Not A Name\n", encoding="utf-8")
     monkeypatch.setattr(reviews.config, "git_root", lambda cwd=None: str(tmp_path))
     names = reviews.roster_reviewers()
-    assert "spec-reviewer" in names and "heading-reviewer" in names
+    assert "heading-reviewer" in names
     assert "Not A Name" not in names  # prose heading, not a reviewer slug
 
 
-# --- _canonical_reviewers reads what synth actually writes -------------------
-# synth was renamed to write scorecards-<source>.json; this reader kept opening
-# scorecards.json, which on a live box was a month-stale leftover that nothing
-# refreshes. The guard (os.path.exists) succeeded on the stale file, so the
-# reader quietly returned old names instead of failing or falling back.
+# --- _canonical_reviewers reads what synth writes ---------------------------
+# synth writes scorecards-<source>.json. A bare scorecards.json is never
+# refreshed, so reading it would silently return stale names.
 
 def _sc(path, *names):
     path.write_text(json.dumps({"scorecards": [{"reviewer": n} for n in names]}))

@@ -475,6 +475,10 @@ def _prs_fingerprint() -> str:
         r = subprocess.run(
             ["gh", "pr", "list", "--state", "all", "--limit", "1",
              "--search", "sort:updated-desc", "--json", "number,updatedAt"],
+            # gh finds the repo from its cwd. A systemd unit runs with its own
+            # WorkingDirectory, so without this the probe never finds the repo,
+            # reports unknown, and the prs gate fails open on every run.
+            cwd=config.project_dir(),
             capture_output=True, text=True, timeout=60,
         )
     except Exception as exc:  # noqa: BLE001

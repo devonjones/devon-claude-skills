@@ -122,3 +122,22 @@ def test_state_path_follows_dream_home(tmp_path, monkeypatch):
     and importing the module created a directory."""
     monkeypatch.setenv("DREAM_HOME", str(tmp_path / "x"))
     assert cli._gate_state_path().startswith(str(tmp_path / "x"))
+
+
+def test_prs_probe_runs_gh_in_the_project_dir(tmp_path, monkeypatch):
+    """gh locates the repo from its cwd. A systemd unit has its own
+    WorkingDirectory, so a probe that inherits the process cwd never finds the
+    repo, reports unknown, and the prs gate fails open on every run."""
+    monkeypatch.setenv("DREAM_PROJECT_DIR", str(tmp_path))
+    seen = {}
+
+    class R:
+        returncode, stdout, stderr = 0, '[{"number":1}]', ""
+
+    def fake_run(cmd, **kw):
+        seen["cwd"] = kw.get("cwd")
+        return R()
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    assert cli._prs_fingerprint() == '[{"number":1}]'
+    assert seen["cwd"] == str(tmp_path)

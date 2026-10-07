@@ -235,22 +235,12 @@ def _rate(num: int, den: int) -> float | None:
 
 
 def _canonical_reviewer_map(findings: list[dict]) -> dict[str, str]:
-    """Fold trailing-``-reviewer`` suffix drift so one reviewer isn't split across
-    scorecard rows. A name and that name + ``-reviewer`` are the same reviewer
-    (``-reviewer`` is a naming-convention suffix, not identity); when BOTH forms
-    appear in the finding set, canonicalize to the ``-reviewer`` form (the
-    AGENT-REVIEWERS.md convention). Folds ONLY when both variants are actually
-    present — e.g. ``test-coverage`` (7) → ``test-coverage-reviewer`` (483),
-    ``api-correctness`` ↔ ``api-correctness-reviewer`` — so genuinely-distinct
-    one-off names are never merged into a canonical they don't belong to.
-
-    The known-variant set is seeded from the ROSTER as well as from this finding
-    set. Seeding from the findings alone made the fold source-dependent: in a
-    ``--source markers`` run ``clarity`` had no ``clarity-reviewer`` sibling to
-    fold onto (the suffixed form only appears in the GitHub sample), so the same
-    reviewer scored as two rows there and one row under ``--source all`` — 80
-    scorecards for a ~30 reviewer roster. The roster is the naming authority, so
-    a bare name that matches a roster reviewer folds regardless of source."""
+    """Map each reviewer name to one canonical form, so a reviewer is not split
+    across scorecard rows. A name and that name + ``-reviewer`` are the same
+    reviewer, and the suffixed form wins. A bare name folds when its suffixed
+    form appears in this finding set OR in the repo's roster - the roster is
+    the naming authority, so the result does not depend on which source ran.
+    A bare name with no suffixed match anywhere is left as it is."""
     names = {f["reviewer"] for f in findings if f.get("reviewer")}
     known = names | roster_reviewers()
     out: dict[str, str] = {}
@@ -261,15 +251,13 @@ def _canonical_reviewer_map(findings: list[dict]) -> dict[str, str]:
 
 
 def roster_reviewers() -> set[str]:
-    """Reviewer names declared by the repo: every ``.reviewers/<name>.md`` spec and
-    every ``## <name>`` heading in an AGENT-REVIEWERS.md. Empty set when the repo
-    has no roster — callers must treat that as "no extra knowledge", never as
-    "this reviewer is unknown, drop it"."""
+    """Reviewer names declared by the repo: the ``## <name>`` headings in every
+    AGENT-REVIEWERS.md, keeping only lowercase kebab-case names (so prose
+    headings like ``## Guidelines`` drop out, though a one-word lowercase
+    heading would not). Empty when the repo has no roster - callers must treat
+    that as "no extra knowledge", never as "this reviewer is unknown"."""
     names: set[str] = set()
     root = config.git_root() or config.project_dir()
-    for spec in _glob.glob(os.path.join(root, "**", ".reviewers", "*.md"),
-                           recursive=True):
-        names.add(os.path.basename(spec)[:-3])
     for roster in _glob.glob(os.path.join(root, "**", "AGENT-REVIEWERS.md"),
                              recursive=True):
         try:
