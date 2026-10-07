@@ -72,12 +72,13 @@ def test_unreadable_prior_refuses_to_write_and_leaves_the_file(review_out, monke
     assert path.read_text(encoding="utf-8") == "{truncated"
 
 
-def test_readable_prior_is_merged_and_written(review_out, monkeypatch):
+def test_readable_prior_is_merged_and_written(review_out, monkeypatch, capfd):
     path = review_out / "coverage.json"
     path.write_text(json.dumps(_cov(100, 9)), encoding="utf-8")
     monkeypatch.setattr(rv, "coverage_from_logs", lambda: _cov(7, 2))
     assert cli.cmd_reviews_coverage(argparse.Namespace(no_merge=False)) == 0
     assert json.loads(path.read_text(encoding="utf-8"))["total_spawns"] == 100
+    assert "100 spawns cumulative (7 in the live window)" in capfd.readouterr().err
 
 
 def test_heading_says_which_mode_it_ran_in(review_out, monkeypatch, capfd):

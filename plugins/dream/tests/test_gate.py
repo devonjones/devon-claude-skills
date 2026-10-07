@@ -2,10 +2,10 @@
 
   ExecCondition=dream gate --check X --peek   -> 0 run, SKIP (75) nothing new
   ExecStartPost=dream gate --check X          -> records what --peek saw;
-                                                 1 only if state is unusable
+                                                 STATE_FAILED (74) if state is unusable
 
 ExecCondition reads every exit from 1 to 254 as "skip", so a deliberate skip
-uses 75 and the `dream` wrapper turns any other --peek failure into a loud 0.
+uses 75 and the `dream` wrapper turns any exit but 0/74/75 into a loud 0.
 """
 
 import argparse
@@ -78,8 +78,6 @@ def test_logs_with_no_events_are_unknown(logs):
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads mode-000 files")
 def test_one_unreadable_log_makes_the_signal_unknown(logs):
-    """Skipping the unreadable one would leave only the self-run, read as
-    NOTHING, and skip the job with real input on disk."""
     _session(logs, "a", "/dream")
     _session(logs, "b", "real work")
     assert cli._sessions_fingerprint() not in (cli.NOTHING, cli.UNKNOWN)  # control
@@ -159,7 +157,7 @@ def test_wrong_shape_state_runs_and_is_left_alone(home, monkeypatch):
     (home / "gate.json").write_text("[1]")
     monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "fp1")
     assert cli.cmd_gate(_args()) == 0
-    assert cli.cmd_gate(_args(peek=False)) == 1  # ExecStartPost: unit failed
+    assert cli.cmd_gate(_args(peek=False)) == cli.STATE_FAILED
     assert (home / "gate.json").read_text() == "[1]"
 
 
@@ -198,12 +196,49 @@ def test_unknown_peek_drops_a_pending_left_by_a_failed_job(home, monkeypatch):
     assert cli._sessions_scope() not in state
 
 
-def test_unwritable_state_fails_the_record_step(home, monkeypatch):
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")
+def test_an_unwritable_state_dir_fails_the_record_step(home, monkeypatch):
+    """Steady state: the lock file already exists, the peek fails open and
+    leaves nothing pending, so the record step must still notice."""
     monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "fp1")
     cli.cmd_gate(_args())
-    monkeypatch.setattr(cli, "_write_gate_state", lambda s: (_ for _ in ()).throw(OSError("ro")))
-    with pytest.raises(OSError):
+    cli.cmd_gate(_args(peek=False))
+    monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "fp2")
+    home.chmod(0o500)
+    try:
+        assert cli.cmd_gate(_args()) == 0
+        assert cli.cmd_gate(_args(peek=False)) == cli.STATE_FAILED
+    finally:
+        home.chmod(0o700)
+    assert cli.cmd_gate(_args(peek=False)) == 0  # control: writable again
+
+
+def test_every_peek_drops_a_pending_left_by_a_failed_job(home, monkeypatch):
+    for later in (cli.NOTHING, "watermark"):
+        (home / "gate.json").unlink(missing_ok=True)
+        monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "watermark")
+        cli.cmd_gate(_args())
         cli.cmd_gate(_args(peek=False))
+        monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "C")
+        cli.cmd_gate(_args())                  # job fails, no record step
+        monkeypatch.setattr(cli, "_sessions_fingerprint", lambda later=later: later)
+        assert cli.cmd_gate(_args()) == cli.SKIP
+        state = json.loads((home / "gate.json").read_text())
+        assert f"{cli._sessions_scope()}_pending" not in state, later
+
+
+def test_the_gate_waits_for_the_state_lock(home, tmp_path):
+    import fcntl
+    proj, h = tmp_path / "proj", tmp_path / "fakehome"
+    proj.mkdir()
+    (h / ".claude" / "projects" / str(proj).replace("/", "-")).mkdir(parents=True)
+    # Held shared, so the gate blocks only if it asks for an exclusive lock.
+    with open(home / "gate.json.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_SH)
+        with pytest.raises(subprocess.TimeoutExpired):
+            subprocess.run([DREAM, "gate", "--peek"], cwd=proj, timeout=2,
+                           env={**os.environ, "HOME": str(h), "DREAM_HOME": str(home)},
+                           capture_output=True)
 
 
 def test_recording_one_check_preserves_the_other(home, monkeypatch):
@@ -284,9 +319,11 @@ def _wrapper(*args, home):
 
 
 def test_wrapper_turns_a_bad_argument_into_a_loud_run(home):
-    r = _wrapper("gate", "--check", "nonsense", "--peek", home=home)
-    assert r.returncode == 0
-    assert "FAILED" in r.stderr
+    for bad in (["--check", "nonsense", "--peek"], ["--check", "nonsense"],
+                ["--pee", "--bogus"]):
+        r = _wrapper("gate", *bad, home=home)
+        assert r.returncode == 0, bad
+        assert "FAILED" in r.stderr, bad
 
 
 def test_wrapper_passes_a_deliberate_skip_through(tmp_path, home):
@@ -311,19 +348,14 @@ def _fake_cli(tmp_path, rc):
     return str(w)
 
 
-@pytest.mark.parametrize("rc,want", [(0, 0), (75, 75), (1, 0), (2, 0), (120, 0)])
-def test_wrapper_peek_maps_every_failure_to_a_run(tmp_path, rc, want):
-    r = subprocess.run([_fake_cli(tmp_path, rc), "gate", "--check", "sessions", "--peek"],
-                       capture_output=True, text=True)
+@pytest.mark.parametrize("rc,want", [(0, 0), (75, 75), (74, 74), (1, 0), (2, 0), (120, 0)])
+def test_wrapper_maps_every_unexpected_exit_to_a_run(tmp_path, rc, want):
+    # cwd matters: `python3 -m` puts it ahead of PYTHONPATH, and from
+    # plugins/dream/scripts the real dreamlib would shadow the stub.
+    r = subprocess.run([_fake_cli(tmp_path, rc), "gate", "--check", "sessions"],
+                       cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == want
     assert ("FAILED" in r.stderr) == (want != rc)
-
-
-def test_wrapper_record_step_passes_a_failure_through(tmp_path):
-    """ExecStartPost: non-zero marks the unit failed, which is the loud signal."""
-    r = subprocess.run([_fake_cli(tmp_path, 1), "gate", "--check", "sessions"],
-                       capture_output=True, text=True)
-    assert r.returncode == 1
 
 
 def test_a_full_stderr_does_not_turn_a_skip_into_a_run(tmp_path, home):

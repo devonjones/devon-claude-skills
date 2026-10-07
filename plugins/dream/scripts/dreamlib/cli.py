@@ -407,6 +407,9 @@ NOTHING = "nothing"     # the probe worked and there is nothing to mine
 # A deliberate "nothing new" exits SKIP, not 1: Python exits 1 on any uncaught
 # exception, and a crash must not read as a skip.
 SKIP = 75
+# The record step could not use the state file (EX_IOERR). The wrapper passes
+# it through so ExecStartPost marks the unit failed; --peek never returns it.
+STATE_FAILED = 74
 
 
 def _gate_state_path() -> str:
@@ -453,9 +456,9 @@ def _sessions_fingerprint() -> str | None:
     extra run.
 
     Returns NOTHING when the log dir is readable and holds nothing minable, and
-    UNKNOWN when it cannot be read or none of its sessions load - a missing
-    dir usually means the probe is looking in the wrong place, not that there
-    is no work."""
+    UNKNOWN when it cannot be read, a session fails to load, or no session has
+    any events - a missing dir usually means the probe is looking in the wrong
+    place, not that there is no work."""
     if not os.path.isdir(PROJECT_LOGS) or not os.access(PROJECT_LOGS, os.R_OK | os.X_OK):
         _echo(f"gate[sessions]: cannot read {PROJECT_LOGS}")
         return UNKNOWN
@@ -475,7 +478,7 @@ def _sessions_fingerprint() -> str | None:
         if not is_self_run(session):
             hashes.append(session.input_hash)
     if files and not loaded:
-        _echo(f"gate[sessions]: none of {len(files)} session logs could be loaded")
+        _echo(f"gate[sessions]: none of {len(files)} session logs has any events")
         return UNKNOWN
     if not hashes:
         return NOTHING
@@ -525,62 +528,74 @@ def cmd_gate(args: argparse.Namespace) -> int:
       ExecStartPost=dream gate --check X
 
     --peek (the condition) exits 0 to run or SKIP when there is nothing new,
-    and remembers the fingerprint it saw as pending. Without --peek (after the
-    job) it records that pending fingerprint as consumed, so input that arrived
-    during the run is still new tomorrow. With nothing pending - the condition
-    could not tell what it saw - it records nothing, and the next run compares
-    against the last good watermark. It exits 1 only when the state file
-    cannot be read or written, which marks the unit failed.
+    and remembers the fingerprint it saw as pending. It runs when it cannot
+    tell: an unreadable corpus, a failed gh call or an unusable state file all
+    exit 0.
 
-    The condition runs when it cannot tell: an unreadable corpus, a failed gh
-    call or an unreadable state file all exit 0."""
-    # The state file is shared by every check and worktree; serialise the
-    # read-modify-write so two units finishing together don't drop an entry.
-    with open(_gate_state_path() + ".lock", "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        return _gate(args.check, args.peek)
+    Without --peek (after the job) it records the pending fingerprint as
+    consumed, so input that arrived during the run is still new tomorrow. With
+    nothing pending it records nothing, and the next run compares against the
+    last good watermark. It exits STATE_FAILED when the state file cannot be
+    read or written, which marks the unit failed."""
+    try:
+        # The state file is shared by every check and worktree; serialise the
+        # read-modify-write so two units finishing together don't drop an entry.
+        with open(_gate_state_path() + ".lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            return _record(args.check) if not args.peek else _peek(args.check)
+    except OSError as exc:
+        _echo(f"gate[{args.check}]: state unusable ({exc})")
+        return 0 if args.peek else STATE_FAILED
 
 
-def _gate(key: str, peek: bool) -> int:
+def _keys(key: str) -> tuple[str, str]:
     entry = _sessions_scope() if key == "sessions" else key
-    pending = f"{entry}_pending"
-    state, readable = _gate_state()
+    return entry, f"{entry}_pending"
 
-    if not peek:
-        if not readable:
-            _echo(f"gate[{key}]: state unreadable — watermark not recorded")
-            return 1
-        seen = state.pop(pending, None)
-        if seen is None:
-            _echo(f"gate[{key}]: nothing pending — watermark unchanged")
-            return 0
+
+def _record(key: str) -> int:
+    entry, pending = _keys(key)
+    state, readable = _gate_state()
+    if not readable:
+        _echo(f"gate[{key}]: state unreadable — watermark not recorded")
+        return STATE_FAILED
+    seen = state.pop(pending, None)
+    if seen is None:
+        _echo(f"gate[{key}]: nothing pending — watermark unchanged")
+    else:
         state[entry] = seen
         state[f"{entry}_at"] = _now()
-        _write_gate_state(state)
         _echo(f"gate[{key}]: watermark recorded")
-        return 0
+    # Written even when unchanged: a state dir that has gone unwritable must
+    # fail the unit, not rerun the job silently every night.
+    _write_gate_state(state)
+    return 0
 
+
+def _peek(key: str) -> int:
+    entry, pending = _keys(key)
+    state, readable = _gate_state()
+    # Pending means "what this peek saw". Drop whatever an earlier peek left -
+    # its job may have failed - so the record step never marks consumed input
+    # that no peek tonight saw.
+    dirty = state.pop(pending, None) is not None
     current = _sessions_fingerprint() if key == "sessions" else _prs_fingerprint()
     if current is UNKNOWN:
-        # A pending value left by a job that failed is older than this run's
-        # input; recording it afterwards would mark that input consumed.
-        if readable and state.pop(pending, None) is not None:
-            _write_gate_state(state)
-        _echo(f"gate[{key}]: signal unavailable — failing open, run proceeds")
-        return 0
-    if current == NOTHING:
-        _echo(f"gate[{key}]: nothing to mine — skipping")
-        return SKIP
-    if not readable:
-        _echo(f"gate[{key}]: state unreadable — failing open, run proceeds")
-        return 0
-    if state.get(entry) == current:
-        _echo(f"gate[{key}]: no new input since last run — skipping")
-        return SKIP
-    state[pending] = current
-    _write_gate_state(state)
-    _echo(f"gate[{key}]: new input since last run — run proceeds")
-    return 0
+        rc, why = 0, "signal unavailable — failing open, run proceeds"
+    elif current == NOTHING:
+        rc, why = SKIP, "nothing to mine — skipping"
+    elif not readable:
+        rc, why = 0, "state unreadable — failing open, run proceeds"
+    elif state.get(entry) == current:
+        rc, why = SKIP, "no new input since last run — skipping"
+    else:
+        state[pending] = current
+        dirty = True
+        rc, why = 0, "new input since last run — run proceeds"
+    if dirty and readable:
+        _write_gate_state(state)
+    _echo(f"gate[{key}]: {why}")
+    return rc
 
 
 def main(argv: list[str] | None = None) -> int:
