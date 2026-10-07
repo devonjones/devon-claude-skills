@@ -1,12 +1,9 @@
 """cli.py gate — the contract with systemd ExecCondition / ExecStartPost.
 
   ExecCondition=dream gate --check X --peek   -> 0 run, SKIP (75) nothing new
-  ExecStartPost=dream gate --check X          -> records what --peek saw;
-                                                 STATE_FAILED (74) if state is unusable
-
-ExecCondition reads every exit from 1 to 254 as "skip", so a deliberate skip
-uses 75. The `dream` wrapper turns any other exit into a loud 0 for --peek
-and into STATE_FAILED for the record step, which fails the unit.
+  ExecStartPost=dream gate --check X          -> records what --peek saw, or
+                                                 STATE_FAILED; see the wrapper's
+                                                 comment for how exits reach systemd
 """
 
 import argparse
@@ -179,6 +176,25 @@ def test_record_keeps_what_peek_saw_so_mid_run_input_stays_new(home, monkeypatch
     assert cli.cmd_gate(_args()) == 0  # the mid-run input is still new
 
 
+def test_a_blind_run_fails_the_record_step_once(home, monkeypatch):
+    """A signal that stays unknown must not rerun the job nightly behind a
+    green unit: the job runs, the record step fails."""
+    monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: cli.UNKNOWN)
+    assert cli.cmd_gate(_args()) == 0
+    assert cli.cmd_gate(_args(peek=False)) == cli.STATE_FAILED
+    monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "fp1")
+    assert cli.cmd_gate(_args()) == 0
+    assert cli.cmd_gate(_args(peek=False)) == 0
+
+
+def test_a_later_peek_clears_a_blind_mark_left_by_a_failed_job(home, monkeypatch):
+    monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: cli.UNKNOWN)
+    cli.cmd_gate(_args())                   # night 1: blind run, job fails, no record
+    monkeypatch.setattr(cli, "_sessions_fingerprint", lambda: "fp1")
+    assert cli.cmd_gate(_args()) == 0       # night 2: the signal is back
+    assert cli.cmd_gate(_args(peek=False)) == 0
+
+
 def test_record_with_nothing_pending_records_nothing(home, monkeypatch):
     """The record step never probes: anything it saw after the job would
     include input that arrived during the run."""
@@ -319,21 +335,22 @@ def _wrapper(*args, home):
                           capture_output=True, text=True)
 
 
-@pytest.mark.parametrize("bad,want", [
-    (["--check", "nonsense", "--peek"], 0),
-    (["--pee", "--bogus"], 0),           # argparse abbreviation of --peek
-    (["--check", "nonsense"], cli.STATE_FAILED),
-    (["--chek", "sessions"], cli.STATE_FAILED),
+@pytest.mark.parametrize("bad", [
+    ["gate", "--check", "nonsense", "--peek"],
+    ["gate", "-peek"], ["gate", "--Peek"],          # peek typos without --p
+    ["gate", "--check", "prs", "--prs"],             # record typo with --p
+    ["gate", "--check", "nonsense"],
+    ["gat", "--check", "sessions", "--peek"],        # misspelt subcommand
 ])
-def test_wrapper_maps_a_bad_argument_by_hook(home, bad, want):
-    r = _wrapper("gate", *bad, home=home)
-    assert r.returncode == want
+def test_wrapper_fails_the_unit_on_any_bad_argument(home, bad):
+    r = _wrapper(*bad, home=home)
+    assert r.returncode == 255
     assert "FAILED" in r.stderr
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")
 def test_wrapper_record_step_fails_the_unit_on_unwritable_state(home):
-    """Real wrapper, real CLI: ties STATE_FAILED to the wrapper's pass-through."""
+    """Real wrapper, real CLI: STATE_FAILED reaches systemd as 255."""
     (home / "gate.json").write_text("{}")
     (home / "gate.json.lock").write_text("")
     for sub in ("digests", "review", "reviews"):
@@ -343,19 +360,24 @@ def test_wrapper_record_step_fails_the_unit_on_unwritable_state(home):
         r = _wrapper("gate", "--check", "prs", home=home)
     finally:
         home.chmod(0o700)
-    assert r.returncode == cli.STATE_FAILED == 74
-    assert "FAILED" not in r.stderr
+    assert r.returncode == 255
+    assert f"exit {cli.STATE_FAILED}" in r.stderr
 
 
-def test_a_dreamlib_in_the_cwd_does_not_shadow_the_real_one(tmp_path, home):
+@pytest.mark.parametrize("args,real", [
+    (["gate", "--check", "sessions", "--peek"], "gate[sessions]"),
+    (["stats"], "no digests yet"),
+])
+def test_a_dreamlib_in_the_cwd_does_not_shadow_the_real_one(tmp_path, home, args, real):
     plant = tmp_path / "plant"
     (plant / "dreamlib").mkdir(parents=True)
     (plant / "dreamlib" / "__init__.py").write_text("")
     (plant / "dreamlib" / "cli.py").write_text("raise SystemExit(75)\n")
-    r = subprocess.run([DREAM, "gate", "--check", "sessions", "--peek"], cwd=plant,
+    r = subprocess.run([DREAM, *args], cwd=plant,
                        env={**os.environ, "HOME": str(tmp_path), "DREAM_HOME": str(home)},
                        capture_output=True, text=True)
-    assert r.returncode == 0, r.stderr  # real gate: no log dir -> UNKNOWN -> run
+    assert r.returncode != 75, r.stderr  # the plant exits 75
+    assert real in r.stderr               # output only the real CLI prints
 
 
 def test_wrapper_passes_a_deliberate_skip_through(tmp_path, home):
@@ -374,20 +396,21 @@ def _fake_cli(tmp_path, rc):
     (d / "dreamlib").mkdir(parents=True)
     (d / "dreamlib" / "__init__.py").write_text("")
     (d / "dreamlib" / "cli.py").write_text(f"raise SystemExit({rc})\n")
+    (d / "dream_main.py").write_text(open(os.path.join(os.path.dirname(DREAM), "dream_main.py")).read())
     w = d / "dream"
     w.write_text(open(DREAM).read())
     w.chmod(0o755)
     return str(w)
 
 
-@pytest.mark.parametrize("mode,unexpected", [(["--peek"], 0), ([], 74)])
-@pytest.mark.parametrize("rc", [0, 74, 75, 1, 2, 120])
-def test_wrapper_maps_unexpected_exits_by_hook(tmp_path, mode, unexpected, rc):
-    want = rc if rc in (0, 74, 75) else unexpected
-    r = subprocess.run([_fake_cli(tmp_path, rc), "gate", "--check", "sessions", *mode],
+@pytest.mark.parametrize("args", [["gate", "--check", "sessions", "--peek"],
+                                  ["gate", "--check", "sessions"], ["stats"]])
+@pytest.mark.parametrize("rc", [0, 75, 1, 2, 74, 120])
+def test_wrapper_passes_0_and_75_and_fails_everything_else(tmp_path, args, rc):
+    r = subprocess.run([_fake_cli(tmp_path, rc), *args],
                        cwd=tmp_path, capture_output=True, text=True)
-    assert r.returncode == want
-    assert ("FAILED" in r.stderr) == (rc not in (0, 74, 75))
+    assert r.returncode == (rc if rc in (0, 75) else 255)
+    assert ("FAILED" in r.stderr) == (rc not in (0, 75))
 
 
 def test_a_full_stderr_does_not_turn_a_skip_into_a_run(tmp_path, home):

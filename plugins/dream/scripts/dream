@@ -3,28 +3,16 @@
 # Derives the target project from $DREAM_PROJECT_DIR or the current directory.
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# `dream gate` runs under two systemd hooks that read failures differently.
-#   ExecCondition (--peek): every exit from 1 to 254 means "skip", without
-#     marking anything failed, so a crash would silently skip the job every
-#     night. Unexpected exits become 0: the job runs and the failure is logged.
-#   ExecStartPost (no --peek): non-zero marks the unit failed, which is the
-#     signal wanted when the watermark was not recorded. Unexpected exits
-#     become 74 (STATE_FAILED).
-# 0 (run), 75 (deliberately nothing new) and 74 pass through. Any argument
-# starting --p is --peek or an argparse abbreviation of it - the gate has no
-# other option with that prefix - so a typo elsewhere keeps the right mode.
-# PYTHONSAFEPATH keeps a dreamlib/ in the cwd from shadowing the real one.
-export PYTHONSAFEPATH=1
-if [ "${1:-}" = "gate" ]; then
-  fail=74 what="failing the unit"
-  for a in "$@"; do case "$a" in --p*) fail=0 what="running the job anyway" ;; esac; done
-  PYTHONPATH="$DIR" /usr/bin/env python3 -m dreamlib.cli "$@"
-  rc=$?
-  case "$rc" in
-    0|74|75) exit "$rc" ;;
-    *) echo "dream gate: FAILED with exit $rc - $what so this is noticed" >&2
-       exit "$fail" ;;
-  esac
-fi
-
-PYTHONPATH="$DIR" exec /usr/bin/env python3 -m dreamlib.cli "$@"
+# `dream gate --peek` runs as a systemd ExecCondition, which reads every exit
+# from 1 to 254 as "skip" without marking anything failed - so a crash, a bad
+# argument or a misspelt subcommand would silently skip the job every night.
+# Only 0 and 75 (the gate's deliberate "nothing new") pass through; any other
+# exit becomes 255, which fails the unit under ExecCondition and is still a
+# failure anywhere else. No subcommand or hook is guessed from the arguments.
+/usr/bin/env python3 "$DIR/dream_main.py" "$@"
+rc=$?
+case "$rc" in
+  0|75) exit "$rc" ;;
+  *) echo "dream: FAILED with exit $rc - failing the unit so this is noticed" >&2
+     exit 255 ;;
+esac

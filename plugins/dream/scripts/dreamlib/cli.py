@@ -407,7 +407,7 @@ NOTHING = "nothing"     # the probe worked and there is nothing to mine
 # A deliberate "nothing new" exits SKIP, not 1: Python exits 1 on any uncaught
 # exception, and a crash must not read as a skip.
 SKIP = 75
-# The record step could not use its state file (EX_IOERR); --peek never
+# The record step could not record a watermark (EX_IOERR); --peek never
 # returns it.
 STATE_FAILED = 74
 
@@ -533,10 +533,10 @@ def cmd_gate(args: argparse.Namespace) -> int:
     exit 0.
 
     Without --peek (after the job) it records the pending fingerprint as
-    consumed, so input that arrived during the run is still new tomorrow. With
-    nothing pending it records nothing, and the next run compares against the
-    last good watermark. It exits STATE_FAILED when the state file cannot be
-    read or written, which marks the unit failed."""
+    consumed, so input that arrived during the run is still new tomorrow. It
+    exits STATE_FAILED - failing the unit - when the state file cannot be read
+    or written, or when the peek ran the job blind, so a signal that stays
+    unknown does not rerun the job every night behind a green unit."""
     try:
         # The state file is shared by every check and worktree; serialise the
         # read-modify-write so two units finishing together don't drop an entry.
@@ -560,6 +560,7 @@ def _record(key: str) -> int:
         _echo(f"gate[{key}]: state unreadable — watermark not recorded")
         return STATE_FAILED
     seen = state.pop(pending, None)
+    blind = state.pop(f"{entry}_blind", None)
     if seen is None:
         _echo(f"gate[{key}]: nothing pending — watermark unchanged")
     else:
@@ -569,6 +570,9 @@ def _record(key: str) -> int:
     # Written even when unchanged: a state dir that has gone unwritable must
     # fail the unit, not rerun the job silently every night.
     _write_gate_state(state)
+    if blind:
+        _echo(f"gate[{key}]: the job ran blind (signal unavailable at {blind})")
+        return STATE_FAILED
     return 0
 
 
@@ -579,8 +583,11 @@ def _peek(key: str) -> int:
     # its job may have failed - so the record step never marks consumed input
     # that no peek tonight saw.
     dirty = state.pop(pending, None) is not None
+    dirty = state.pop(f"{entry}_blind", None) is not None or dirty
     current = _sessions_fingerprint() if key == "sessions" else _prs_fingerprint()
     if current is UNKNOWN:
+        state[f"{entry}_blind"] = _now()
+        dirty = True
         rc, why = 0, "signal unavailable — failing open, run proceeds"
     elif current == NOTHING:
         rc, why = SKIP, "nothing to mine — skipping"
