@@ -9,6 +9,10 @@
 
 set -euo pipefail
 
+# Pace GitHub content creation globally - secondary limits are velocity-based.
+# shellcheck source=_pace.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_pace.sh"
+
 PR_NUMBER="${1:?Usage: post-line-comment.sh <pr-number> <file-path> <line-number> <agent-name> \"comment\"}"
 FILE_PATH="${2:?Usage: post-line-comment.sh <pr-number> <file-path> <line-number> <agent-name> \"comment\"}"
 LINE_NUMBER="${3:?Usage: post-line-comment.sh <pr-number> <file-path> <line-number> <agent-name> \"comment\"}"
@@ -39,6 +43,7 @@ ${COMMENT}"
 echo "Posting comment from agent '${AGENT_NAME}' on ${FILE_PATH}:${LINE_NUMBER}..."
 
 # Post the review comment using REST API
+pace_github
 RESULT=$(gh api \
     --method POST \
     "repos/${REPO}/pulls/${PR_NUMBER}/comments" \
