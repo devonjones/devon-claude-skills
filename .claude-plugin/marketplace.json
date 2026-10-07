@@ -85,6 +85,16 @@
       "author": {
         "name": "Devon Jones"
       }
+    },
+    {
+      "name": "rodney",
+      "description": "Drive Chrome from the shell with the rodney CLI: pages, clicks, waits, JS, asserts, screenshots.",
+      "version": "1.0.0",
+      "source": "./plugins/rodney",
+      "category": "productivity",
+      "author": {
+        "name": "Devon Jones"
+      }
     }
   ]
 }
