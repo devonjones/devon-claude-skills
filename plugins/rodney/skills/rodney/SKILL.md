@@ -83,7 +83,6 @@ cleans up. Within a single script, `export` is fine.
 set -e
 export RODNEY_HOME=/tmp/…/rodney
 trap "timeout 30 rodney stop || pkill -f '[/]tmp/…/rodney/chrome-data'" EXIT
-timeout 15 rodney status   # read the output; it exits 0 either way
 timeout 60 rodney start
 echo '<title>warm</title>' > $RODNEY_HOME/warm.html
 timeout 60 rodney open file://$RODNEY_HOME/warm.html   # warm-up
