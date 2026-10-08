@@ -20,7 +20,10 @@
 #   "agents": [{name, scope, source, instructions, description?, model?, color?, kind, changed_files, engine, pi_model?}, ...],
 #     # kind: "default" | "user" | "user-override"
 #     # engine: "claude" | "pi" (from # Configuration .pi); pi_model set only for "pi"
-#     # description, model, color carried only on `default` entries (from frontmatter)
+#     # model: every agent has one - frontmatter for defaults, a `model:` line in
+#     #   the first lines of a user agent's section, else "sonnet". Never absent:
+#     #   an absent model made the orchestrator spawn on its own (session) model.
+#     # description, color carried only on `default` entries (from frontmatter)
 #   "context": [{section, scope, source, content}, ...],
 #   "configuration": {
 #     "defaults_version_checked": "1.2.0" | null,
@@ -432,8 +435,9 @@ echo "$JQ_INPUT" | jq '
     # {description, model, color} from their YAML frontmatter (see
     # _load_defaults.sh). User agents come from AGENT-REVIEWERS.md markdown
     # H2 sections which have no frontmatter; their `instructions` is the
-    # full body. Consumers (the spawn template in SKILL.md) handle the
-    # absent model field by falling back to the orchestrator default.
+    # full body. A user agent names its model with a `model: <name>` line in
+    # the first five lines of its section; step 6 gives every agent without
+    # one "sonnet", so none inherits the orchestrator session model.
     ($user_agents_raw
         | map(.name as $n | . + {kind: (if ($default_agent_names | index($n)) != null then "user-override" else "user" end)})
         | map(.scope as $s | . + {changed_files: (
@@ -441,7 +445,8 @@ echo "$JQ_INPUT" | jq '
             else [$files[] | select(startswith($s | ltrimstr("/")))]
             end
           )})
-        | map({name, scope, source, instructions, kind, changed_files})
+        | map({name, scope, source, instructions, kind, changed_files,
+               model: ((.instructions | split("\n")[0:5] | map(capture("^\\s*model:\\s*(?<m>[A-Za-z0-9._:-]+)\\s*$").m) | first) // null)})
     ) as $user_agents |
 
     # ---- 6. Final merged agent list, each stamped with its engine ----
@@ -456,7 +461,9 @@ echo "$JQ_INPUT" | jq '
              elif $v == false then null
              elif $pi.all == true then $pi.model
              else null end) as $pm |
-            if $pm then . + {engine: "pi", pi_model: $pm} else . + {engine: "claude"} end)
+            if $pm then . + {engine: "pi", pi_model: $pm} else . + {engine: "claude"} end
+            # Claude reviewers default to Sonnet: never the session model.
+            | .model = (if (.model // "") == "" then "sonnet" else .model end))
     ) as $merged_agents |
 
     # ---- 7. Stale-pin check ----

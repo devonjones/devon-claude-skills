@@ -995,6 +995,39 @@ rm -rf "$repo"
 
 # ---------------------------------------------------------------------------
 # Summary
+echo
+echo "=== Every agent has a model: sonnet unless it declares one ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Agents
+
+## plain-agent
+
+Reviews things.
+
+## haiku-agent
+
+model: haiku
+Reviews cheaply.
+
+## late-model-agent
+
+Line one.
+Line two.
+Line three.
+Line four.
+Line five.
+model: opus
+EOF
+run_discover "$repo" "src/foo.py" tm
+assert_exit "exit 0" "$tm_exit" "0"
+assert_jq "no agent without a model" "$tm" '[.agents[] | select((.model // "") == "")] == []'
+assert_jq "undeclared user agent -> sonnet" "$tm" '[.agents[] | select(.name == "plain-agent") | .model] == ["sonnet"]'
+assert_jq "model: line declares a user agent's model" "$tm" '[.agents[] | select(.name == "haiku-agent") | .model] == ["haiku"]'
+assert_jq "a model: line past the first five lines is prose, not a declaration" "$tm" '[.agents[] | select(.name == "late-model-agent") | .model] == ["sonnet"]'
+assert_jq "every shipped default is on sonnet" "$tm" '[.agents[] | select(.kind == "default") | .model] | length == 6 and all(. == "sonnet")'
+rm -rf "$repo"
+
 # ---------------------------------------------------------------------------
 echo
 echo "=== Summary ==="
