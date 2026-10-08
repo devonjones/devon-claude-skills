@@ -10,7 +10,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PI_REVIEW="$SCRIPT_DIR/../scripts/pi-review.sh"
-T="$(mktemp -d)"; trap 'rm -rf -- "$T"' EXIT
+T="$(mktemp -d)"; trap 'chmod -R u+w "$T" 2>/dev/null; rm -rf -- "$T"' EXIT
 PASSED=0; FAILED=0
 ok(){ PASSED=$((PASSED+1)); echo "  PASS: $1"; }
 bad(){ FAILED=$((FAILED+1)); echo "  FAIL: $1"; }
@@ -63,7 +63,10 @@ GH
 cat > "$T/bin/docker" <<'DOCKER'
 #!/usr/bin/env bash
 case "$1" in
-  run) echo run >> "$DOCKER_LOG"; printf '%s\n' "$*" >> "$DOCKER_LOG.args"; printf '%s' "$FAKE_PI_OUT"; exit "${FAKE_PI_RC:-0}" ;;
+  run) echo run >> "$DOCKER_LOG"; printf '%s\n' "$*" >> "$DOCKER_LOG.args"
+       if [[ -n "${FAKE_LOCK_SCRATCH:-}" ]]; then   # leave the wrapper an unremovable scratch dir
+           w="$(tr ' ' '\n' <<<"$*" | sed -n 's|:/work$||p')"; mkdir -p "$w/locked/x"; chmod 500 "$w/locked"; fi
+       printf '%s' "$FAKE_PI_OUT"; exit "${FAKE_PI_RC:-0}" ;;
   *)   exit 0 ;;
 esac
 DOCKER
@@ -73,6 +76,7 @@ chmod +x "$T/bin/gh" "$T/bin/docker"
 run(){ : > "$T/gh.log"; rm -f "$T/gh.log.headread"; : > "$T/docker.log"; : > "$T/docker.log.args"; set +e
   OUT=$(cd "$REPO" && PATH="$T/bin:$PATH" GH_LOG="$T/gh.log" DOCKER_LOG="$T/docker.log" \
         FAKE_HEAD="${FAKE_HEAD:-$SHA}" FAKE_PI_OUT="${2:-}" FAKE_HEAD_AFTER="${FAKE_HEAD_AFTER:-}" FAKE_DIFF_FAIL="${FAKE_DIFF_FAIL:-}" \
+        FAKE_LOCK_SCRATCH="${FAKE_LOCK_SCRATCH:-}" \
         PR_REVIEW_LOOP_TEST_CHANGED_FILES=$'src/a.py\nsrc/b.py' \
         PR_REVIEW_LOOP_PACE_S=0 PR_REVIEW_LOOP_PACE_DIR="$T/pace" DREAM_HOME="$T/dream" \
         DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY-k}" \
@@ -124,6 +128,7 @@ FAKE_POST_FAIL=1 run pi-agent "${fence}json
 {\"findings\": [{\"severity\": \"P3\", \"file\": \"src/b.py\", \"line\": 1, \"title\": \"t\", \"body\": \"b\"}], \"reopens\": []}
 ${fence}"
 [[ "$RC" -eq 4 && "$OUT" == *"FAILED | src/b.py:1"* ]] && ok "exit 4 with FAILED line" || bad "rc=$RC out=$OUT"
+[[ "$OUT" != *"No issues found"* ]] && ok "a failed post never reads as No issues found" || bad "out=$OUT"
 
 echo "=== the head moves while Pi runs: nothing is posted ==="
 FAKE_HEAD_AFTER=1111111111111111111111111111111111111111 run pi-agent "${fence}json
@@ -178,6 +183,16 @@ echo "=== a failed setup step is exit 1, not its own code ==="
 FAKE_DIFF_FAIL=1 run pi-agent ""
 [[ "$RC" -eq 1 ]] && ok "gh pr diff exiting 4 -> exit 1 (not 'post failed')" || bad "rc=$RC"
 
+echo "=== cleanup cannot change the outcome ==="
+: > "$T/dream/markers/pr-review-loop.jsonl"
+FAKE_LOCK_SCRATCH=1 run pi-agent "${fence}json
+{\"findings\": [], \"reopens\": []}
+${fence}"
+[[ "$RC" -eq 0 && "$OUT" == "No issues found" ]] && grep -q 'could not remove' "$T/err" \
+    && ok "unremovable scratch dir: still exit 0, with a warning" || bad "rc=$RC out=$OUT err=$(tail -2 "$T/err")"
+jq -e 'select(.status == "reported" and .exit == "0")' "$T/dream/markers/pr-review-loop.jsonl" >/dev/null \
+    && ok "firing marker still written" || bad "marker: $(cat "$T/dream/markers/pr-review-loop.jsonl")"
+
 echo "=== setup refusals ==="
 run claude-agent ""
 [[ "$RC" -eq 1 ]] && ok "agent not on the pi engine -> exit 1" || bad "rc=$RC"
@@ -193,6 +208,11 @@ cfg '{"pi": {"agents": {"x": "openai/gpt-5-mini"}}}' && ok "per-agent model stri
 cfg '{"pi": {"agents": {"x": "qwen3.8-max"}}}' && bad "model with no provider accepted" || ok "model with no provider rejected"
 cfg '{"pi": {"agents": {"x": "/x/"}}}' && bad "/x/ accepted" || ok "/x/ rejected"
 cfg '{"pi": {"model": "nope"}}' && bad ".model with no provider accepted" || ok ".model with no provider rejected"
+# Each guard must reject with its own message, not by tripping a later jq error.
+cfgerr(){ printf '# Configuration\n\n```json\n%s\n```\n' "$1" > "$T/cfg.md"; bash "$PARSE" "$T/cfg.md" 2>&1 >/dev/null; }
+[[ "$(cfgerr '{"pi": 5}')" == *"must be an object (got number)"* ]] && ok "non-object pi rejected by its guard" || bad "msg: $(cfgerr '{"pi": 5}')"
+[[ "$(cfgerr '{"pi": {"all": "yes", "model": "a/b"}}')" == *".all must be a boolean"* ]] && ok "non-boolean .all rejected by its guard" || bad "msg: $(cfgerr '{"pi": {"all": "yes"}}')"
+[[ "$(cfgerr '{"pi": {"agents": ["a/b"]}}')" == *".agents must be an object"* ]] && ok "non-object .agents rejected by its guard" || bad "msg: $(cfgerr '{"pi": {"agents": ["a/b"]}}')"
 ROUTE="$(cd "$REPO" && sed -i 's/"agents": {"pi-agent": true}/"all": true, "agents": {"claude-agent": false}/' AGENT-REVIEWERS.md \
     && PR_REVIEW_LOOP_TEST_CHANGED_FILES=src/a.py bash "$SCRIPT_DIR/../scripts/discover-agents.sh" 0 2>/dev/null \
     | jq -c '[.agents[] | {name, engine, pi_model}] | sort_by(.name)')"
@@ -204,5 +224,10 @@ ROUTE="$(cd "$REPO" && sed -i 's/"all": true, "agents": {"claude-agent": false}/
     | jq -c '[.agents[] | {name, engine, pi_model}] | sort_by(.name)')"
 [[ "$ROUTE" == '[{"name":"claude-agent","engine":"claude","pi_model":null},{"name":"pi-agent","engine":"pi","pi_model":"openai/gpt-5-mini"}]' ]] \
     && ok "a per-agent model string routes that agent, overriding .model" || bad "routing: $ROUTE"
+
+UNKNOWN="$(cd "$REPO" && sed -i 's/"agents": {"pi-agent": "openai\/gpt-5-mini"}/"agents": {"pi-agent": "openai\/gpt-5-mini", "ghost-agent": true}/' AGENT-REVIEWERS.md \
+    && PR_REVIEW_LOOP_TEST_CHANGED_FILES=src/a.py bash "$SCRIPT_DIR/../scripts/discover-agents.sh" 0 2>/dev/null \
+    | jq -c '.configuration.pi_agents_unknown')"
+[[ "$UNKNOWN" == '["ghost-agent"]' ]] && ok "pi.agents naming no roster agent shows in pi_agents_unknown" || bad "pi_agents_unknown: $UNKNOWN"
 
 echo ""; echo "Passed: $PASSED  Failed: $FAILED"; [[ "$FAILED" -eq 0 ]]

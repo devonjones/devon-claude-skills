@@ -13,7 +13,7 @@
 #
 # Exit codes - only 0 means the reviewer REPORTED:
 #   0  reported; every finding and reopen was posted
-#   1  setup failed (args, roster, docker, model key, gh, git)
+#   1  setup or internal failure (args, roster, docker, model key, gh, git, jq)
 #   2  the PR head is not <dispatch-sha>; nothing was posted
 #   3  Pi produced no valid report (crash, timeout, provider error, bad JSON)
 #   4  not reported: at least one post failed (manifest lists FAILED lines)
@@ -27,9 +27,9 @@
 # account-specific endpoints such as an Alibaba workspace URL).
 
 set -euo pipefail
-# Any unhandled failure is a setup failure (exit 1), never a stray code that
-# reads as "head moved" (2) or "post failed" (4).
-trap 'echo "Error: setup step failed (line $LINENO)" >&2; exit 1' ERR
+# Any unhandled failure exits 1, never a stray code that reads as "head
+# moved" (2) or "post failed" (4).
+trap 'echo "Error: unexpected failure at line $LINENO" >&2; exit 1' ERR
 
 USAGE="Usage: pi-review.sh <pr-number> <agent-name> <dispatch-sha>"
 PR="${1:?$USAGE}"
@@ -47,12 +47,14 @@ CONTAINER="pi-review-$$-$RANDOM"
 MODEL="" STATUS="failed" POSTED=0
 finish() {
     local rc=$?
-    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-    rm -rf -- "$T"
+    # Cleanup must never change the outcome: no ERR trap, no errexit here.
+    trap - ERR; set +e
+    docker rm -f "$CONTAINER" >/dev/null 2>&1
     # Firing marker: a Bash-run reviewer leaves no Task description for dream
     # to mine, so this is its only record of having fired.
     "$SCRIPT_DIR/emit-dream-marker.sh" reviewer-fired pr="$PR" reviewer="$AGENT" \
-        engine=pi model="$MODEL" sha="$SHA" status="$STATUS" exit="$rc" posted="$POSTED" || true
+        engine=pi model="$MODEL" sha="$SHA" status="$STATUS" exit="$rc" posted="$POSTED"
+    rm -rf -- "$T" 2>/dev/null || echo "Warning: could not remove $T" >&2
     exit "$rc"
 }
 trap finish EXIT
@@ -157,18 +159,15 @@ report; anything outside it is discarded.
 EOF
 
 # ---- run Pi ----
-trap - ERR   # Pi's own exit is judged below, not as a setup failure
-set +e
+# Pi's own exit is judged below; `|| PI_RC=$?` keeps it out of the ERR trap.
+PI_RC=0
 timeout -k 30 "$TIMEOUT" docker run --rm --name "$CONTAINER" \
     --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
     --memory 4g --pids-limit 512 \
     "${DOCKER_ENV[@]}" \
     -v "$T/work:/work" -v "$T/review:/review:ro" -w /work \
     "$IMAGE" -p --no-session --model "$MODEL" @/review/prompt.md \
-    > "$T/pi.out" 2> "$T/pi.err"
-PI_RC=$?
-set -e
-trap 'echo "Error: setup step failed (line $LINENO)" >&2; exit 1' ERR
+    > "$T/pi.out" 2> "$T/pi.err" || PI_RC=$?
 
 # ---- parse: the last ```json block, strictly shaped ----
 REPORT="$(awk '/^```json[[:space:]]*$/ {buf=""; inb=1; next}
@@ -229,7 +228,7 @@ $(jq -r .body <<<"$f")
     fi
 done < <(jq -c '.findings[]' <<<"$REPORT")
 
-# Nothing posted (every finding dropped, or none) still answers the contract.
-if [[ "$POSTED" -eq 0 && "$(jq '.reopens | length' <<<"$REPORT")" -eq 0 ]]; then echo "No issues found"; fi
+# Nothing posted, failed or reopened (every finding dropped, or none at all).
+if [[ "$POSTED" -eq 0 && "$FAILS" -eq 0 && "$(jq '.reopens | length' <<<"$REPORT")" -eq 0 ]]; then echo "No issues found"; fi
 STATUS="reported"
 [[ "$FAILS" -eq 0 ]] || { STATUS="post-failed"; exit 4; }
