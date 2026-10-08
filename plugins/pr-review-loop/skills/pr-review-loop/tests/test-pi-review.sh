@@ -182,6 +182,11 @@ PI_CODING_AGENT_DIR="$T/pi-home" run pi-agent
 grep -q -- "-v $T/pi-home/models.json:/opt/pi-agent/models.json:ro" "$T/docker.log.args" \
     && ok "host models.json mounted read-only" || bad "args: $(cat "$T/docker.log.args")"
 grep -q 'auth.json' "$T/docker.log.args" && bad "auth.json mounted" || ok "auth.json never mounted"
+echo '{"providers": {"zai-payg": {"apiKey": "ZAI_API_KEY", "models": [{"id": "glm-5.1"}]}}}' > "$T/pi-home/models.json"
+says zai-payg/glm-5.1 "$(report "$EMPTY")"
+PI_CODING_AGENT_DIR="$T/pi-home" run pi-agent --model zai-payg/glm-5.1
+[[ "$RC" -eq 0 ]] && grep -q -- '-e ZAI_API_KEY ' "$T/docker.log.args" \
+    && ok "custom provider's key variable comes from models.json" || bad "rc=$RC args: $(cat "$T/docker.log.args")"
 
 echo "=== a moved head stops before Pi runs ==="
 FAKE_HEAD=0000000000000000000000000000000000000000 run pi-agent

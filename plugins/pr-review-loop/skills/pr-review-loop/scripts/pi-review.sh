@@ -191,6 +191,9 @@ exhausted() {   # true while <provider> is inside its exhausted TTL
     [[ -f "$f" ]] && (( $(date +%s) - $(stat -c %Y "$f") < EXHAUSTED_TTL ))
 }
 
+MODELS_JSON="${PI_REVIEW_MODELS_JSON:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/models.json}"
+[[ -n "${PI_REVIEW_MODELS_JSON:-}" || -r "$MODELS_JSON" ]] || MODELS_JSON=""
+
 # ---- run the chain ----
 REPORT="" USAGE_JSON="" SECS=0
 for MODEL in "${CHAIN[@]}"; do
@@ -209,15 +212,17 @@ for MODEL in "${CHAIN[@]}"; do
         [[ -r "$PI_REVIEW_ENV_FILE" ]] || { echo "Error: PI_REVIEW_ENV_FILE not readable: $PI_REVIEW_ENV_FILE" >&2; exit 1; }
         DOCKER_ENV=(--env-file "$PI_REVIEW_ENV_FILE")
     else
-        KEY_VAR="$(key_var "$PROVIDER")"
+        # A custom provider names its key variable in models.json (zai-payg can
+        # reuse ZAI_API_KEY); built-in providers follow Pi's naming.
+        KEY_VAR="$(jq -r --arg p "$PROVIDER" '.providers[$p].apiKey // empty' \
+            "${MODELS_JSON:-$SCRIPT_DIR/../pi/models.json}" 2>/dev/null || true)"
+        [[ "$KEY_VAR" =~ ^[A-Z_][A-Z0-9_]*$ ]] || KEY_VAR="$(key_var "$PROVIDER")"
         if [[ -z "${!KEY_VAR:-}" ]]; then
             echo "Skipping $MODEL: $KEY_VAR is not set" >&2
             TRIED+=("$MODEL:no-key"); continue
         fi
         DOCKER_ENV=(-e "$KEY_VAR")   # name only: the value never reaches argv
     fi
-    MODELS_JSON="${PI_REVIEW_MODELS_JSON:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/models.json}"
-    [[ -n "${PI_REVIEW_MODELS_JSON:-}" || -r "$MODELS_JSON" ]] || MODELS_JSON=""
     if [[ -n "$MODELS_JSON" ]]; then
         [[ -r "$MODELS_JSON" ]] || { echo "Error: PI_REVIEW_MODELS_JSON not readable: $MODELS_JSON" >&2; exit 1; }
         # Only models.json: auth.json can hold /login subscription tokens, and
