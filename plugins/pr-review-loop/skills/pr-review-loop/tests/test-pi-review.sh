@@ -102,7 +102,7 @@ run(){ : > "$T/gh.log"; : > "$T/docker.log"; : > "$T/docker.log.args"; set +e
         FAKE_HEAD="${FAKE_HEAD:-$SHA}" FAKE_FIRST="$SHA" \
         PR_REVIEW_LOOP_TEST_CHANGED_FILES=$'src/a.py\nsrc/b.py' \
         PI_REVIEW_CACHE_DIR="$T/cache" DREAM_HOME="$T/dream" PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$T/no-pi}" \
-        PRIOR_SEEN="${PRIOR_SEEN:-/dev/null}" \
+        PRIOR_SEEN="${PRIOR_SEEN:-/dev/null}" CLAUDE_LOG="${CLAUDE_LOG:-/dev/null}" FAKE_CLAUDE_NOREPORT="${FAKE_CLAUDE_NOREPORT:-}" \
         ZAI_API_KEY="${ZAI_API_KEY-k}" GEMINI_API_KEY="${GEMINI_API_KEY-k}" DEEPSEEK_API_KEY=k \
         bash "$PI_REVIEW" 42 "$1" "$SHA" "${@:2}" 2>"$T/err"); RC=$?; set -e; }
 ran(){ paste -sd' ' "$T/docker.log"; }
@@ -216,6 +216,27 @@ export -n PRIOR_SEEN 2>/dev/null || true
 mv -f "$T/bin/docker-real" "$T/bin/docker"
 run claude-agent --prior "$T/prior.txt"
 [[ "$RC" -eq 1 ]] && ok "--prior without --replay -> exit 1" || bad "rc=$RC"
+
+echo "=== --replay with a claude entry runs headless Claude Code on the subscription ==="
+cat > "$T/bin/claude" <<'CL'
+#!/usr/bin/env bash
+{ echo "key=${ANTHROPIC_API_KEY-unset}"; printf '%s\n' "$*"; } > "$CLAUDE_LOG"
+[[ -n "${FAKE_CLAUDE_NOREPORT:-}" ]] && { echo '{"result": "looks fine", "usage": {}}'; exit 0; }
+echo '{"structured_output": {"findings": [{"severity": "P2", "file": "src/a.py", "line": 1, "title": "t", "body": "b"}], "reopens": []},
+       "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 100, "cache_creation_input_tokens": 0},
+       "total_cost_usd": 0.03}'
+CL
+chmod +x "$T/bin/claude"
+ANTHROPIC_API_KEY=sk-should-not-be-used CLAUDE_LOG="$T/claude.log" run claude-agent --replay --model claude:haiku
+[[ "$RC" -eq 0 ]] && jq -e '.model == "claude:haiku" and .usage.billing == "subscription" and (.report.findings | length) == 1' <<<"$OUT" >/dev/null \
+    && ok "claude:haiku replay reports through structured output" || bad "rc=$RC out=$OUT err=$(tail -3 "$T/err")"
+grep -q '^key=unset$' "$T/claude.log" && ok "ANTHROPIC_API_KEY unset: billed to the subscription" || bad "claude saw: $(head -1 "$T/claude.log")"
+grep -q -- '--model haiku' "$T/claude.log" && grep -q 'Bash(gh \*)' "$T/claude.log" \
+    && ok "right model, gh blocked" || bad "args: $(tail -1 "$T/claude.log")"
+[[ ! -s "$T/docker.log" ]] && ok "no docker for a claude replay" || bad "docker ran: $(ran)"
+CLAUDE_LOG="$T/claude.log" FAKE_CLAUDE_NOREPORT=1 run claude-agent --replay --model claude
+[[ "$RC" -eq 3 ]] && ok "no structured report -> exit 3" || bad "rc=$RC"
+grep -q -- '--model sonnet' "$T/claude.log" && ok "bare claude falls back to sonnet for an agent with no model" || bad "args: $(tail -1 "$T/claude.log")"
 
 echo "=== setup refusals ==="
 run claude-agent

@@ -23,6 +23,9 @@
 # --replay: review a historical commit for eval-reviewer.sh. No head check; the
 # diff is the PR's base..<sha>, computed locally. Prior comments come from
 # --prior <file> (the agent's threads as they stood at that commit), else none.
+# In a replay, "claude" / "claude:<model>" runs headless Claude Code on your
+# subscription (ANTHROPIC_API_KEY unset) in the same scratch copy - the harness
+# a live round's Claude Task uses - reporting through --json-schema output.
 #
 # Exit codes - only 0 means the reviewer REPORTED:
 #   0  report on stdout
@@ -193,9 +196,53 @@ exhausted() {   # true while <provider> is inside its exhausted TTL
 MODELS_JSON="${PI_REVIEW_MODELS_JSON:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/models.json}"
 [[ -n "${PI_REVIEW_MODELS_JSON:-}" || -r "$MODELS_JSON" ]] || MODELS_JSON=""
 
+# Headless Claude Code for a replay: same scratch copy, same prompt with
+# host paths, structured output instead of the Pi review tools.
+claude_replay() {
+    local cm="${MODEL#claude}"; cm="${cm#:}"; cm="${cm:-$(jq -r '.model // empty' <<<"$AGENT_JSON")}"
+    command -v claude >/dev/null || { echo "Error: claude CLI not found" >&2; return 1; }
+    git -C "$T/work" reset -q --hard && git -C "$T/work" clean -qfdx
+    sed -e "s|/review/|$T/review/|g" -e "s|^/work (your cwd)|Your working directory|" \
+        -e '/^3\. Report through your tools/,$d' "$T/review/prompt.md" > "$T/review/prompt-claude.md"
+    printf '%s\n' '3. Return your report as the structured output: every finding (severity P1|P2|P3, a file' \
+        '   from your scope, a line in the new file inside a diff hunk, title, body) and every' \
+        '   reopen (comment_id from prior-comments.txt, reason). Empty lists if nothing to report.' \
+        >> "$T/review/prompt-claude.md"
+    local schema='{"type":"object","additionalProperties":false,"required":["findings","reopens"],"properties":{
+      "findings":{"type":"array","items":{"type":"object","additionalProperties":false,
+        "required":["severity","file","line","title","body"],"properties":{"severity":{"enum":["P1","P2","P3"]},
+        "file":{"type":"string"},"line":{"type":"integer","minimum":1},"title":{"type":"string","minLength":1},
+        "body":{"type":"string","minLength":1}}}},
+      "reopens":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["comment_id","reason"],
+        "properties":{"comment_id":{"type":"integer"},"reason":{"type":"string","minLength":1}}}}}}'
+    local START=$SECONDS rc
+    set +e
+    (cd "$T/work" && env -u ANTHROPIC_API_KEY timeout -k 30 "$TIMEOUT" claude -p --model "${cm:-sonnet}" \
+        --no-session-persistence --output-format json --permission-mode acceptEdits \
+        --allowedTools "Read Grep Glob Bash Edit Write" --disallowedTools "Bash(gh *)" "Bash(git push*)" "Bash(curl *)" \
+        --add-dir "$T/review" --json-schema "$schema" < "$T/review/prompt-claude.md" > "$T/claude.out" 2> "$T/claude.err")
+    rc=$?
+    set -e
+    SECS=$((SECONDS - START)); TRIED+=("$MODEL")
+    REPORT="$(jq -ce '.structured_output | select(type == "object" and (.findings | type == "array"))
+        | .reopens //= []' "$T/claude.out" 2>/dev/null)" || REPORT=""
+    if [[ -z "$REPORT" ]]; then
+        echo "Error: $MODEL produced no structured report (claude exit $rc; 124 = timeout after ${TIMEOUT}s)" >&2
+        tail -n 20 "$T/claude.err" >&2; jq -r '.result // empty' "$T/claude.out" 2>/dev/null | tail -n 20 >&2
+        return 1
+    fi
+    USAGE_JSON="$(jq -c '{input: (.usage.input_tokens // 0), output: (.usage.output_tokens // 0),
+        cacheRead: (.usage.cache_read_input_tokens // 0), cacheWrite: (.usage.cache_creation_input_tokens // 0),
+        usd: (.total_cost_usd // 0), billing: "subscription"}' "$T/claude.out")"
+}
+
 # ---- run the chain ----
 REPORT="" USAGE_JSON="" SECS=0
 for MODEL in "${CHAIN[@]}"; do
+    if [[ ( "$MODEL" == claude || "$MODEL" == claude:* ) && "$REPLAY" == true ]]; then
+        claude_replay && break
+        exit 3
+    fi
     if [[ "$MODEL" == claude || "$MODEL" == claude:* ]]; then
         echo "Chain reached $MODEL after: ${TRIED[*]:-nothing} - spawn the Claude Task" >&2
         jq -nc --arg m "${MODEL#claude}" '{fallback: "claude", model: ($m | ltrimstr(":"))}'
