@@ -170,10 +170,12 @@ timeout -k 30 "$TIMEOUT" docker run --rm --name "$CONTAINER" \
     > "$T/pi.out" 2> "$T/pi.err" || PI_RC=$?
 
 # ---- parse: the last ```json block, strictly shaped ----
+# A block still open at the end (output cut off) is no report, never a
+# fallback to an earlier closed block such as an example the model wrote.
 REPORT="$(awk '/^```json[[:space:]]*$/ {buf=""; inb=1; next}
                inb && /^```[[:space:]]*$/ {last=buf; inb=0; next}
                inb {buf = buf $0 "\n"}
-               END {printf "%s", last}' "$T/pi.out" \
+               END {if (inb) last = ""; printf "%s", last}' "$T/pi.out" \
     | jq -ce '
         def finding: (.severity | IN("P1","P2","P3")) and (.file | type == "string")
             and (.line | type == "number" and . > 0 and floor == .)

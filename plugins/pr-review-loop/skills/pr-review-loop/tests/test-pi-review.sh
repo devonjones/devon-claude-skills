@@ -67,6 +67,7 @@ case "$1" in
        if [[ -n "${FAKE_LOCK_SCRATCH:-}" ]]; then   # leave the wrapper an unremovable scratch dir
            w="$(tr ' ' '\n' <<<"$*" | sed -n 's|:/work$||p')"; mkdir -p "$w/locked/x"; chmod 500 "$w/locked"; fi
        printf '%s' "$FAKE_PI_OUT"; exit "${FAKE_PI_RC:-0}" ;;
+  rm)  [[ -n "${FAKE_DOCKER_RM_FAIL:-}" ]] && exit 1; exit 0 ;;
   *)   exit 0 ;;
 esac
 DOCKER
@@ -76,7 +77,7 @@ chmod +x "$T/bin/gh" "$T/bin/docker"
 run(){ : > "$T/gh.log"; rm -f "$T/gh.log.headread"; : > "$T/docker.log"; : > "$T/docker.log.args"; set +e
   OUT=$(cd "$REPO" && PATH="$T/bin:$PATH" GH_LOG="$T/gh.log" DOCKER_LOG="$T/docker.log" \
         FAKE_HEAD="${FAKE_HEAD:-$SHA}" FAKE_PI_OUT="${2:-}" FAKE_HEAD_AFTER="${FAKE_HEAD_AFTER:-}" FAKE_DIFF_FAIL="${FAKE_DIFF_FAIL:-}" \
-        FAKE_LOCK_SCRATCH="${FAKE_LOCK_SCRATCH:-}" \
+        FAKE_LOCK_SCRATCH="${FAKE_LOCK_SCRATCH:-}" FAKE_DOCKER_RM_FAIL="${FAKE_DOCKER_RM_FAIL:-}" \
         PR_REVIEW_LOOP_TEST_CHANGED_FILES=$'src/a.py\nsrc/b.py' \
         PR_REVIEW_LOOP_PACE_S=0 PR_REVIEW_LOOP_PACE_DIR="$T/pace" DREAM_HOME="$T/dream" \
         DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY-k}" \
@@ -192,6 +193,23 @@ ${fence}"
     && ok "unremovable scratch dir: still exit 0, with a warning" || bad "rc=$RC out=$OUT err=$(tail -2 "$T/err")"
 jq -e 'select(.status == "reported" and .exit == "0")' "$T/dream/markers/pr-review-loop.jsonl" >/dev/null \
     && ok "firing marker still written" || bad "marker: $(cat "$T/dream/markers/pr-review-loop.jsonl")"
+
+: > "$T/dream/markers/pr-review-loop.jsonl"
+FAKE_DOCKER_RM_FAIL=1 run pi-agent "${fence}json
+{\"findings\": [], \"reopens\": []}
+${fence}"
+[[ "$RC" -eq 0 ]] && jq -e 'select(.status == "reported")' "$T/dream/markers/pr-review-loop.jsonl" >/dev/null \
+    && ok "a failing docker rm in cleanup: still exit 0, marker written" || bad "rc=$RC marker=$(cat "$T/dream/markers/pr-review-loop.jsonl")"
+
+echo "=== a cut-off final report is no report ==="
+run pi-agent "Example of the format:
+${fence}json
+{\"findings\": [], \"reopens\": []}
+${fence}
+Now my report:
+${fence}json
+{\"findings\": [{\"severity\": \"P1\", \"file\": \"src/a.py\", \"line\": 1, \"title\": \"t\""
+[[ "$RC" -eq 3 && "$(posts)" -eq 0 && "$OUT" != *"No issues found"* ]] && ok "unclosed final block -> exit 3, not the earlier example" || bad "rc=$RC out=$OUT"
 
 echo "=== setup refusals ==="
 run claude-agent ""
