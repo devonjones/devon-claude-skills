@@ -5,7 +5,8 @@
 # Reviews only - posts nothing. Pi reviews a throwaway export of <sha>, prints
 # its report as one fenced ```json block and exits. This script validates it
 # and prints one JSON object on stdout:
-#   {agent, pr, sha, model, tried, seconds, usage: {input, output, cacheRead, cacheWrite},
+#   {agent, pr, sha, model, tried, seconds,
+#    usage: {input, output, cacheRead, cacheWrite, usd (Pi's own price; 0 if it has none)},
 #    report: {findings: [...], reopens: [...]}, dropped: [...]}
 # The Haiku poster Task (SKILL.md "Pi Engine") turns `report` into PR comments,
 # so no GitHub token ever enters the container.
@@ -26,7 +27,8 @@
 #   1  setup failed (args, roster, docker, model key)
 #   2  the PR head is not <sha>
 #   3  a model ran but produced no valid report (malformed, timeout, crash)
-#   5  the chain reached "claude": spawn the normal Claude Task for this agent
+#   5  the chain reached "claude" or "claude:<model>": spawn the Claude Task for
+#      this agent; stdout is {"fallback": "claude", "model": "<model or empty>"}
 #   6  every model in the chain failed on the provider side
 #
 # Env: PI_REVIEW_TIMEOUT (seconds, default 900), PI_REVIEW_IMAGE (default: the
@@ -164,6 +166,8 @@ Workflow:
 \`\`\`json
 {"findings": [{"severity": "P1|P2|P3", "file": "<path from the scope list>",
    "line": <line number in the new file, inside a diff hunk>,
+   (severity is P1, P2 or P3; if your focus above uses another scale, map it:
+    critical -> P1, high -> P2, medium or low -> P3)
    "title": "<one line>", "body": "<the issue, the fix, and its proof - or 'judgement:' / 'hypothesis:'>"}],
  "reopens": [{"comment_id": <Thread ID from prior-comments.txt>, "reason": "<why the reply is insufficient>"}]}
 \`\`\`
@@ -189,8 +193,9 @@ exhausted() {   # true while <provider> is inside its exhausted TTL
 # ---- run the chain ----
 REPORT="" USAGE_JSON="" SECS=0
 for MODEL in "${CHAIN[@]}"; do
-    if [[ "$MODEL" == "claude" ]]; then
-        echo "Chain reached claude after: ${TRIED[*]:-nothing} - spawn the Claude Task" >&2
+    if [[ "$MODEL" == claude || "$MODEL" == claude:* ]]; then
+        echo "Chain reached $MODEL after: ${TRIED[*]:-nothing} - spawn the Claude Task" >&2
+        jq -nc --arg m "${MODEL#claude}" '{fallback: "claude", model: ($m | ltrimstr(":"))}'
         STATUS="fallback-claude"; exit 5
     fi
     PROVIDER="${MODEL%%/*}"
@@ -250,14 +255,17 @@ for MODEL in "${CHAIN[@]}"; do
                    inb {buf = buf $0 "\n"}
                    END {printf "%s", last}' <<<"$TEXT" \
         | jq -ce '
-            def finding: (.severity | IN("P1","P2","P3")) and (.file | type == "string")
+            # Agents written for Claude often grade critical/high/medium/low.
+            def sev: (if type == "string" then ascii_upcase else "" end)
+                | {"P0":"P1","P1":"P1","P2":"P2","P3":"P3","CRITICAL":"P1","HIGH":"P2","MEDIUM":"P3","LOW":"P3"}[.];
+            def finding: (.severity | sev != null) and (.file | type == "string")
                 and (.line | type == "number" and . > 0 and floor == .)
                 and (.title | type == "string" and length > 0) and (.body | type == "string");
             def reopen: (.comment_id | type == "number") and (.reason | type == "string" and length > 0);
             select(type == "object" and (.findings | type == "array")
                    and ((.reopens // []) | type == "array")
                    and all(.findings[]; finding) and all((.reopens // [])[]; reopen))
-            | .reopens //= []' 2>/dev/null)" || REPORT=""
+            | .reopens //= [] | .findings |= map(.severity |= sev)' 2>/dev/null)" || REPORT=""
     if [[ -z "$REPORT" ]]; then
         # A model that crashed, timed out or answered off-contract looks exactly
         # like a reviewer with nothing to say. It is a strike, not a fallback.
@@ -268,7 +276,8 @@ for MODEL in "${CHAIN[@]}"; do
     fi
     USAGE_JSON="$(jq -sc '[.[] | select(.type == "agent_end") | .messages[] | select(.role == "assistant") | .usage]
         | {input: (map(.input // 0) | add // 0), output: (map(.output // 0) | add // 0),
-           cacheRead: (map(.cacheRead // 0) | add // 0), cacheWrite: (map(.cacheWrite // 0) | add // 0)}' "$T/pi.out")"
+           cacheRead: (map(.cacheRead // 0) | add // 0), cacheWrite: (map(.cacheWrite // 0) | add // 0),
+           usd: (map(.cost.total // 0) | add // 0)}' "$T/pi.out")"
     break
 done
 if [[ -z "$REPORT" ]]; then

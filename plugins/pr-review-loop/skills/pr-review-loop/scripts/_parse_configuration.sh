@@ -377,8 +377,8 @@ fi
 
 # Validate the pi block (reviewers run on a non-Claude model via Pi in Docker):
 #   { all: bool, model: <chain>, agents: { <name>: true | false | <chain> } }
-# A chain is "provider/id" or an ordered list of them; "claude" in a list means
-# "fall back to the Claude Task from here".
+# A chain is "provider/id" or an ordered list of them; "claude" or
+# "claude:<sonnet|haiku|opus>" means "use the Claude Task from here".
 # Errors, not warnings: a malformed value here silently changes which model
 # reviews the code, and an agent routed to pi with no model cannot run at all.
 PI_BAD="$(printf '%s\n' "$RAW_JSON" | jq -r '
@@ -390,6 +390,9 @@ PI_BAD="$(printf '%s\n' "$RAW_JSON" | jq -r '
       elif has("model") and (.model | chain | not) then ".model must be a model string or a non-empty list of them"
       elif has("agents") and (.agents | type) != "object" then ".agents must be an object"
       elif any((.agents // {})[]; (type != "boolean") and (chain | not)) then ".agents values must be true, false, a model string or a list of them"
+      elif any(((.agents // {})[], .model // empty) | if type == "array" then .[] elif type == "string" then . else empty end;
+               startswith("claude:") and (ltrimstr("claude:") | IN("sonnet","haiku","opus") | not))
+        then "claude:<model> must be claude:sonnet, claude:haiku or claude:opus"
       elif ((.all == true) or any((.agents // {})[]; . == true)) and (has("model") | not) then "routes agents to pi with no .model to run them on"
       else empty end
 ')"

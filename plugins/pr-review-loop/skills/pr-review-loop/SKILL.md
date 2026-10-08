@@ -1519,7 +1519,7 @@ Turn it on in `# Configuration`:
 - **`all`** (default `false`): route every agent to Pi on `model`.
 - **`model`**: the default chain. Required when `all` or any `true` entry routes an agent to Pi.
 - **`agents`**: per agent. `true` uses `model`, a chain routes the agent on that chain, and `false` keeps it on Claude even under `all`. Default agents can be routed this way too, without overriding their prompts.
-- **A chain** is a model (`provider/id`) or an ordered list of them. The script moves to the next model only when the provider fails: quota or credits used up, rate limit, auth or access denied, unreachable. A model that ran and gave no valid report is a strike, not a reason to try another. `"claude"` in a chain means "from here, use the normal Claude Task". A chain that starts with `"claude"` is just a Claude agent. A provider that reports exhausted quota is skipped by every run for an hour (`PI_REVIEW_EXHAUSTED_TTL`, marker in `~/.cache/pr-review-loop/exhausted/<provider>`).
+- **A chain** is a model (`provider/id`) or an ordered list of them. The script moves to the next model only when the provider fails: quota or credits used up, rate limit, auth or access denied, unreachable. A model that ran and gave no valid report is a strike, not a reason to try another. `"claude"` in a chain means "from here, use the normal Claude Task", and `"claude:sonnet"`, `"claude:haiku"` or `"claude:opus"` names the Task's model. A chain that starts with a Claude entry is just a Claude agent, so `"code-simplifier": "claude:haiku"` downshifts that agent to Haiku. A provider that reports exhausted quota is skipped by every run for an hour (`PI_REVIEW_EXHAUSTED_TTL`, marker in `~/.cache/pr-review-loop/exhausted/<provider>`).
 
 `configuration.pi_agents_unknown` lists `agents` entries that name nothing on the
 roster. Treat it like `disabled_defaults_unknown`.
@@ -1555,7 +1555,8 @@ Task tool:
          so post it once more on the nearest added line of that file in
          `gh pr diff <PR>`, and add "(anchored at line <n>; reported at line
          <line>)" under the title.
-       - 5: return exactly `FALLBACK claude` and nothing else.
+       - 5: stdout is {"fallback": "claude", "model": "<m>"}. Return exactly
+         `FALLBACK claude:<m>`, or `FALLBACK claude` when <m> is empty.
        - anything else: return `NOT REPORTED exit <n>: <first line of stderr>`.
     3. Return the posting manifest, one line per item, nothing else:
        `<severity> | <file>:<line> | <title>` per posted finding,
@@ -1572,13 +1573,37 @@ Task tool:
 |---|---|
 | A manifest with no `FAILED` line | Reported. |
 | A manifest with `FAILED` lines | Reported, but a post is missing. Post that finding yourself per the "agent failed to post" rule in Main Loop Integration. |
-| `FALLBACK claude` | Not a strike. Spawn this agent's normal Claude Task now, in this round. |
+| `FALLBACK claude[:<model>]` | Not a strike. Spawn this agent's normal Claude Task now, in this round, on `<model>` if one is named. |
 | `NOT REPORTED exit 2` | The branch moved. The round is invalid (see Convergence). |
 | `NOT REPORTED` with any other exit | A strike under "A reviewer that will not report". Exit 6 means every provider in the chain failed. |
 
 **Telemetry.** The Haiku Task carries the standard description, so firing
 coverage works as for any agent. The script also writes a `reviewer-fired` dream
 marker naming the model that actually ran and the models it tried first.
+
+**Choosing models: `eval-reviewer.sh`.** Run it in each repo, one agent at a
+time. A model can suit one codebase and not another, and each repo has its own
+reviewers. It picks the **cheapest** model that reviews as well as the baseline,
+judged on that agent's own history in that repo:
+
+```bash
+scripts/eval-reviewer.sh harvest silent-failure-hunter          # its PR threads + how each was answered
+scripts/eval-reviewer.sh run silent-failure-hunter \
+    --models zai/glm-5.1,qwen-token-plan/qwen3.8-max,anthropic/claude-haiku-4-5 \
+    --baseline anthropic/claude-sonnet-4-6 --commits 6
+scripts/eval-reviewer.sh assign                                 # all evaluated agents -> one .pi.agents block
+```
+
+- **Ground truth** is the agent's signed threads. The first word of the first reply is the verdict: `Fixed`, `Out of scope` and `Deferred` mean real; `Won't fix` and `Withdrawn` mean noise. `Noted` and other replies are not scored.
+- **Replay**: the commits with the most real findings are reviewed again on each model (`pi-review.sh --replay`, which posts nothing). Claude models are tested through Pi as `anthropic/...`, so every candidate runs in the same harness. These bill `ANTHROPIC_API_KEY`.
+- **Judge**: Claude Sonnet (headless `claude -p`, on your subscription, not the API key) matches each model's findings to the originals and calls unmatched ones plausible or not.
+- **Pass**: the model fails at most 10% of runs, its severity-weighted catch rate is within 0.10 of the baseline, and its junk rate (declined or implausible findings) is at most 0.10 above the baseline. Without a baseline: catches at least 0.5, junk at most 0.3. Below 8 real findings the result is **inconclusive** and nothing is recommended.
+- **Cost**: measured tokens x price, from `~/.config/pr-review-loop/pi-prices.json` (start from `pi/prices.example.json`). Pi's own price is used for built-in pay-per-token models with no entry. Plan models cost `monthly_usd / reviews_per_month`. Measure `reviews_per_month`; don't derive it from the plan's credits: note the plan's usage %, run a few replays, read it again.
+- **assign** puts each agent on a passing model whose subscription has the least projected load, follows it with passing models on other subscriptions, and ends with `claude`. Winning Anthropic models become `claude:sonnet` / `claude:haiku`. It prints a block for `# Configuration`; nothing is written until you approve it.
+
+Replays and judgements are cached under `~/.cache/pr-review-loop/eval/`, so an
+interrupted run picks up where it stopped. Large commits can take a model 10+
+minutes each.
 
 **Credentials.** By default the script passes only `<PROVIDER>_API_KEY` into
 the container (`GEMINI_API_KEY` for `google`). To pass something else, set
@@ -1753,6 +1778,7 @@ When detected, the script suggests:
 | `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post line comment with agent signature |
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |
 | `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |
+| `eval-reviewer.sh harvest\|run\|assign ...` | Pick the cheapest model per agent that reviews as well as a baseline, on this repo's own history; build a `.pi.agents` block that spreads load across subscriptions. See "Pi Engine" |
 | `pi-review.sh <PR> <agent> <sha> [--model M] [--replay]` | Run a `pi`-engine agent once in Docker down its model chain. Prints the report as JSON and posts nothing; a Haiku Task posts it. Exit 5 = use the Claude Task. See "Pi Engine" |
 | `emit-dream-marker.sh <kind> key=value ...` | Emit a dream marker (reviewer telemetry) — best-effort, never blocks. See "Dream Markers" |
 | `discover-agents.sh <PR>` | Discover + merge agent reviewers (defaults + user agents per C+E); emits `configuration` block with `stale_pin` and (when no AGENT-REVIEWERS.md exists) the `language_detection` block driving the Language Template Offer |
@@ -1777,6 +1803,7 @@ Bash(scripts/get-pr-comments.sh:*)
 Bash(scripts/install-template.sh:*)
 Bash(scripts/emit-dream-marker.sh:*)
 Bash(scripts/pi-review.sh:*)
+Bash(scripts/eval-reviewer.sh:*)
 ```
 
 ## Prerequisites

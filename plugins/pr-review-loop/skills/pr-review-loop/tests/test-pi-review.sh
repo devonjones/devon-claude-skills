@@ -107,7 +107,7 @@ jq -e '.model == "zai/glm-5.1" and .tried == ["zai/glm-5.1"]' <<<"$OUT" >/dev/nu
 jq -e '.report.findings == [{"severity":"P2","file":"src/a.py","line":1,"title":"x is wrong","body":"judgement: rename"}]' <<<"$OUT" >/dev/null \
     && ok "in-scope finding in report" || bad "report: $OUT"
 jq -e '.dropped | length == 1 and .[0].file == "elsewhere.py"' <<<"$OUT" >/dev/null && ok "out-of-scope finding dropped" || bad "dropped: $OUT"
-jq -e '.usage == {"input":150,"output":30,"cacheRead":1900,"cacheWrite":0}' <<<"$OUT" >/dev/null \
+jq -e '.usage == {"input":150,"output":30,"cacheRead":1900,"cacheWrite":0,"usd":0}' <<<"$OUT" >/dev/null \
     && ok "usage summed over every turn" || bad "usage: $(jq -c .usage <<<"$OUT")"
 [[ "$(posts)" -eq 0 ]] && ok "posts nothing (the Haiku poster does)" || bad "posts=$(posts)"
 jq -e 'select(.kind == "reviewer-fired" and .reviewer == "pi-agent" and .status == "reported" and .model == "zai/glm-5.1")' \
@@ -117,6 +117,18 @@ echo "=== an empty report is still a report ==="
 says zai/glm-5.1 "$(report "$EMPTY")"
 run pi-agent
 [[ "$RC" -eq 0 ]] && jq -e '.report.findings == []' <<<"$OUT" >/dev/null && ok "exit 0, no findings" || bad "rc=$RC"
+
+echo "=== an agent's own severity scale is mapped, not rejected ==="
+says zai/glm-5.1 "$(report '{"findings": [
+  {"severity": "CRITICAL", "file": "src/a.py", "line": 1, "title": "a", "body": "b"},
+  {"severity": "high", "file": "src/a.py", "line": 1, "title": "a", "body": "b"},
+  {"severity": "Medium", "file": "src/b.py", "line": 1, "title": "a", "body": "b"}], "reopens": []}')"
+run pi-agent
+[[ "$RC" -eq 0 ]] && jq -e '[.report.findings[].severity] == ["P1","P2","P3"]' <<<"$OUT" >/dev/null \
+    && ok "critical/high/medium -> P1/P2/P3" || bad "rc=$RC sev=$(jq -c '[.report.findings[]?.severity]' <<<"$OUT")"
+says zai/glm-5.1 "$(report '{"findings": [{"severity": "URGENT", "file": "src/a.py", "line": 1, "title": "a", "body": "b"}], "reopens": []}')"
+run pi-agent
+[[ "$RC" -eq 3 ]] && ok "an unknown severity is still off-contract" || bad "rc=$RC"
 
 echo "=== a model that ran but answered off-contract is a strike, not a fallback ==="
 says zai/glm-5.1 "Looks good to me!"; says google/gemini-2.5-flash "$(report "$EMPTY")"
@@ -150,7 +162,8 @@ rm -rf "$T/cache"
 echo "=== chain endings ==="
 fails zai/glm-5.1 "503 unavailable"
 run fallback-agent
-[[ "$RC" -eq 5 ]] && ok "chain reaching claude -> exit 5" || bad "rc=$RC"
+[[ "$RC" -eq 5 ]] && jq -e '. == {"fallback": "claude", "model": ""}' <<<"$OUT" >/dev/null \
+    && ok "chain reaching claude -> exit 5, agent's own model" || bad "rc=$RC out=$OUT"
 fails google/gemini-2.5-flash "401 bad key"
 run pi-agent
 [[ "$RC" -eq 6 ]] && ok "every provider failed -> exit 6" || bad "rc=$RC"
@@ -186,6 +199,8 @@ cfg '{"pi": {"agents": {"x": []}}}' && bad "empty chain accepted" || ok "empty c
 cfg '{"pi": {"agents": {"x": ["zai/glm-5.1", ""]}}}' && bad "empty chain entry accepted" || ok "empty chain entry rejected"
 cfg '{"pi": {"agents": {"x": ["zai/glm-5.1", "claude"]}}}' && ok "chain accepted" || bad "chain rejected"
 cfg '{"pi": {"all": true, "model": ["zai/glm-5.1", "claude"]}}' && ok "default model may be a chain" || bad "default chain rejected"
+cfg '{"pi": {"agents": {"x": ["zai/glm-5.1", "claude:haiku"]}}}' && ok "claude:haiku accepted" || bad "claude:haiku rejected"
+cfg '{"pi": {"agents": {"x": "claude:gpt"}}}' && bad "claude:gpt accepted" || ok "claude:<unknown> rejected"
 ROUTE="$(cd "$REPO" && sed -i 's/"agents": {"pi-agent"/"all": true, "agents": {"claude-agent": false, "pi-agent"/' AGENT-REVIEWERS.md \
     && PR_REVIEW_LOOP_TEST_CHANGED_FILES=src/a.py bash "$SCRIPT_DIR/../scripts/discover-agents.sh" 0 2>/dev/null \
     | jq -c '[.agents[] | {name, engine, pi_models}] | sort_by(.name)')"
@@ -195,5 +210,14 @@ ROUTE="$(cd "$REPO" && sed -i 's/"fallback-agent": \["zai\/glm-5.1", "claude"\]/
     && PR_REVIEW_LOOP_TEST_CHANGED_FILES=src/a.py bash "$SCRIPT_DIR/../scripts/discover-agents.sh" 0 2>/dev/null \
     | jq -r '.agents[] | select(.name == "fallback-agent") | .engine')"
 [[ "$ROUTE" == claude ]] && ok "a chain starting with claude is a Claude agent" || bad "engine: $ROUTE"
+ROUTE="$(cd "$REPO" && sed -i 's/"fallback-agent": \["claude",/"fallback-agent": ["claude:haiku",/' AGENT-REVIEWERS.md \
+    && PR_REVIEW_LOOP_TEST_CHANGED_FILES=src/a.py bash "$SCRIPT_DIR/../scripts/discover-agents.sh" 0 2>/dev/null \
+    | jq -c '.agents[] | select(.name == "fallback-agent") | {engine, model}')"
+[[ "$ROUTE" == '{"engine":"claude","model":"haiku"}' ]] && ok "claude:haiku first -> a Claude agent on haiku" || bad "got: $ROUTE"
+says zai/glm-5.1 "$(report "$EMPTY")"
+(cd "$REPO" && sed -i 's/"fallback-agent": \["claude:haiku", "zai\/glm-5.1"\]/"fallback-agent": ["zai\/glm-5.1", "claude:sonnet"]/' AGENT-REVIEWERS.md)
+fails zai/glm-5.1 "503 unavailable"
+run fallback-agent
+[[ "$RC" -eq 5 ]] && jq -e '.model == "sonnet"' <<<"$OUT" >/dev/null && ok "falling to claude:sonnet names sonnet" || bad "rc=$RC out=$OUT"
 
 echo ""; echo "Passed: $PASSED  Failed: $FAILED"; [[ "$FAILED" -eq 0 ]]

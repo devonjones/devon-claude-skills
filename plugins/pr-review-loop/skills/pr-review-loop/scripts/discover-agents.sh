@@ -448,7 +448,8 @@ echo "$JQ_INPUT" | jq '
     # engine "pi" runs the agent through pi-review.sh down its pi_models chain
     # instead of a Claude Task. Per-agent `pi.agents` entries beat `pi.all`; the
     # parser has already rejected a pi route with no model to run on. A chain
-    # that starts with "claude" is just a Claude agent.
+    # that starts with "claude" is just a Claude agent; "claude:<model>" also
+    # sets the Task model, so config can downshift a Claude agent by cost.
     ($config.pi // {}) as $pi |
     ($user_agents + $effective_defaults
         | map(.name as $n | (($pi.agents // {})[$n]) as $v |
@@ -457,7 +458,11 @@ echo "$JQ_INPUT" | jq '
              elif $v == false then null
              elif $pi.all == true then $pi.model
              else null end | if type == "string" then [.] else . end) as $pm |
-            if $pm and $pm[0] != "claude" then . + {engine: "pi", pi_models: $pm} else . + {engine: "claude"} end)
+            if $pm == null then . + {engine: "claude"}
+            elif ($pm[0] | startswith("claude")) | not then . + {engine: "pi", pi_models: $pm}
+            # "claude:haiku" first: a Claude agent, on that model.
+            elif $pm[0] | startswith("claude:") then . + {engine: "claude", model: ($pm[0] | ltrimstr("claude:"))}
+            else . + {engine: "claude"} end)
     ) as $merged_agents |
 
     # ---- 7. Stale-pin check ----
