@@ -3,7 +3,7 @@
 #
 # Usage:
 #   eval-reviewer.sh harvest <agent> [--prs N]
-#   eval-reviewer.sh run <agent> --models m1,m2[,...] [--baseline M] [--commits N]
+#   eval-reviewer.sh run <agent> --models m1,m2[,...] [--baseline M] [--commits N] [--files REGEX]
 #   eval-reviewer.sh assign
 #
 # harvest  Reads this repo's PR threads that <agent> started (signed
@@ -11,8 +11,12 @@
 #          of the first reply is the verdict: Fixed / Out of scope / Deferred
 #          = real, Won't fix / Withdrawn = noise; anything else is not scored.
 # run      Replays the commits with the most real findings on each model
-#          (pi-review.sh --replay, posts nothing), has Claude Sonnet match each
-#          model's findings against the originals, and scores: severity-weighted
+#          (pi-review.sh --replay, posts nothing). Each replay sees the agent's
+#          threads as they stood at that commit, as a live round would. Sonnet
+#          grades every real original once (material / minor / churn - "Fixed"
+#          is weak evidence when a loop fixes nearly everything), then matches
+#          each model's findings against the originals, and scores: value- and
+#          severity-weighted
 #          share of real findings caught, share of its findings that repeat
 #          known noise, novel findings the judge calls plausible, failed runs,
 #          and cost per review. A model passes if it fails <=10% of runs and, with
@@ -20,7 +24,9 @@
 #          extra noise (without one: catches >= 0.5). The recommendation is the
 #          CHEAPEST passing model. Fewer than 8 real findings is "inconclusive".
 #          --baseline is any Pi model, e.g. anthropic/claude-sonnet-4-5, so the
-#          comparison runs in the same harness.
+#          comparison runs in the same harness. --files keeps only originals
+#          whose path matches REGEX, e.g. code for a code-focused agent:
+#          --files '\.(py|sh|go|ts|js|rb)$'.
 # assign   Reads every agent's result and builds one # Configuration .pi.agents
 #          block: each agent gets a passing model on the subscription with the
 #          least projected load, then its other passing models on other
@@ -52,7 +58,7 @@ harvest() {
     mkdir -p "$dir"
     local q='query($o:String!,$n:String!,$pr:Int!,$c:String){repository(owner:$o,name:$n){pullRequest(number:$pr){
       reviewThreads(first:100,after:$c){pageInfo{hasNextPage endCursor}
-        nodes{comments(first:5){nodes{databaseId body path originalLine line originalCommit{oid}}}}}}}}'
+        nodes{comments(first:30){nodes{databaseId body path originalLine line createdAt originalCommit{oid committedDate}}}}}}}}'
     local pr cursor page
     : > "$dir/cases.jsonl"
     for pr in $(gh pr list -R "$REPO" --state all --limit "$prs" --json number --jq '.[].number'); do
@@ -65,6 +71,8 @@ harvest() {
                   | .comments.nodes as $c | select(($c[0].body // "") | contains($sig))
                   | ($c[1].body // "" | ascii_downcase | gsub("^[^a-z]+"; "")) as $r
                   | {pr: $pr, id: $c[0].databaseId, sha: $c[0].originalCommit.oid,
+                     at: $c[0].createdAt, sha_at: $c[0].originalCommit.committedDate,
+                     replies: [$c[1:][] | {at: .createdAt, body: .body[0:800]}],
                      file: $c[0].path, line: ($c[0].originalLine // $c[0].line),
                      severity: ((($c[0].body | capture("\\b(?<s>P[0-3])\\b").s) // "P2") | sub("P0"; "P1")),
                      finding: ($c[0].body | sub("(?s)^.*?<!-- Agent: [^>]*-->\\s*"; "") | .[0:1500]),
@@ -82,15 +90,16 @@ harvest() {
 }
 
 # ------------------------------------------------------------------- run ---
-weight='def w: if . == "P1" then 3 elif . == "P2" then 2 else 1 end;'
+weight='def w: if . == "P1" then 3 elif . == "P2" then 2 else 1 end;
+        def vw: if . == "churn" then 0 elif . == "minor" then 0.5 else 1 end;'
 
 replay_model() {   # <agent> <model> <commits-file>: one model, commits in turn
     local agent="$1" model="$2" dir="$BASE_DIR/$1" pr sha out rc
     while read -r pr sha; do
-        out="$dir/runs/${sha:0:12}__${model//\//_}.json"
+        out="$dir/replays/${sha:0:12}__${model//\//_}.json"
         [[ -s "$out" ]] && continue
         set +e
-        "$SCRIPT_DIR/pi-review.sh" "$pr" "$agent" "$sha" --replay --model "$model" \
+        "$SCRIPT_DIR/pi-review.sh" "$pr" "$agent" "$sha" --replay --model "$model" --prior "$dir/prior/${sha:0:12}.txt" \
             < /dev/null > "$out.tmp" 2> "$out.err"
         rc=$?
         set -e
@@ -100,6 +109,38 @@ replay_model() {   # <agent> <model> <commits-file>: one model, commits in turn
         fi
         echo "  $model @ ${sha:0:8}: exit $rc" >&2
     done < "$3"
+}
+
+prior_file() {   # <agent> <pr> <sha>: the agent's threads on <pr> as they stood when <sha> was committed
+    local dir="$BASE_DIR/$1"
+    mkdir -p "$dir/prior"
+    jq -r --argjson pr "$2" --arg sha "$3" '
+        (map(select(.sha == $sha)) | first | .sha_at) as $t |
+        [.[] | select(.pr == $pr and .at < $t)] |
+        if length == 0 then "(none - first review of this commit)" else .[] |
+          "=== Thread (ID: \(.id)) ===", "File: \(.file):\(.line)", "", "ORIGINAL COMMENT:", .finding, "",
+          ([.replies[] | select(.at < $t) | "  [reply] \(.body)"] | if length > 0 then "REPLIES:", .[] else empty end),
+          "---", "" end' "$dir/cases.json" > "$dir/prior/${3:0:12}.txt"
+}
+
+grade() {   # <agent> <sha>: Sonnet rates each real original once - material, minor or churn
+    local dir="$BASE_DIR/$1" sha="$2" gf reply
+    gf="$dir/grades/${sha:0:12}.json"; mkdir -p "$dir/grades"
+    [[ -s "$gf" ]] && return 0
+    reply="$(cd "$dir" && env -u ANTHROPIC_API_KEY claude -p --model sonnet --no-session-persistence 2>/dev/null <<EOF
+Grade each code-review finding below. All were acted on ("fixed"), but a review
+loop that fixes nearly everything makes that weak evidence of value. Output ONLY
+JSON: {"grades": [{"id": <id>, "value": "material" | "minor" | "churn"}]}
+- material: a real defect or a real risk a careful maintainer must fix.
+- minor: correct but low impact (wording, small robustness, polish).
+- churn: wrong, speculative, pedantic, or re-litigating something already settled.
+
+$(jq --arg sha "$sha" '[.[] | select(.sha == $sha and .verdict == "real") | {id, severity, file, line, finding}]' "$dir/cases.json")
+EOF
+)" || { echo "Error: grading call failed for ${sha:0:12}" >&2; return 1; }
+    python3 -c 'import sys, json; t = sys.stdin.read(); print(json.dumps(json.loads(t[t.index("{"):t.rindex("}") + 1])))' \
+        <<<"$reply" 2>/dev/null | jq -ce 'select(.grades | type == "array")' > "$gf" \
+        || { rm -f "$gf"; echo "Error: grader gave no usable JSON for ${sha:0:12}" >&2; return 1; }
 }
 
 judge() {   # <agent> <run file> <sha>: Sonnet matches a model's findings to the originals
@@ -138,12 +179,17 @@ score() {   # <agent> <models...>: per-model metrics over the replayed commits
     for m in "$@"; do
         local rows="[]"
         while read -r _ sha; do
-            f="$dir/runs/${sha:0:12}__${m//\//_}.json"
+            f="$dir/replays/${sha:0:12}__${m//\//_}.json"
             # A replay that never finished (killed, deleted) scores as a failed run.
             [[ -s "$f" && -s "${f%.json}.judge.json" ]] || { f="$T_EMPTY"; }
+            [[ -s "$dir/grades/${sha:0:12}.json" ]] || echo '{"grades": []}' > "$dir/grades/${sha:0:12}.json"
             rows="$(jq -c --slurpfile run "$f" --slurpfile j "${f%.json}.judge.json" --slurpfile cases "$dir/cases.json" \
-                --arg sha "$sha" '. + [{sha: $sha, run: $run[0], judge: $j[0],
-                    originals: [$cases[0][] | select(.sha == $sha and .verdict != "unscored")]}]' <<<"$rows")"
+                --slurpfile g "$dir/grades/${sha:0:12}.json" --arg sha "$sha" --arg files "$FILES" '
+                ($g[0].grades | map({key: (.id | tostring), value: .value}) | from_entries) as $gr |
+                . + [{sha: $sha, run: $run[0], judge: $j[0],
+                    originals: [$cases[0][] | select(.sha == $sha and .verdict != "unscored")
+                                | select($files == "" or (.file | test($files)))
+                                | . + {value: ($gr[.id | tostring] // "material")}]}]' <<<"$rows")"
         done < "$dir/commits.txt"
         all="$(jq -c --arg m "$m" --slurpfile prices "$PRICES" --argjson acc "$all" "$weight"'
           ($prices[0]) as $P | ($P.models[$m] // {}) as $pm |
@@ -168,9 +214,11 @@ score() {   # <agent> <models...>: per-model metrics over the replayed commits
            else null end) as $cost |
           $acc + [{model: $m, runs: length, failed: (length - ($ok | length)),
             real_total: ($real | length),
-            catch: (if ($real | length) == 0 then null else
-                     ([$real[] | select(.id as $id | $hit | index($id)) | .severity | w] | add // 0)
-                     / ([$real[] | .severity | w] | add) end),
+            catch: (([$real[] | (.severity | w) * (.value | vw)] | add // 0) as $den |
+                    if $den == 0 then null else
+                     ([$real[] | select(.id as $id | $hit | index($id)) | (.severity | w) * (.value | vw)] | add // 0)
+                     / $den end),
+            material_total: ([$real[] | select(.value == "material")] | length),
             findings: ($cands | length),
             junk: (if ($cands | length) == 0 then 0 else
                     ([$cands[] | select((.match != null and (.match as $x | $noiseids | index($x)))
@@ -184,22 +232,28 @@ score() {   # <agent> <models...>: per-model metrics over the replayed commits
 
 run_eval() {
     local agent="$1" models="$2" baseline="$3" ncommits="$4" dir="$BASE_DIR/$1"
+    FILES="$5"
     [[ -s "$dir/cases.json" ]] || { echo "Error: run 'eval-reviewer.sh harvest $agent' first" >&2; exit 1; }
     command -v claude >/dev/null || { echo "Error: the judge needs the claude CLI" >&2; exit 1; }
-    mkdir -p "$dir/runs"
+    mkdir -p "$dir/replays"
     # The commits with the most real findings; one replay covers all of them.
-    jq -r --argjson n "$ncommits" '[.[] | select(.verdict == "real")] | group_by(.sha)
+    jq -r --argjson n "$ncommits" --arg files "$FILES" '[.[] | select(.verdict == "real")
+        | select($files == "" or (.file | test($files)))] | group_by(.sha)
         | sort_by(-length) | .[:$n][] | "\(.[0].pr) \(.[0].sha)"' "$dir/cases.json" > "$dir/commits.txt"
     local all_models=() m
     IFS=, read -r -a all_models <<<"$models"
     [[ -n "$baseline" ]] && all_models+=("$baseline")
+    [[ -s "$dir/commits.txt" ]] || { echo "Error: no commits with real findings${FILES:+ matching $FILES}" >&2; exit 1; }
+    local pr sha
+    while read -r pr sha; do prior_file "$agent" "$pr" "$sha"; grade "$agent" "$sha" & done < "$dir/commits.txt"
+    wait
     echo "Replaying $(wc -l < "$dir/commits.txt") commits on ${all_models[*]}" >&2
     for m in "${all_models[@]}"; do replay_model "$agent" "$m" "$dir/commits.txt" & done
     wait
     local sha f
     while read -r _ sha; do
         for m in "${all_models[@]}"; do
-            f="$dir/runs/${sha:0:12}__${m//\//_}.json"
+            f="$dir/replays/${sha:0:12}__${m//\//_}.json"
             judge "$agent" "$f" "$sha" &
         done
         wait
@@ -209,7 +263,7 @@ run_eval() {
     scores="$(score "$agent" "${all_models[@]}")"
     jq -n --arg agent "$agent" --arg baseline "$baseline" --argjson s "$scores" '
         ($s | map(select(.model == $baseline)) | first) as $b |
-        ($s | map(.real_total) | max // 0) as $n |
+        ($s | map(.material_total) | max // 0) as $n |
         [$s[] | select(.model != $baseline) | . + {pass: (
             .runs > 0 and (.failed / .runs) <= 0.1 and .catch != null and
             (if $b then .catch >= ($b.catch - 0.10) and .junk <= ($b.junk + 0.10)
@@ -218,7 +272,7 @@ run_eval() {
          recommended: (if $n < 8 then null else
             ([$cands[] | select(.pass)] | sort_by(.usd_per_review // 1e9) | map(.model))
             end)}' > "$dir/result.json"
-    jq -r '"\n\(.agent)" + (if .inconclusive then "  (INCONCLUSIVE: fewer than 8 real findings replayed)" else "" end),
+    jq -r '"\n\(.agent)" + (if .inconclusive then "  (INCONCLUSIVE: fewer than 8 material findings replayed)" else "" end),
         "model                              pass  catch  junk  novel+  fail   tokens(in/out/cache)        $/review",
         (((if .baseline then [.baseline + {pass: "base"}] else [] end) + .candidates)[] |
         "\(.model | .[0:34] | . + " " * (35 - length))\(.pass | tostring | .[0:4] | . + " " * (6 - length))"
@@ -263,17 +317,18 @@ case "$CMD" in
         [[ "${1:-}" == --prs ]] && PRS="${2:?$USAGE}"
         harvest "$AGENT" "$PRS" ;;
     run)
-        AGENT="${1:?$USAGE}"; shift; MODELS="" BASELINE="" COMMITS=6
+        AGENT="${1:?$USAGE}"; shift; MODELS="" BASELINE="" COMMITS=6 FILES=""
         while [[ $# -gt 0 ]]; do
             case "$1" in
                 --models) MODELS="${2:?$USAGE}"; shift 2 ;;
                 --baseline) BASELINE="${2:?$USAGE}"; shift 2 ;;
                 --commits) COMMITS="${2:?$USAGE}"; shift 2 ;;
+                --files) FILES="${2:?$USAGE}"; shift 2 ;;
                 *) echo "$USAGE" >&2; exit 1 ;;
             esac
         done
         [[ -n "$MODELS" ]] || { echo "$USAGE" >&2; exit 1; }
-        run_eval "$AGENT" "$MODELS" "$BASELINE" "$COMMITS" ;;
+        run_eval "$AGENT" "$MODELS" "$BASELINE" "$COMMITS" "$FILES" ;;
     assign) assign ;;
     *) echo "$USAGE" >&2; exit 1 ;;
 esac

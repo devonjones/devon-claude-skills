@@ -92,6 +92,7 @@ run(){ : > "$T/gh.log"; : > "$T/docker.log"; : > "$T/docker.log.args"; set +e
         FAKE_HEAD="${FAKE_HEAD:-$SHA}" FAKE_FIRST="$SHA" \
         PR_REVIEW_LOOP_TEST_CHANGED_FILES=$'src/a.py\nsrc/b.py' \
         PI_REVIEW_CACHE_DIR="$T/cache" DREAM_HOME="$T/dream" PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$T/no-pi}" \
+        PRIOR_SEEN="${PRIOR_SEEN:-/dev/null}" \
         ZAI_API_KEY="${ZAI_API_KEY-k}" GEMINI_API_KEY="${GEMINI_API_KEY-k}" DEEPSEEK_API_KEY=k \
         bash "$PI_REVIEW" 42 "$1" "$SHA" "${@:2}" 2>"$T/err"); RC=$?; set -e; }
 ran(){ paste -sd' ' "$T/docker.log"; }
@@ -201,6 +202,20 @@ tr '\0' ' ' < "$T/gh.log" | grep -q 'graphql' && bad "replay fetched prior comme
 [[ ! -s "$T/dream/markers/pr-review-loop.jsonl" ]] && ok "replay writes no firing marker" || bad "replay wrote a marker"
 run claude-agent --replay
 [[ "$RC" -eq 1 ]] && ok "--replay without --model -> exit 1" || bad "rc=$RC"
+printf '=== Thread (ID: 7) ===\nearlier finding\n' > "$T/prior.txt"
+cat > "$T/bin/docker-spy" <<'SPY'
+#!/usr/bin/env bash
+for a in "$@"; do case "$a" in *:/review:ro) cp -f "${a%%:*}/prior-comments.txt" "$PRIOR_SEEN" ;; esac; done
+exec "$(dirname "$0")/docker-real" "$@"
+SPY
+mv -f "$T/bin/docker" "$T/bin/docker-real"; mv -f "$T/bin/docker-spy" "$T/bin/docker"; chmod +x "$T/bin/docker"
+PRIOR_SEEN="$T/prior-seen" run claude-agent --replay --model zai/glm-5.1 --prior "$T/prior.txt"
+export -n PRIOR_SEEN 2>/dev/null || true
+[[ "$RC" -eq 0 ]] && grep -q 'earlier finding' "$T/prior-seen" 2>/dev/null \
+    && ok "--prior reaches the reviewer as its prior comments" || bad "rc=$RC seen=$(cat "$T/prior-seen" 2>/dev/null)"
+mv -f "$T/bin/docker-real" "$T/bin/docker"
+run claude-agent --prior "$T/prior.txt"
+[[ "$RC" -eq 1 ]] && ok "--prior without --replay -> exit 1" || bad "rc=$RC"
 
 echo "=== setup refusals ==="
 run claude-agent

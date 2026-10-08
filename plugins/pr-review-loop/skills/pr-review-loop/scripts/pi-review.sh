@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run one agent reviewer on a non-Claude model: a one-shot Pi run in Docker.
-# Usage: pi-review.sh <pr-number> <agent-name> <sha> [--model <provider/id>] [--replay]
+# Usage: pi-review.sh <pr-number> <agent-name> <sha> [--model <provider/id>] [--replay [--prior <file>]]
 #
 # Reviews only - posts nothing. Pi reviews a throwaway export of <sha>, prints
 # its report as one fenced ```json block and exits. This script validates it
@@ -19,8 +19,9 @@
 # reports exhausted quota is skipped for PI_REVIEW_EXHAUSTED_TTL seconds
 # (default 3600) by every later run, via ~/.cache/pr-review-loop/exhausted/.
 #
-# --replay: review a historical commit for eval-reviewer.sh. No head check, no
-# prior comments; the diff is the PR's base..<sha>, computed locally.
+# --replay: review a historical commit for eval-reviewer.sh. No head check; the
+# diff is the PR's base..<sha>, computed locally. Prior comments come from
+# --prior <file> (the agent's threads as they stood at that commit), else none.
 #
 # Exit codes - only 0 means the reviewer REPORTED:
 #   0  report on stdout
@@ -41,21 +42,23 @@
 
 set -euo pipefail
 
-USAGE="Usage: pi-review.sh <pr-number> <agent-name> <sha> [--model <provider/id>] [--replay]"
+USAGE="Usage: pi-review.sh <pr-number> <agent-name> <sha> [--model <provider/id>] [--replay [--prior <file>]]"
 PR="${1:?$USAGE}"
 AGENT="${2:?$USAGE}"
 SHA="${3:?$USAGE}"
 shift 3
-MODEL_ARG="" REPLAY=false
+MODEL_ARG="" REPLAY=false PRIOR=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --model) MODEL_ARG="${2:?$USAGE}"; shift 2 ;;
         --replay) REPLAY=true; shift ;;
+        --prior) PRIOR="${2:?$USAGE}"; shift 2 ;;
         *) echo "$USAGE" >&2; exit 1 ;;
     esac
 done
 [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Error: SHA must be 40 hex chars, got '$SHA'" >&2; exit 1; }
 [[ "$REPLAY" == false || -n "$MODEL_ARG" ]] || { echo "Error: --replay needs --model" >&2; exit 1; }
+[[ -z "$PRIOR" || ( "$REPLAY" == true && -r "$PRIOR" ) ]] || { echo "Error: --prior needs --replay and a readable file" >&2; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_IMAGE="pr-review-loop-pi:0.73.1"
@@ -124,7 +127,8 @@ git -C "$T/work" -c core.hooksPath=/dev/null -c user.name=pi -c user.email=pi@lo
     commit -q --no-verify -m "PR #$PR at $SHA"
 if [[ "$REPLAY" == true ]]; then
     git diff "$BASE" "$SHA" > "$T/review/pr.diff"
-    echo "(none - first review of this commit)" > "$T/review/prior-comments.txt"
+    if [[ -n "$PRIOR" ]]; then cp -f "$PRIOR" "$T/review/prior-comments.txt"
+    else echo "(none - first review of this commit)" > "$T/review/prior-comments.txt"; fi
 else
     gh pr diff "$PR" > "$T/review/pr.diff"
     "$SCRIPT_DIR/get-agent-comments.sh" "$PR" "$AGENT" --with-replies > "$T/review/prior-comments.txt"

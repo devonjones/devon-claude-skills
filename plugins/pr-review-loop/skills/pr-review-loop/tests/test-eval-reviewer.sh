@@ -24,23 +24,28 @@ D="$T/cache/eval/o_r"
 S1=1111111111111111111111111111111111111111
 S2=2222222222222222222222222222222222222222
 
-# Agent x: 8 real findings (weights 3+2+1 on S1, 2+2+3+2+1 on S2 = 16) and one noise.
-mkdir -p "$D/x/runs"
+# Agent x: 10 real findings and one noise. Grades: id 3 minor (half weight),
+# id 8 churn (no weight), the rest material - 8 material, total weight 18.5.
+mkdir -p "$D/x/replays" "$D/x/grades"
 jq -n --arg s1 $S1 --arg s2 $S2 '[
   {pr:1,id:1,sha:$s1,severity:"P1",verdict:"real"},{pr:1,id:2,sha:$s1,severity:"P2",verdict:"real"},
-  {pr:1,id:3,sha:$s1,severity:"P3",verdict:"real"},{pr:2,id:4,sha:$s2,severity:"P2",verdict:"real"},
+  {pr:1,id:3,sha:$s1,severity:"P3",verdict:"real"},{pr:1,id:10,sha:$s1,severity:"P2",verdict:"real"},
+  {pr:1,id:11,sha:$s1,severity:"P2",verdict:"real"},{pr:2,id:4,sha:$s2,severity:"P2",verdict:"real"},
   {pr:2,id:5,sha:$s2,severity:"P2",verdict:"real"},{pr:2,id:6,sha:$s2,severity:"P1",verdict:"real"},
   {pr:2,id:7,sha:$s2,severity:"P2",verdict:"real"},{pr:2,id:8,sha:$s2,severity:"P3",verdict:"real"},
-  {pr:2,id:9,sha:$s2,severity:"P2",verdict:"noise"}] | map(. + {file:"f",line:1,finding:"x"})' > "$D/x/cases.json"
+  {pr:2,id:9,sha:$s2,severity:"P2",verdict:"noise"}]
+  | map(. + {file:"f",line:1,finding:"x",at:"2026-01-01T00:00:00Z",sha_at:"2026-01-01T00:00:00Z",replies:[]})' > "$D/x/cases.json"
+echo '{"grades": [{"id": 3, "value": "minor"}]}' > "$D/x/grades/${S1:0:12}.json"
+echo '{"grades": [{"id": 8, "value": "churn"}]}' > "$D/x/grades/${S2:0:12}.json"
 
 # seed <model> <sha> <tokens-in> <judge candidates json>
-seed(){ local f="$D/x/runs/${2:0:12}__${1//\//_}.json"
+seed(){ local f="$D/x/replays/${2:0:12}__${1//\//_}.json"
   jq -n --argjson i "$3" '{usage: {input: $i, output: 100, cacheRead: 0, cacheWrite: 0, usd: 0}, report: {findings: []}}' > "$f"
   echo "{\"candidates\": $4}" > "${f%.json}.judge.json"; }
-all_s1='[{"i":0,"match":1},{"i":1,"match":2},{"i":2,"match":3}]'
+all_s1='[{"i":0,"match":1},{"i":1,"match":2},{"i":2,"match":3},{"i":3,"match":10},{"i":4,"match":11}]'
 all_s2='[{"i":0,"match":4},{"i":1,"match":5},{"i":2,"match":6},{"i":3,"match":7},{"i":4,"match":8}]'
 for m in anthropic/claude-sonnet-4-6 pricey/b; do seed $m $S1 9000 "$all_s1"; seed $m $S2 9000 "$all_s2"; done
-# cheap/a misses only the S2 P3: 15/16 = 0.9375, within 0.10 of the baseline.
+# cheap/a misses only id 8, which the grader called churn: nothing lost.
 seed cheap/a $S1 5000 "$all_s1"
 seed cheap/a $S2 5000 '[{"i":0,"match":4},{"i":1,"match":5},{"i":2,"match":6},{"i":3,"match":7}]'
 # junk/c catches everything but half its findings are noise or implausible.
@@ -50,8 +55,8 @@ seed junk/c $S2 1000 '[{"i":0,"match":4},{"i":1,"match":5},{"i":2,"match":6},{"i
   {"i":8,"match":null,"plausible":false},{"i":9,"match":null,"plausible":false},{"i":10,"match":null,"plausible":true}]'
 # failing/d: one of two runs failed.
 seed failing/d $S1 1000 "$all_s1"
-echo '{"failed": true, "exit": 3, "error": "x", "model": "failing/d"}' > "$D/x/runs/${S2:0:12}__failing_d.json"
-echo '{"candidates": []}' > "$D/x/runs/${S2:0:12}__failing_d.judge.json"
+echo '{"failed": true, "exit": 3, "error": "x", "model": "failing/d"}' > "$D/x/replays/${S2:0:12}__failing_d.json"
+echo '{"candidates": []}' > "$D/x/replays/${S2:0:12}__failing_d.judge.json"
 
 cat > "$T/prices.json" <<'EOF'
 {"models": {"cheap/a": {"usd_per_mtok": {"input": 1, "output": 1}},
@@ -69,8 +74,9 @@ run run x --models cheap/a,pricey/b,junk/c,failing/d --baseline anthropic/claude
 [[ "$RC" -eq 0 ]] && ok "exit 0" || bad "rc=$RC: $(cat "$T/err")"
 R="$D/x/result.json"
 jq -e '.baseline.catch == 1 and .baseline.junk == 0' "$R" >/dev/null && ok "baseline catches all, no junk" || bad "baseline: $(jq -c .baseline "$R")"
-jq -e '.candidates[] | select(.model == "cheap/a") | .catch == 0.9375 and .pass' "$R" >/dev/null \
-    && ok "cheap/a: weighted catch 15/16, passes" || bad "cheap/a: $(jq -c '.candidates[0]' "$R")"
+jq -e '.candidates[] | select(.model == "cheap/a") | .catch == 1 and .pass and .material_total == 8' "$R" >/dev/null \
+    && ok "cheap/a: missing a churn finding costs nothing" || bad "cheap/a: $(jq -c '.candidates[0]' "$R")"
+[[ -s "$D/x/prior/${S2:0:12}.txt" ]] && ok "prior-comments file written per commit" || bad "no prior file"
 jq -e '.candidates[] | select(.model == "junk/c") | (.junk > 0.3) and (.pass | not) and .novel_plausible == 1' "$R" >/dev/null \
     && ok "junk/c: noise + implausible counted, fails" || bad "junk/c: $(jq -c '.candidates[] | select(.model == "junk/c")' "$R")"
 jq -e '.candidates[] | select(.model == "failing/d") | .failed == 1 and (.pass | not)' "$R" >/dev/null \
@@ -82,7 +88,7 @@ jq -e '.candidates[] | select(.model == "cheap/a") | (.usd_per_review * 1e6 | ro
 echo "=== too few real findings is inconclusive ==="
 jq 'map(select(.sha != "2222222222222222222222222222222222222222"))' "$D/x/cases.json" > "$T/c" && cp -f "$D/x/cases.json" "$T/full" && cp -f "$T/c" "$D/x/cases.json"
 run run x --models cheap/a --baseline anthropic/claude-sonnet-4-6
-jq -e '.inconclusive and .recommended == null' "$R" >/dev/null && ok "3 real findings -> inconclusive, no recommendation" || bad "$(jq -c '{inconclusive, recommended}' "$R")"
+jq -e '.inconclusive and .recommended == null' "$R" >/dev/null && ok "4 material findings -> inconclusive, no recommendation" || bad "$(jq -c '{inconclusive, recommended}' "$R")"
 cp -f "$T/full" "$D/x/cases.json"
 run run x --models cheap/a,pricey/b,junk/c,failing/d --baseline anthropic/claude-sonnet-4-6
 
