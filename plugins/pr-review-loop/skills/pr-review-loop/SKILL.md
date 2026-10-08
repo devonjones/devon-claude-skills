@@ -1505,8 +1505,12 @@ An agent whose `engine` (from `discover-agents.sh`) is `"pi"` runs its review on
 a non-Claude model through `scripts/pi-review.sh`, which runs
 [Pi](https://www.npmjs.com/package/@mariozechner/pi-coding-agent) once in
 Docker against a throwaway `git archive` export of the dispatch SHA. Pi can edit
-and run code there for mutation proofs. The script **posts nothing**. It prints
-the validated report as JSON, so no GitHub token enters the container.
+and run code there for mutation proofs. It reports through tools from
+`pi/review-tools.ts`: `report_finding` and `reopen_thread`, each checked as it is
+called (severity, an in-scope file, a positive line, a reopen ID that exists),
+so a bad call goes back to the model to fix, then `finish_review`. A run that
+never calls `finish_review` did not report. The script **posts nothing**. It
+prints the report as JSON, so no GitHub token enters the container.
 
 Turn it on in `# Configuration`:
 
@@ -1597,7 +1601,7 @@ scripts/eval-reviewer.sh assign                                 # all evaluated 
 - **Ground truth** is the agent's signed threads. The first word of the first reply is the verdict: `Fixed`, `Out of scope` and `Deferred` mean real; `Won't fix` and `Withdrawn` mean noise. `Noted` and other replies are not scored.
 - **Replay**: the commits with the most real findings are reviewed again on each model (`pi-review.sh --replay`, which posts nothing). Claude models are tested through Pi as `anthropic/...`, so every candidate runs in the same harness. These bill `ANTHROPIC_API_KEY`.
 - **Judge**: Claude Sonnet (headless `claude -p`, on your subscription, not the API key) matches each model's findings to the originals and calls unmatched ones plausible or not.
-- **Pass**: the model fails at most 10% of runs, its severity-weighted catch rate is within 0.10 of the baseline, and its junk rate (declined or implausible findings) is at most 0.10 above the baseline. Without a baseline: catches at least 0.5, junk at most 0.3. Below 8 real findings the result is **inconclusive** and nothing is recommended.
+- **Pass**: a failed replay is retried once, as the loop re-runs a reviewer that did not report; the model then fails at most 10% of runs, its severity-weighted catch rate is within 0.10 of the baseline, and its junk rate (declined or implausible findings) is at most 0.10 above the baseline. Without a baseline: catches at least 0.5, junk at most 0.3. Below 8 real findings the result is **inconclusive** and nothing is recommended.
 - **Cost**: measured tokens x price, from `~/.config/pr-review-loop/pi-prices.json` (start from `pi/prices.example.json`). Pi's own price is used for built-in pay-per-token models with no entry. Plan models cost `monthly_usd / reviews_per_month`. Measure `reviews_per_month`; don't derive it from the plan's credits: note the plan's usage %, run a few replays, read it again.
 - **assign** puts each agent on a passing model whose subscription has the least projected load, follows it with passing models on other subscriptions, and ends with `claude`. Winning Anthropic models become `claude:sonnet` / `claude:haiku`. It prints a block for `# Configuration`; nothing is written until you approve it.
 

@@ -2,8 +2,9 @@
 # pi-review.sh, run for real against a fake `gh` and a fake `docker`.
 #
 # The fake docker plays Pi in --mode json: for each model it prints the events
-# stored in $T/pi/<model with / as _> (see `says` / `fails` below), so each case
-# checks what the wrapper does with a given transcript - which model it ends
+# stored in $T/pi/<model with / as _> and plays the review tools by writing
+# $T/pi/<model>.report into the mounted /out (see `says` / `fails` below), so
+# each case checks what the wrapper does with a given run - which model it ends
 # on, what it reports, and which exit code the orchestrator sees.
 #
 # Usage: tests/test-pi-review.sh
@@ -69,21 +70,30 @@ cat > "$T/bin/docker" <<'DOCKER'
 printf '%s\n' "$*" >> "$DOCKER_LOG.args"
 while [[ $# -gt 0 && "$1" != --model ]]; do shift; done
 m="${2//\//_}"; echo "$2" >> "$DOCKER_LOG"
+out="$(tr ' ' '\n' < <(tail -n 1 "$DOCKER_LOG.args") | sed -n 's|:/out$||p')"
+if [[ -f "$PI_DIR/$m.report" ]]; then   # the model called the tools
+    jq -c '.findings[]' "$PI_DIR/$m.report" > "$out/findings.jsonl"
+    jq -c '.reopens[]?' "$PI_DIR/$m.report" > "$out/reopens.jsonl"
+    jq -e '.closed != false' "$PI_DIR/$m.report" >/dev/null && echo "x" > "$out/done"
+fi
 cat "$PI_DIR/$m" 2>/dev/null || { echo "no fake for $2" >&2; exit 1; }
 DOCKER
 chmod +x "$T/bin/gh" "$T/bin/docker"
 
-# says <model> <final reply text>: Pi ran and answered.
-says(){ jq -nc --arg t "$2" '{type: "agent_end", messages: [
+# says <model> <report json>: Pi ran and reported that through the tools.
+# A non-JSON second argument means it answered in prose and never reported.
+says(){ rm -f "$T/pi/${1//\//_}.report"
+  jq -e . <<<"$2" >/dev/null 2>&1 && printf '%s\n' "$2" > "$T/pi/${1//\//_}.report"
+  jq -nc --arg t "$2" '{type: "agent_end", messages: [
     {role: "assistant", stopReason: "toolUse", usage: {input: 100, output: 10, cacheRead: 900, cacheWrite: 0}, content: []},
     {role: "assistant", stopReason: "stop", usage: {input: 50, output: 20, cacheRead: 1000, cacheWrite: 0},
      content: [{type: "text", text: $t}]}]}' > "$T/pi/${1//\//_}"; }
 # fails <model> <error>: the provider refused (Pi still exits 0).
-fails(){ jq -nc --arg e "$2" '{type: "agent_end", messages: [
+fails(){ rm -f "$T/pi/${1//\//_}.report"; jq -nc --arg e "$2" '{type: "agent_end", messages: [
     {role: "assistant", stopReason: "error", errorMessage: $e, usage: {input: 0, output: 0}, content: []}]}' \
     > "$T/pi/${1//\//_}"; }
 fence='```'
-report(){ printf 'thinking...\n%sjson\n%s\n%s\n' "$fence" "$1" "$fence"; }
+report(){ printf '%s' "$1"; }
 EMPTY='{"findings": [], "reopens": []}'
 
 # run <agent> [extra args...] -> OUT, RC; logs: $T/gh.log, $T/docker.log
@@ -120,26 +130,16 @@ says zai/glm-5.1 "$(report "$EMPTY")"
 run pi-agent
 [[ "$RC" -eq 0 ]] && jq -e '.report.findings == []' <<<"$OUT" >/dev/null && ok "exit 0, no findings" || bad "rc=$RC"
 
-echo "=== an agent's own severity scale is mapped, not rejected ==="
-says zai/glm-5.1 "$(report '{"findings": [
-  {"severity": "CRITICAL", "file": "src/a.py", "line": 1, "title": "a", "body": "b"},
-  {"severity": "high", "file": "src/a.py", "line": 1, "title": "a", "body": "b"},
-  {"severity": "Medium", "file": "src/b.py", "line": 1, "title": "a", "body": "b"}], "reopens": []}')"
-run pi-agent
-[[ "$RC" -eq 0 ]] && jq -e '[.report.findings[].severity] == ["P1","P2","P3"]' <<<"$OUT" >/dev/null \
-    && ok "critical/high/medium -> P1/P2/P3" || bad "rc=$RC sev=$(jq -c '[.report.findings[]?.severity]' <<<"$OUT")"
-says zai/glm-5.1 "$(report '{"findings": [{"severity": "URGENT", "file": "src/a.py", "line": 1, "title": "a", "body": "b"}], "reopens": []}')"
-run pi-agent
-[[ "$RC" -eq 3 ]] && ok "an unknown severity is still off-contract" || bad "rc=$RC"
-
-echo "=== a model that ran but answered off-contract is a strike, not a fallback ==="
+echo "=== a model that never closed its report is a strike, not a fallback ==="
 says zai/glm-5.1 "Looks good to me!"; says google/gemini-2.5-flash "$(report "$EMPTY")"
 run pi-agent
-[[ "$RC" -eq 3 ]] && ok "no JSON block -> exit 3" || bad "rc=$RC"
+[[ "$RC" -eq 3 ]] && ok "no tool report -> exit 3" || bad "rc=$RC"
 [[ "$(ran)" == "zai/glm-5.1" ]] && ok "did not move on to the next model" || bad "ran: $(ran)"
-says zai/glm-5.1 "$(report '{"findings": [{"severity": "P2", "file": "src/a.py", "line": "1", "title": "t", "body": "b"}]}')"
+says zai/glm-5.1 '{"closed": false, "findings": [{"severity": "P2", "file": "src/a.py", "line": 1, "title": "t", "body": "b"}]}'
 run pi-agent
-[[ "$RC" -eq 3 ]] && ok "string line number -> exit 3" || bad "rc=$RC"
+[[ "$RC" -eq 3 ]] && ok "findings recorded but finish_review never called -> exit 3" || bad "rc=$RC out=$OUT"
+grep -q 'review-tools.ts' "$T/docker.log.args" && grep -q -- '--no-extensions -e /opt/pi-ext/review-tools.ts' "$T/docker.log.args" \
+    && ok "only the review tools extension is loaded" || bad "args: $(cat "$T/docker.log.args")"
 
 echo "=== a provider failure moves down the chain ==="
 fails zai/glm-5.1 "401 token expired or incorrect"; says google/gemini-2.5-flash "$(report "$EMPTY")"

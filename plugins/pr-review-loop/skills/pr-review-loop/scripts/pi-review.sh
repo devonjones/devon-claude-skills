@@ -2,9 +2,10 @@
 # Run one agent reviewer on a non-Claude model: a one-shot Pi run in Docker.
 # Usage: pi-review.sh <pr-number> <agent-name> <sha> [--model <provider/id>] [--replay [--prior <file>]]
 #
-# Reviews only - posts nothing. Pi reviews a throwaway export of <sha>, prints
-# its report as one fenced ```json block and exits. This script validates it
-# and prints one JSON object on stdout:
+# Reviews only - posts nothing. Pi reviews a throwaway export of <sha> and
+# reports through tools from ../pi/review-tools.ts: report_finding and
+# reopen_thread, each validated as it is called, then finish_review. A run that
+# never calls finish_review did not report. This script prints one JSON object:
 #   {agent, pr, sha, model, tried, seconds,
 #    usage: {input, output, cacheRead, cacheWrite, usd (Pi's own price; 0 if it has none)},
 #    report: {findings: [...], reopens: [...]}, dropped: [...]}
@@ -119,7 +120,8 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     docker build -q -t "$IMAGE" "$SCRIPT_DIR/../pi" >&2 || { echo "Error: image build failed" >&2; exit 1; }
 fi
 
-mkdir -p "$T/work" "$T/review"
+mkdir -p "$T/work" "$T/review" "$T/out"
+printf '%s\n' "$SCOPE_JSON" > "$T/review/scope.json"
 git archive "$SHA" | tar -x -C "$T/work"
 git -C "$T/work" init -q
 git -C "$T/work" -c core.hooksPath=/dev/null -c user.name=pi -c user.email=pi@localhost add -A
@@ -166,19 +168,12 @@ Workflow:
    A reasoned decline on wording or style grounds is final; do not reopen it.
 2. Review the diff for your in-scope files, reading surrounding code as needed.
    Only flag real issues within your focus; consider the project's context.
-3. End your reply with exactly one fenced \`\`\`json block and nothing after it:
-
-\`\`\`json
-{"findings": [{"severity": "P1|P2|P3", "file": "<path from the scope list>",
-   "line": <line number in the new file, inside a diff hunk>,
-   (severity is P1, P2 or P3; if your focus above uses another scale, map it:
-    critical -> P1, high -> P2, medium or low -> P3)
-   "title": "<one line>", "body": "<the issue, the fix, and its proof - or 'judgement:' / 'hypothesis:'>"}],
- "reopens": [{"comment_id": <Thread ID from prior-comments.txt>, "reason": "<why the reply is insufficient>"}]}
-\`\`\`
-
-Nothing to report: {"findings": [], "reopens": []}. That block is your whole
-report; anything outside it is discarded.
+3. Report through your tools - your written reply is discarded:
+   - report_finding once per finding, as soon as you have checked it. If a call
+     returns an error, the finding was NOT recorded: fix it and call again.
+   - reopen_thread for each prior comment you reopen (step 1).
+   - finish_review exactly once at the end, also when there is nothing to
+     report. Without it your review counts as not delivered.
 EOF
 
 key_var() {   # the env var holding <provider>'s API key, per Pi's provider table
@@ -235,14 +230,17 @@ for MODEL in "${CHAIN[@]}"; do
     fi
 
     git -C "$T/work" reset -q --hard && git -C "$T/work" clean -qfdx   # undo the last model's edits
+    rm -f "$T/out/"*
     START=$SECONDS
     set +e
     timeout -k 30 "$TIMEOUT" docker run --rm --name "$CONTAINER" \
         --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
         --memory 4g --pids-limit 512 \
         "${DOCKER_ENV[@]}" \
-        -v "$T/work:/work" -v "$T/review:/review:ro" -w /work \
-        "$IMAGE" --mode json --no-session --model "$MODEL" @/review/prompt.md \
+        -v "$T/work:/work" -v "$T/review:/review:ro" -v "$T/out:/out" -w /work \
+        -v "$SCRIPT_DIR/../pi/review-tools.ts:/opt/pi-ext/review-tools.ts:ro" \
+        "$IMAGE" --mode json --no-session --no-extensions -e /opt/pi-ext/review-tools.ts \
+        --model "$MODEL" @/review/prompt.md \
         > "$T/pi.out" 2> "$T/pi.err"
     PI_RC=$?
     set -e
@@ -262,28 +260,17 @@ for MODEL in "${CHAIN[@]}"; do
     fi
     TRIED+=("$MODEL")
 
-    # ---- parse: the last ```json block of the final reply, strictly shaped ----
+    # ---- the report is what the tools recorded, and only if it was closed ----
     TEXT="$(jq -r '[.content[]? | select(.type == "text") | .text] | join("")' <<<"${LAST:-null}" 2>/dev/null || true)"
-    REPORT="$(awk '/^```json[[:space:]]*$/ {buf=""; inb=1; next}
-                   inb && /^```[[:space:]]*$/ {last=buf; inb=0; next}
-                   inb {buf = buf $0 "\n"}
-                   END {printf "%s", last}' <<<"$TEXT" \
-        | jq -ce '
-            # Agents written for Claude often grade critical/high/medium/low.
-            def sev: (if type == "string" then ascii_upcase else "" end)
-                | {"P0":"P1","P1":"P1","P2":"P2","P3":"P3","CRITICAL":"P1","HIGH":"P2","MEDIUM":"P3","LOW":"P3"}[.];
-            def finding: (.severity | sev != null) and (.file | type == "string")
-                and (.line | type == "number" and . > 0 and floor == .)
-                and (.title | type == "string" and length > 0) and (.body | type == "string");
-            def reopen: (.comment_id | type == "number") and (.reason | type == "string" and length > 0);
-            select(type == "object" and (.findings | type == "array")
-                   and ((.reopens // []) | type == "array")
-                   and all(.findings[]; finding) and all((.reopens // [])[]; reopen))
-            | .reopens //= [] | .findings |= map(.severity |= sev)' 2>/dev/null)" || REPORT=""
+    REPORT=""
+    if [[ -f "$T/out/done" ]]; then
+        REPORT="$(jq -nc --slurpfile f <(cat "$T/out/findings.jsonl" 2>/dev/null) \
+            --slurpfile r <(cat "$T/out/reopens.jsonl" 2>/dev/null) '{findings: $f, reopens: $r}')" || REPORT=""
+    fi
     if [[ -z "$REPORT" ]]; then
-        # A model that crashed, timed out or answered off-contract looks exactly
+        # A model that crashed, timed out or never closed its report looks exactly
         # like a reviewer with nothing to say. It is a strike, not a fallback.
-        echo "Error: $MODEL produced no valid report (pi exit $PI_RC; 124 = timeout after ${TIMEOUT}s)" >&2
+        echo "Error: $MODEL never called finish_review (pi exit $PI_RC; 124 = timeout after ${TIMEOUT}s)" >&2
         echo "--- pi stderr (tail) ---" >&2; tail -n 20 "$T/pi.err" >&2
         echo "--- final reply (tail) ---" >&2; tail -n 40 <<<"$TEXT" >&2
         exit 3

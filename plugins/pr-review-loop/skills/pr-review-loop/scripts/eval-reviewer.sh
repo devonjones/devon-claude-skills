@@ -98,11 +98,17 @@ replay_model() {   # <agent> <model> <commits-file>: one model, commits in turn
     while read -r pr sha; do
         out="$dir/replays/${sha:0:12}__${model//\//_}.json"
         [[ -s "$out" ]] && continue
-        set +e
-        "$SCRIPT_DIR/pi-review.sh" "$pr" "$agent" "$sha" --replay --model "$model" --prior "$dir/prior/${sha:0:12}.txt" \
-            < /dev/null > "$out.tmp" 2> "$out.err"
-        rc=$?
-        set -e
+        # Retry once, as the loop re-runs a reviewer that failed to report; only
+        # a second failure counts. Setup (1) and a moved head (2) are not retried.
+        for attempt in 1 2; do
+            set +e
+            "$SCRIPT_DIR/pi-review.sh" "$pr" "$agent" "$sha" --replay --model "$model" --prior "$dir/prior/${sha:0:12}.txt" \
+                < /dev/null > "$out.tmp" 2> "$out.err"
+            rc=$?
+            set -e
+            [[ "$rc" -eq 0 || "$rc" -eq 1 || "$rc" -eq 2 || "$attempt" -eq 2 ]] && break
+            echo "  $model @ ${sha:0:8}: exit $rc, retrying once" >&2
+        done
         if [[ "$rc" -eq 0 ]]; then mv -f "$out.tmp" "$out"
         else jq -n --argjson rc "$rc" --arg e "$(tail -n 3 "$out.err")" --arg m "$model" \
                 '{failed: true, exit: $rc, error: $e, model: $m}' > "$out"; rm -f "$out.tmp"
