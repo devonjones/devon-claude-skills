@@ -1,0 +1,14 @@
+{
+  "_comment": "Copy to ~/.config/pr-review-loop/pi-prices.json and fill in your own numbers. usd_per_mtok: list price per 1M tokens (cacheRead falls back to input). plan: the model is billed by a subscription; reviews_per_month is measured, not read off the plan page: note the plan's usage %, run a few replays, read it again.",
+  "models": {
+    "zai/glm-5.1": {"plan": "zai"},
+    "qwen-token-plan/qwen3.8-max": {"plan": "qwen-token-plan"},
+    "qwen-token-plan/qwen3.8-flash": {"plan": "qwen-token-plan"},
+    "qwen-token-plan/deepseek-v4-pro": {"plan": "qwen-token-plan"},
+    "google/gemini-2.5-flash": {"usd_per_mtok": {"input": null, "output": null, "cacheRead": null}}
+  },
+  "plans": {
+    "qwen-token-plan": {"monthly_usd": 6, "reviews_per_month": {}},
+    "zai": {"monthly_usd": null, "reviews_per_month": {}}
+  }
+}
