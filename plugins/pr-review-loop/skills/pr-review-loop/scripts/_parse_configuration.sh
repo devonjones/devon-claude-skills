@@ -383,9 +383,9 @@ PI_BAD="$(printf '%s\n' "$RAW_JSON" | jq -r '
     select(has("pi")) | .pi
     | if type != "object" then "must be an object (got \(type))"
       elif has("all") and (.all | type) != "boolean" then ".all must be a boolean"
-      elif has("model") and ((.model | type) != "string" or .model == "") then ".model must be a non-empty string"
+      elif has("model") and ((.model | type) != "string" or (.model | test("^[^/\\s]+/\\S+$") | not)) then ".model must be provider/id"
       elif has("agents") and (.agents | type) != "object" then ".agents must be an object"
-      elif any((.agents // {})[]; (type != "boolean") and (type != "string" or . == "")) then ".agents values must be true, false or a model string"
+      elif any((.agents // {})[]; (type != "boolean") and (type != "string" or (test("^[^/\\s]+/\\S+$") | not))) then ".agents values must be true, false or provider/id"
       elif ((.all == true) or any((.agents // {})[]; . == true)) and ((.model // "") == "") then "routes agents to pi with no .model to run them on"
       else empty end
 ')"

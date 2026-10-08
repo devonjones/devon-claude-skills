@@ -47,10 +47,13 @@ cat > "$T/bin/gh" <<'GH'
 printf '%s\0' "$@" >> "$GH_LOG"; printf '\n' >> "$GH_LOG"
 case "$*" in
   "repo view"*)                 echo "o/r" ;;
-  "pr view"*headRefOid*)        echo "$FAKE_HEAD" ;;
+  "pr view"*headRefOid*)        # FAKE_HEAD_AFTER: the head moves after the first read (a push mid-run)
+      if [[ -n "${FAKE_HEAD_AFTER:-}" && -e "$GH_LOG.headread" ]]; then echo "$FAKE_HEAD_AFTER"
+      else : > "$GH_LOG.headread"; echo "$FAKE_HEAD"; fi ;;
   "pr view"*commits*)           echo "$FAKE_HEAD" ;;
-  "pr diff"*)                   echo "diff --git a/src/a.py b/src/a.py" ;;
-  "api graphql"*)               echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}' ;;
+  "pr diff"*)                   [[ -n "${FAKE_DIFF_FAIL:-}" ]] && exit 4; echo "diff --git a/src/a.py b/src/a.py" ;;
+  "api graphql"*)               # one resolved thread whose first comment is database id 7
+      echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"T1","isResolved":true,"comments":{"nodes":[{"id":"C1","databaseId":7,"body":"x","author":{"login":"me"},"path":"src/a.py","line":1}]}}]}}}}}' ;;
   *"--method POST"*)
       [[ -n "${FAKE_POST_FAIL:-}" ]] && { echo '{"message":"Validation Failed"}'; exit 1; }
       echo '{"id":7}' ;;
@@ -60,16 +63,16 @@ GH
 cat > "$T/bin/docker" <<'DOCKER'
 #!/usr/bin/env bash
 case "$1" in
-  run) echo run >> "$DOCKER_LOG"; printf '%s' "$FAKE_PI_OUT"; exit "${FAKE_PI_RC:-0}" ;;
+  run) echo run >> "$DOCKER_LOG"; printf '%s\n' "$*" >> "$DOCKER_LOG.args"; printf '%s' "$FAKE_PI_OUT"; exit "${FAKE_PI_RC:-0}" ;;
   *)   exit 0 ;;
 esac
 DOCKER
 chmod +x "$T/bin/gh" "$T/bin/docker"
 
 # run <agent> [pi stdout]  -> sets OUT, RC; logs in $T/gh.log, $T/docker.log
-run(){ : > "$T/gh.log"; : > "$T/docker.log"; set +e
+run(){ : > "$T/gh.log"; rm -f "$T/gh.log.headread"; : > "$T/docker.log"; : > "$T/docker.log.args"; set +e
   OUT=$(cd "$REPO" && PATH="$T/bin:$PATH" GH_LOG="$T/gh.log" DOCKER_LOG="$T/docker.log" \
-        FAKE_HEAD="${FAKE_HEAD:-$SHA}" FAKE_PI_OUT="${2:-}" \
+        FAKE_HEAD="${FAKE_HEAD:-$SHA}" FAKE_PI_OUT="${2:-}" FAKE_HEAD_AFTER="${FAKE_HEAD_AFTER:-}" FAKE_DIFF_FAIL="${FAKE_DIFF_FAIL:-}" \
         PR_REVIEW_LOOP_TEST_CHANGED_FILES=$'src/a.py\nsrc/b.py' \
         PR_REVIEW_LOOP_PACE_S=0 PR_REVIEW_LOOP_PACE_DIR="$T/pace" DREAM_HOME="$T/dream" \
         DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY-k}" \
@@ -122,6 +125,59 @@ FAKE_POST_FAIL=1 run pi-agent "${fence}json
 ${fence}"
 [[ "$RC" -eq 4 && "$OUT" == *"FAILED | src/b.py:1"* ]] && ok "exit 4 with FAILED line" || bad "rc=$RC out=$OUT"
 
+echo "=== the head moves while Pi runs: nothing is posted ==="
+FAKE_HEAD_AFTER=1111111111111111111111111111111111111111 run pi-agent "${fence}json
+{\"findings\": [{\"severity\": \"P2\", \"file\": \"src/a.py\", \"line\": 1, \"title\": \"t\", \"body\": \"b\"}], \"reopens\": []}
+${fence}"
+[[ "$RC" -eq 2 && "$(posts)" -eq 0 ]] && grep -q 'moved' "$T/err" && ok "post-run head check: exit 2, no POST" || bad "rc=$RC posts=$(posts)"
+
+echo "=== reopens ==="
+run pi-agent "${fence}json
+{\"findings\": [], \"reopens\": [{\"comment_id\": 7, \"reason\": \"the reply ignores the issue\"}]}
+${fence}"
+[[ "$RC" -eq 0 && "$OUT" == *"REOPENED | comment 7"* && "$OUT" != *"No issues found"* ]] && ok "reopen goes through reopen-comment.sh" || bad "rc=$RC out=$OUT"
+tr '\0' ' ' < "$T/gh.log" | grep -q 'addPullRequestReviewComment' && grep -q 'the reply ignores the issue' "$T/gh.log" \
+    && ok "the reopen reply carries the reason" || bad "no reopen reply in gh calls"
+run pi-agent "${fence}json
+{\"findings\": [], \"reopens\": [{\"comment_id\": \"7\", \"reason\": \"r\"}]}
+${fence}"
+[[ "$RC" -eq 3 ]] && ok "string comment_id -> exit 3" || bad "rc=$RC"
+
+echo "=== finding paths are normalised before the scope check ==="
+run pi-agent "${fence}json
+{\"findings\": [{\"severity\": \"P2\", \"file\": \"./src/a.py\", \"line\": 1, \"title\": \"dot\", \"body\": \"b\"},
+ {\"severity\": \"P2\", \"file\": \"/work/src/b.py\", \"line\": 1, \"title\": \"abs\", \"body\": \"b\"}], \"reopens\": []}
+${fence}"
+[[ "$RC" -eq 0 && "$(posts)" -eq 2 && "$OUT" == *"P2 | src/a.py:1 | dot"* && "$OUT" == *"P2 | src/b.py:1 | abs"* ]] \
+    && ok "./src/a.py and /work/src/b.py posted as repo paths" || bad "rc=$RC posts=$(posts) out=$OUT"
+
+echo "=== every finding dropped still answers the contract ==="
+run pi-agent "${fence}json
+{\"findings\": [{\"severity\": \"P2\", \"file\": \"elsewhere.py\", \"line\": 1, \"title\": \"t\", \"body\": \"b\"}], \"reopens\": []}
+${fence}"
+[[ "$RC" -eq 0 && "$OUT" == *"DROPPED"* && "$OUT" == *"No issues found"* ]] && ok "DROPPED line plus No issues found" || bad "out=$OUT"
+
+echo "=== failures leave a firing marker that says so ==="
+: > "$T/dream/markers/pr-review-loop.jsonl"
+FAKE_PI_RC=1 run pi-agent 'garbage'
+jq -e 'select(.kind == "reviewer-fired" and .status == "failed" and .exit == "3")' "$T/dream/markers/pr-review-loop.jsonl" >/dev/null \
+    && ok "exit 3 run: marker status failed, exit 3" || bad "marker: $(cat "$T/dream/markers/pr-review-loop.jsonl")"
+
+echo "=== the provider decides which key enters the container ==="
+sed -i 's|"pi-agent": true|"pi-agent": "google/gemini-2.5-flash"|' "$REPO/AGENT-REVIEWERS.md"
+GEMINI_API_KEY=k run pi-agent "${fence}json
+{\"findings\": [], \"reopens\": []}
+${fence}"
+grep -q -- '-e GEMINI_API_KEY' "$T/docker.log.args" && ! grep -q -- '-e GOOGLE_API_KEY' "$T/docker.log.args" \
+    && ok "google -> GEMINI_API_KEY, by name" || bad "args: $(cat "$T/docker.log.args")"
+GEMINI_API_KEY= run pi-agent ""
+[[ "$RC" -eq 1 ]] && grep -q GEMINI_API_KEY "$T/err" && ok "missing GEMINI_API_KEY -> exit 1" || bad "rc=$RC"
+sed -i 's|"pi-agent": "google/gemini-2.5-flash"|"pi-agent": true|' "$REPO/AGENT-REVIEWERS.md"
+
+echo "=== a failed setup step is exit 1, not its own code ==="
+FAKE_DIFF_FAIL=1 run pi-agent ""
+[[ "$RC" -eq 1 ]] && ok "gh pr diff exiting 4 -> exit 1 (not 'post failed')" || bad "rc=$RC"
+
 echo "=== setup refusals ==="
 run claude-agent ""
 [[ "$RC" -eq 1 ]] && ok "agent not on the pi engine -> exit 1" || bad "rc=$RC"
@@ -134,10 +190,19 @@ cfg(){ printf '# Configuration\n\n```json\n%s\n```\n' "$1" > "$T/cfg.md"; bash "
 cfg '{"pi": {"all": true}}' && bad "all:true with no model accepted" || ok "all:true with no model rejected"
 cfg '{"pi": {"agents": {"x": 5}}}' && bad "numeric agent value accepted" || ok "numeric agent value rejected"
 cfg '{"pi": {"agents": {"x": "openai/gpt-5-mini"}}}' && ok "per-agent model string needs no default model" || bad "per-agent model rejected"
+cfg '{"pi": {"agents": {"x": "qwen3.8-max"}}}' && bad "model with no provider accepted" || ok "model with no provider rejected"
+cfg '{"pi": {"agents": {"x": "/x/"}}}' && bad "/x/ accepted" || ok "/x/ rejected"
+cfg '{"pi": {"model": "nope"}}' && bad ".model with no provider accepted" || ok ".model with no provider rejected"
 ROUTE="$(cd "$REPO" && sed -i 's/"agents": {"pi-agent": true}/"all": true, "agents": {"claude-agent": false}/' AGENT-REVIEWERS.md \
     && PR_REVIEW_LOOP_TEST_CHANGED_FILES=src/a.py bash "$SCRIPT_DIR/../scripts/discover-agents.sh" 0 2>/dev/null \
     | jq -c '[.agents[] | {name, engine, pi_model}] | sort_by(.name)')"
 [[ "$ROUTE" == '[{"name":"claude-agent","engine":"claude","pi_model":null},{"name":"pi-agent","engine":"pi","pi_model":"deepseek/deepseek-chat"}]' ]] \
     && ok "all:true routes to pi; an explicit false keeps an agent on claude" || bad "routing: $ROUTE"
+
+ROUTE="$(cd "$REPO" && sed -i 's/"all": true, "agents": {"claude-agent": false}/"agents": {"pi-agent": "openai\/gpt-5-mini"}/' AGENT-REVIEWERS.md \
+    && PR_REVIEW_LOOP_TEST_CHANGED_FILES=src/a.py bash "$SCRIPT_DIR/../scripts/discover-agents.sh" 0 2>/dev/null \
+    | jq -c '[.agents[] | {name, engine, pi_model}] | sort_by(.name)')"
+[[ "$ROUTE" == '[{"name":"claude-agent","engine":"claude","pi_model":null},{"name":"pi-agent","engine":"pi","pi_model":"openai/gpt-5-mini"}]' ]] \
+    && ok "a per-agent model string routes that agent, overriding .model" || bad "routing: $ROUTE"
 
 echo ""; echo "Passed: $PASSED  Failed: $FAILED"; [[ "$FAILED" -eq 0 ]]

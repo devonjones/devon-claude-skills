@@ -715,10 +715,6 @@ Project-level config lives in a `# Configuration` H1 section in the **root** `AG
   },
   "bots": {
     "gemini": false
-  },
-  "pi": {
-    "model": "deepseek/deepseek-chat",
-    "agents": { "code-simplifier": true, "dry-reviewer": "google/gemini-2.5-flash" }
   }
 }
 ```
@@ -1540,17 +1536,12 @@ found". Every non-zero exit is a strike under "A reviewer that will not report".
 own `reviewer-fired` dream marker on every exit. Disposition markers in F3 are
 the same as for any agent.
 
-**Credentials.** By default the script passes only `<PROVIDER>_API_KEY` into
-the container (`GEMINI_API_KEY` for `google`). To pass something else, set
-`PI_REVIEW_ENV_FILE` to a docker env file. For an endpoint specific to your
-account (an Alibaba workspace URL, a local Ollama), point
-`PI_REVIEW_MODELS_JSON` at a Pi `models.json`; it replaces the image's
-`pi/models.json`, so copy the providers you still want. That key is visible to any PR code
-the reviewer runs, so use a spend-capped key. `PI_REVIEW_TIMEOUT` (default
-900 s) and `PI_REVIEW_IMAGE` (default: built from `pi/Dockerfile` on first use)
-are the other two knobs. The default image has no language toolchains beyond
-Python, so a repo that needs its own for tests should point `PI_REVIEW_IMAGE` at
-an image that adds them.
+**Credentials and settings.**
+- Only the model's provider key enters the container, by name: `<PROVIDER>_API_KEY` as in Pi's provider table (`GEMINI_API_KEY` for `google`). PR code the reviewer runs can read that key, so use a spend-capped one.
+- `PI_REVIEW_ENV_FILE`: a docker env file to pass instead of that one key.
+- `PI_REVIEW_MODELS_JSON`: a Pi `models.json` that replaces the image's `pi/models.json`, for account-specific endpoints (an Alibaba workspace URL, a local Ollama). Copy the providers you still want.
+- `PI_REVIEW_TIMEOUT` (default 900 s).
+- `PI_REVIEW_IMAGE` (default: built from `pi/Dockerfile` on first use). The default image has no toolchains beyond Python; point this at one that adds yours if reviewers should run your tests.
 
 ### Main Loop Integration
 
@@ -1747,6 +1738,7 @@ Bash(scripts/pi-review.sh:*)
 - `pre-commit` (optional) - If `.pre-commit-config.yaml` exists in the repo, pre-commit will be run.
   If pre-commit is not installed, a warning is shown but commits proceed.
   Install with: `pip install pre-commit && pre-commit install`
+- Docker and a model provider API key (optional) - only for agents routed to the Pi engine (`# Configuration .pi`).
 - `bd` (beads) (optional) - Issue tracker for capturing out-of-scope suggestions as tickets.
   If not installed, out-of-scope suggestions are handled with "Out of scope for this PR" replies.
   See: https://github.com/steveyegge/beads

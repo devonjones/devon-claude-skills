@@ -13,18 +13,23 @@
 #
 # Exit codes - only 0 means the reviewer REPORTED:
 #   0  reported; every finding and reopen was posted
-#   1  setup failed (args, roster, docker, model key)
+#   1  setup failed (args, roster, docker, model key, gh, git)
 #   2  the PR head is not <dispatch-sha>; nothing was posted
 #   3  Pi produced no valid report (crash, timeout, provider error, bad JSON)
-#   4  reported, but at least one post failed (manifest lists FAILED lines)
+#   4  not reported: at least one post failed (manifest lists FAILED lines)
 #
 # Env: PI_REVIEW_TIMEOUT (seconds, default 900), PI_REVIEW_IMAGE (default: the
 # image built from ../pi/Dockerfile on first use), PI_REVIEW_ENV_FILE (docker
-# --env-file for the model's credentials; default: pass only <PROVIDER>_API_KEY),
+# --env-file for the model's credentials; default: pass only the model's
+# provider key, named as in Pi's provider table: <PROVIDER>_API_KEY, or
+# GEMINI_API_KEY / HF_TOKEN / AI_GATEWAY_API_KEY / OPENCODE_API_KEY),
 # PI_REVIEW_MODELS_JSON (a Pi models.json that replaces the image's, for
 # account-specific endpoints such as an Alibaba workspace URL).
 
 set -euo pipefail
+# Any unhandled failure is a setup failure (exit 1), never a stray code that
+# reads as "head moved" (2) or "post failed" (4).
+trap 'echo "Error: setup step failed (line $LINENO)" >&2; exit 1' ERR
 
 USAGE="Usage: pi-review.sh <pr-number> <agent-name> <dispatch-sha>"
 PR="${1:?$USAGE}"
@@ -98,11 +103,11 @@ git cat-file -e "$SHA^{commit}" 2>/dev/null || git fetch -q origin "$SHA" \
 
 mkdir -p "$T/work" "$T/review"
 git archive "$SHA" | tar -x -C "$T/work"
-git -C "$T/work" init -q
-git -C "$T/work" -c core.hooksPath=/dev/null -c user.name=pi -c user.email=pi@localhost \
-    add -A
-git -C "$T/work" -c core.hooksPath=/dev/null -c user.name=pi -c user.email=pi@localhost \
-    commit -q --no-verify -m "PR #$PR at $SHA"
+# A fresh repo: no hooks of ours run, and `git diff` shows only Pi's edits.
+SCRATCH_GIT=(git -C "$T/work" -c core.hooksPath=/dev/null -c user.name=pi -c user.email=pi@localhost)
+"${SCRATCH_GIT[@]}" init -q
+"${SCRATCH_GIT[@]}" add -A
+"${SCRATCH_GIT[@]}" commit -q --no-verify -m "PR #$PR at $SHA"
 gh pr diff "$PR" > "$T/review/pr.diff"
 "$SCRIPT_DIR/get-agent-comments.sh" "$PR" "$AGENT" --with-replies > "$T/review/prior-comments.txt"
 
@@ -152,6 +157,7 @@ report; anything outside it is discarded.
 EOF
 
 # ---- run Pi ----
+trap - ERR   # Pi's own exit is judged below, not as a setup failure
 set +e
 timeout -k 30 "$TIMEOUT" docker run --rm --name "$CONTAINER" \
     --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
@@ -162,6 +168,7 @@ timeout -k 30 "$TIMEOUT" docker run --rm --name "$CONTAINER" \
     > "$T/pi.out" 2> "$T/pi.err"
 PI_RC=$?
 set -e
+trap 'echo "Error: setup step failed (line $LINENO)" >&2; exit 1' ERR
 
 # ---- parse: the last ```json block, strictly shaped ----
 REPORT="$(awk '/^```json[[:space:]]*$/ {buf=""; inb=1; next}
@@ -176,7 +183,9 @@ REPORT="$(awk '/^```json[[:space:]]*$/ {buf=""; inb=1; next}
         select(type == "object" and (.findings | type == "array")
                and ((.reopens // []) | type == "array")
                and all(.findings[]; finding) and all((.reopens // [])[]; reopen))
-        | .reopens //= []' 2>/dev/null)" || REPORT=""
+        | .reopens //= []
+        # Models often write ./path or /work/path; the scope list is repo-relative.
+        | .findings |= map(.file |= sub("^(\\./|/work/)+"; ""))' 2>/dev/null)" || REPORT=""
 if [[ -z "$REPORT" ]]; then
     # A Pi that crashed, timed out or hit a provider error looks exactly like a
     # reviewer with nothing to say. Only a well-formed report counts.
@@ -220,6 +229,7 @@ $(jq -r .body <<<"$f")
     fi
 done < <(jq -c '.findings[]' <<<"$REPORT")
 
-[[ "$(jq '(.findings | length) + (.reopens | length)' <<<"$REPORT")" -eq 0 ]] && echo "No issues found"
+# Nothing posted (every finding dropped, or none) still answers the contract.
+if [[ "$POSTED" -eq 0 && "$(jq '.reopens | length' <<<"$REPORT")" -eq 0 ]]; then echo "No issues found"; fi
 STATUS="reported"
 [[ "$FAILS" -eq 0 ]] || { STATUS="post-failed"; exit 4; }
