@@ -55,10 +55,17 @@
 # }
 #
 # Usage: discover-agents.sh <pr-number>
+#        discover-agents.sh --base <ref>     # local mode: diff <ref>...HEAD, no PR
 
 set -euo pipefail
 
-PR_NUMBER="${1:?Usage: discover-agents.sh <pr-number>}"
+BASE_REF=""
+if [[ "${1:-}" == "--base" ]]; then
+    BASE_REF="${2:?Usage: discover-agents.sh --base <ref>}"
+    PR_NUMBER=""
+else
+    PR_NUMBER="${1:?Usage: discover-agents.sh <pr-number> | --base <ref>}"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -98,9 +105,17 @@ fi
 # and for offline development.
 if [[ -n "${PR_REVIEW_LOOP_TEST_CHANGED_FILES+set}" ]]; then
     CHANGED_FILES="$PR_REVIEW_LOOP_TEST_CHANGED_FILES"
+elif [[ -n "$BASE_REF" ]]; then
+    CHANGED_FILES=$(git diff --name-only "$BASE_REF"...HEAD)
 else
     CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --name-only)
 fi
+
+# Nobody hand-writes lockfiles, minified bundles, source maps or beads exports,
+# so no reviewer reads them.
+GENERATED_RE='(^|/)(uv\.lock|poetry\.lock|Pipfile\.lock|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb|Cargo\.lock|go\.sum|Gemfile\.lock|composer\.lock|flake\.lock|\.terraform\.lock\.hcl)$|\.min\.(js|css)$|\.map$|(^|/)\.beads/'
+EXCLUDED_FILES=$(grep -E "$GENERATED_RE" <<< "$CHANGED_FILES" || true)
+CHANGED_FILES=$(grep -v -E "$GENERATED_RE" <<< "$CHANGED_FILES" || true)
 
 # Note: an empty CHANGED_FILES used to early-exit with empty output.
 # After bfd, defaults still spawn even on an empty diff (degenerate PR),
@@ -259,6 +274,7 @@ fi
 
 # Build JSON array of changed files for scoping
 CHANGED_FILES_JSON=$(jq -n --arg files "$CHANGED_FILES" '$files | split("\n") | map(select(. != ""))')
+EXCLUDED_FILES_JSON=$(jq -n --arg files "$EXCLUDED_FILES" '$files | split("\n") | map(select(. != ""))')
 
 # Load defaults from plugins/pr-review-loop/agents/*.md.
 DEFAULTS_JSON=$("$SCRIPT_DIR/_load_defaults.sh")
@@ -365,6 +381,7 @@ JQ_INPUT=$(
     DEFAULTS_JSON="$DEFAULTS_JSON" \
     CONFIGURATION_JSON="$CONFIGURATION_JSON" \
     FILES_JSON="$CHANGED_FILES_JSON" \
+    EXCLUDED_JSON="$EXCLUDED_FILES_JSON" \
     LANGUAGE_DETECTION_JSON="$LANGUAGE_DETECTION_JSON" \
     jq -n --arg current_version "$CURRENT_PLUGIN_VERSION" --arg defaults_version "$DEFAULTS_VERSION" '
         {
@@ -372,6 +389,7 @@ JQ_INPUT=$(
             defaults: (env.DEFAULTS_JSON | fromjson),
             configuration: (env.CONFIGURATION_JSON | fromjson),
             files: (env.FILES_JSON | fromjson),
+            excluded: (env.EXCLUDED_JSON | fromjson),
             current_version: $current_version,
             defaults_version: $defaults_version,
             language_detection: (env.LANGUAGE_DETECTION_JSON | fromjson)
@@ -387,6 +405,7 @@ echo "$JQ_INPUT" | jq '
     .defaults as $defaults |
     .configuration as $config |
     .files as $files |
+    .excluded as $excluded |
     .current_version as $current_version |
     .defaults_version as $defaults_version |
     .language_detection as $language_detection |
@@ -451,11 +470,16 @@ echo "$JQ_INPUT" | jq '
     ) as $user_agents |
 
     # ---- 6. Final merged agent list, each stamped with its engine ----
+    # A reviewer with nothing in its scope is not spawned. The exception is a
+    # genuinely empty diff, where defaults still run (bfd); a diff that was
+    # all generated files spawns nobody.
     # engine "pi" runs the agent through pi-review.sh on pi_model instead of a
     # Claude Task. Per-agent `pi.agents` entries beat `pi.all`; the parser has
     # already rejected a pi route with no model to run on.
     ($config.pi // {}) as $pi |
-    ($user_agents + $effective_defaults
+    ($user_agents + $effective_defaults) as $candidates |
+    (if ($files | length) == 0 and ($excluded | length) == 0 then $candidates
+     else $candidates | map(select(.changed_files | length > 0)) end
         | map(.name as $n | (($pi.agents // {})[$n]) as $v |
             (if ($v | type) == "string" then $v
              elif $v == true then $pi.model
@@ -509,6 +533,8 @@ echo "$JQ_INPUT" | jq '
                 uncertain_action: (if ($iv | type == "object") and ($iv | has("uncertain_action"))
                                    then $iv.uncertain_action else "post_with_annotation" end)
             }),
+            excluded_files: $excluded,
+            not_dispatched_no_files: (($candidates | map(.name)) - ($merged_agents | map(.name))),
             spawned_count: ($merged_agents | length),
             default_count: ($effective_defaults | length),
             override_count: ($overridden_default_names | length),
@@ -516,7 +542,7 @@ echo "$JQ_INPUT" | jq '
             overridden_default_names: $overridden_default_names,
             pi_count: ($merged_agents | map(select(.engine == "pi")) | length),
             # pi.agents entries naming no agent on the roster (typos, disabled defaults)
-            pi_agents_unknown: ((($pi.agents // {}) | keys) - ($merged_agents | map(.name)))
+            pi_agents_unknown: ((($pi.agents // {}) | keys) - ($candidates | map(.name)))
         },
         language_detection: $language_detection
     }

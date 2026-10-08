@@ -9,7 +9,7 @@ manifest to return, a bot does not.
 
 | Reviewer | Reported means | Not reported |
 |---|---|---|
-| **Agent reviewer (C3)** | Returned a posting manifest, including the literal "No issues found" | Task failed, returned nothing, or returned an off-shape answer that names no findings and does not say it found none |
+| **Agent reviewer (C3)** | Returned a manifest, including the literal "No issues found" | Task failed, returned nothing, or returned an off-shape answer that names no findings and does not say it found none |
 | **Pi-engine agent (C3)** | `pi-review.sh` exited 0 (its stdout is the manifest) | Any other exit: 1 setup, 2 head moved, 3 no valid report from Pi, 4 a post failed |
 | **External bot (C1/C2)** | A review by that bot exists on the commit the round reviewed | No such review. A check that *failed* is a third case — see below. |
 | **Disabled bot, disabled agent, retired agent** | Outside the denominator — deliberately not dispatched | n/a |
