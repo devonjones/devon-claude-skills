@@ -70,6 +70,9 @@ cat > "$T/bin/docker" <<'DOCKER'
 printf '%s\n' "$*" >> "$DOCKER_LOG.args"
 while [[ $# -gt 0 && "$1" != --model ]]; do shift; done
 m="${2//\//_}"; echo "$2" >> "$DOCKER_LOG"
+# Hung (silent) or slow-but-working (trickling) runs, before anything is reported.
+if [[ -n "${FAKE_PI_SILENT:-}" ]]; then sleep "$FAKE_PI_SILENT"; fi
+if [[ -n "${FAKE_PI_TRICKLE:-}" ]]; then for i in $(seq "$FAKE_PI_TRICKLE"); do echo '{"type":"turn_start"}'; sleep 1; done; fi
 out="$(tr ' ' '\n' < <(tail -n 1 "$DOCKER_LOG.args") | sed -n 's|:/out$||p')"
 if [[ -f "$PI_DIR/$m.report" ]]; then   # the model called the tools
     jq -c '.findings[]' "$PI_DIR/$m.report" > "$out/findings.jsonl"
@@ -102,6 +105,8 @@ run(){ : > "$T/gh.log"; : > "$T/docker.log"; : > "$T/docker.log.args"; set +e
         FAKE_HEAD="${FAKE_HEAD:-$SHA}" FAKE_FIRST="$SHA" \
         PR_REVIEW_LOOP_TEST_CHANGED_FILES=$'src/a.py\nsrc/b.py' \
         PI_REVIEW_CACHE_DIR="$T/cache" DREAM_HOME="$T/dream" PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$T/no-pi}" \
+        FAKE_PI_SILENT="${FAKE_PI_SILENT:-}" FAKE_PI_TRICKLE="${FAKE_PI_TRICKLE:-}" \
+        PI_REVIEW_IDLE_TIMEOUT="${PI_REVIEW_IDLE_TIMEOUT:-600}" PI_REVIEW_SANDBOX="${PI_REVIEW_SANDBOX:-docker}" \
         PRIOR_SEEN="${PRIOR_SEEN:-/dev/null}" CLAUDE_LOG="${CLAUDE_LOG:-/dev/null}" FAKE_CLAUDE_NOREPORT="${FAKE_CLAUDE_NOREPORT:-}" FAKE_CLAUDE_LIMIT="${FAKE_CLAUDE_LIMIT:-}" \
         ZAI_API_KEY="${ZAI_API_KEY-k}" GEMINI_API_KEY="${GEMINI_API_KEY-k}" DEEPSEEK_API_KEY=k \
         bash "$PI_REVIEW" 42 "$1" "$SHA" "${@:2}" 2>"$T/err"); RC=$?; set -e; }
@@ -188,6 +193,30 @@ says zai-payg/glm-5.1 "$(report "$EMPTY")"
 PI_CODING_AGENT_DIR="$T/pi-home" run pi-agent --model zai-payg/glm-5.1
 [[ "$RC" -eq 0 ]] && grep -q -- '-e ZAI_API_KEY ' "$T/docker.log.args" \
     && ok "custom provider's key variable comes from models.json" || bad "rc=$RC args: $(cat "$T/docker.log.args")"
+
+echo "=== the watchdog stops a hung run, not a slow one ==="
+says zai/glm-5.1 "$(report "$EMPTY")"
+PI_REVIEW_IDLE_TIMEOUT=2 FAKE_PI_SILENT=8 run pi-agent --model zai/glm-5.1
+[[ "$RC" -eq 3 ]] && grep -q 'no output for' "$T/err" && ok "silent past the idle limit -> stopped, exit 3" || bad "rc=$RC err=$(grep -i stop "$T/err")"
+PI_REVIEW_IDLE_TIMEOUT=2 FAKE_PI_TRICKLE=5 run pi-agent --model zai/glm-5.1
+[[ "$RC" -eq 0 ]] && ! grep -q 'Stopping' "$T/err" && ok "still writing after 5s with a 2s idle limit -> left alone" || bad "rc=$RC err=$(grep -i stop "$T/err")"
+ls "$T/cache/runs/"*-pi-agent-*-zai_glm-5.1.jsonl >/dev/null 2>&1 && ok "run log kept in cache/runs" || bad "no run log"
+
+echo "=== host mode: no container, a stripped environment ==="
+cat > "$T/bin/pi" <<'PI'
+#!/usr/bin/env bash
+compgen -e | sort > "$HOST_ENV_SEEN.tmp"; mv -f "$HOST_ENV_SEEN.tmp" "$HOST_ENV_SEEN"; printf '%s\n' "$*" > "$HOST_ARGS_SEEN"
+mkdir -p "$PI_REVIEW_OUT"; : > "$PI_REVIEW_OUT/findings.jsonl"; echo x > "$PI_REVIEW_OUT/done"
+echo '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop","usage":{},"content":[{"type":"text","text":"done"}]}]}'
+PI
+chmod +x "$T/bin/pi"
+# The env-scrubbing subshell drops HOST_ENV_SEEN too, so bake the paths into the fake.
+sed -i "s|\$HOST_ENV_SEEN|$T/host-env|g; s|\$HOST_ARGS_SEEN|$T/host-args|g" "$T/bin/pi"
+SECRET_SHOULD_NOT_PASS=x PI_REVIEW_SANDBOX=host run pi-agent --model zai/glm-5.1
+[[ "$RC" -eq 0 && ! -s "$T/docker.log" ]] && ok "host mode runs pi directly, no docker" || bad "rc=$RC err=$(tail -2 "$T/err")"
+grep -qx 'ZAI_API_KEY' "$T/host-env" && grep -qx 'PI_REVIEW_OUT' "$T/host-env" && ! grep -q -e SECRET_SHOULD_NOT_PASS -e GEMINI_API_KEY -e GH_LOG "$T/host-env" \
+    && ok "only the model key and pi's own variables reach pi" || bad "env: $(paste -sd' ' "$T/host-env")"
+grep -q -- '--no-extensions -e .*review-tools.ts' "$T/host-args" && ok "review tools extension loaded" || bad "args: $(cat "$T/host-args")"
 
 echo "=== a moved head stops before Pi runs ==="
 FAKE_HEAD=0000000000000000000000000000000000000000 run pi-agent

@@ -1541,8 +1541,11 @@ Task tool:
     You post a code review that another model has already written. Do not
     review, judge, rewrite or drop anything yourself.
 
-    1. Run (it can take up to 15 minutes; use a 900000 ms timeout):
+    1. Run it with `run_in_background: true` (a review can take well over the
+       Bash tool's 10-minute limit) and wait for the completion notice:
        scripts/pi-review.sh <PR> <agent-name> <SHA recorded at C3>
+       Its stderr names the run log; mention that path in your answer so the
+       operator can watch it with scripts/pi-watch.sh.
     2. By exit code:
        - 0: stdout is JSON. For each `report.reopens` entry run
          scripts/reopen-comment.sh <PR> <comment_id> <agent-name> "<reason>"
@@ -1580,6 +1583,25 @@ Task tool:
 | `FALLBACK claude[:<model>]` | Not a strike. Spawn this agent's normal Claude Task now, in this round, on `<model>` if one is named. |
 | `NOT REPORTED exit 2` | The branch moved. The round is invalid (see Convergence). |
 | `NOT REPORTED` with any other exit | A strike under "A reviewer that will not report". Exit 6 means every provider in the chain failed. |
+
+**Watching a run.** Every Pi run's event stream is kept for 7 days in
+`~/.cache/pr-review-loop/runs/`. `scripts/pi-watch.sh` follows the newest run
+live (or `pi-watch.sh <file>`, `--once` to print and exit): each tool call with
+its arguments, what the model says, and a running token and cost tally. It runs
+in any terminal or a herdr pane.
+
+**Hung, not slow.** A run is stopped only when its log stops growing for
+`PI_REVIEW_IDLE_TIMEOUT` seconds (default 600). Pi streams every token and tool
+call, so a long review that is still working is left alone. `PI_REVIEW_TIMEOUT`
+(default 3600) is the hard cap.
+
+**Container or host.** `PI_REVIEW_SANDBOX=docker` (default) runs Pi in the
+image, with the scratch copy as the only writable mount. `PI_REVIEW_SANDBOX=host`
+runs your installed `pi` directly, with your `~/.pi/agent` config and the host's
+toolchains (Go, Node, … for mutation proofs). Its environment is stripped to
+`HOME`, `PATH`, the Pi config dir and the one model key, but there is no
+container boundary: PR code the reviewer runs can read your files, gh login
+included.
 
 **Telemetry.** The Haiku Task carries the standard description, so firing
 coverage works as for any agent. The script also writes a `reviewer-fired` dream
@@ -1785,6 +1807,7 @@ When detected, the script suggests:
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |
 | `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |
 | `eval-reviewer.sh harvest\|run\|assign ...` | Pick the cheapest model per agent that reviews as well as a baseline, on this repo's own history; build a `.pi.agents` block that spreads load across subscriptions. See "Pi Engine" |
+| `pi-watch.sh [--latest\|<run.jsonl>] [--once]` | Follow a Pi run live: tool calls, model text, running tokens and cost |
 | `pi-review.sh <PR> <agent> <sha> [--model M] [--replay]` | Run a `pi`-engine agent once in Docker down its model chain. Prints the report as JSON and posts nothing; a Haiku Task posts it. Exit 5 = use the Claude Task. See "Pi Engine" |
 | `emit-dream-marker.sh <kind> key=value ...` | Emit a dream marker (reviewer telemetry) — best-effort, never blocks. See "Dream Markers" |
 | `discover-agents.sh <PR>` | Discover + merge agent reviewers (defaults + user agents per C+E); emits `configuration` block with `stale_pin` and (when no AGENT-REVIEWERS.md exists) the `language_detection` block driving the Language Template Offer |
@@ -1810,6 +1833,7 @@ Bash(scripts/install-template.sh:*)
 Bash(scripts/emit-dream-marker.sh:*)
 Bash(scripts/pi-review.sh:*)
 Bash(scripts/eval-reviewer.sh:*)
+Bash(scripts/pi-watch.sh:*)
 ```
 
 ## Prerequisites
