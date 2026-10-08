@@ -8,11 +8,12 @@
 # via post-line-comment.sh and reopen-comment.sh, so no GitHub token ever enters
 # the container. Pi may edit and run code in its export to prove a finding.
 #
-# stdout: the posting manifest, `<severity> | <file>:<line> | <title>` per
-# posted finding, or "No issues found" - the same contract as a reviewer Task.
+# stdout: the posting manifest - `<severity> | <file>:<line> | <title>` per
+# posted finding, `REOPENED | comment <id>` per reopen, `DROPPED | ...` per
+# out-of-scope finding, `FAILED | ...` per failed post - or "No issues found".
 #
 # Exit codes - only 0 means the reviewer REPORTED:
-#   0  reported; every finding and reopen was posted
+#   0  reported; nothing failed to post (DROPPED findings are not failures)
 #   1  setup or internal failure (args, roster, docker, model key, gh, git, jq)
 #   2  the PR head is not <dispatch-sha>; nothing was posted
 #   3  Pi produced no valid report (crash, timeout, provider error, bad JSON)

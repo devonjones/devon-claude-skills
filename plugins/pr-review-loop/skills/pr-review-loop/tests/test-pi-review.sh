@@ -130,6 +130,8 @@ FAKE_POST_FAIL=1 run pi-agent "${fence}json
 ${fence}"
 [[ "$RC" -eq 4 && "$OUT" == *"FAILED | src/b.py:1"* ]] && ok "exit 4 with FAILED line" || bad "rc=$RC out=$OUT"
 [[ "$OUT" != *"No issues found"* ]] && ok "a failed post never reads as No issues found" || bad "out=$OUT"
+jq -e 'select(.kind == "reviewer-fired" and .status == "post-failed" and .exit == "4")' "$T/dream/markers/pr-review-loop.jsonl" >/dev/null \
+    && ok "exit-4 run: marker status post-failed" || bad "marker: $(tail -1 "$T/dream/markers/pr-review-loop.jsonl")"
 
 echo "=== the head moves while Pi runs: nothing is posted ==="
 FAKE_HEAD_AFTER=1111111111111111111111111111111111111111 run pi-agent "${fence}json
@@ -210,6 +212,41 @@ Now my report:
 ${fence}json
 {\"findings\": [{\"severity\": \"P1\", \"file\": \"src/a.py\", \"line\": 1, \"title\": \"t\""
 [[ "$RC" -eq 3 && "$(posts)" -eq 0 && "$OUT" != *"No issues found"* ]] && ok "unclosed final block -> exit 3, not the earlier example" || bad "rc=$RC out=$OUT"
+
+echo "=== every report-shape guard rejects its bad field ==="
+good='"severity": "P2", "file": "src/a.py", "line": 1, "title": "t", "body": "b"'
+for bad in '"severity": "HIGH", "file": "src/a.py", "line": 1, "title": "t", "body": "b"' \
+           '"severity": "P2", "file": "src/a.py", "line": 0, "title": "t", "body": "b"' \
+           '"severity": "P2", "file": "src/a.py", "line": 1.5, "title": "t", "body": "b"' \
+           '"severity": "P2", "file": "src/a.py", "line": 1, "title": "", "body": "b"' \
+           '"severity": "P2", "file": "src/a.py", "line": 1, "title": "t"'; do
+  run pi-agent "${fence}json
+{\"findings\": [{$bad}], \"reopens\": []}
+${fence}"
+  [[ "$RC" -eq 3 && "$(posts)" -eq 0 ]] && ok "rejected: {$bad}" || bad "accepted (rc=$RC): {$bad}"
+done
+run pi-agent "${fence}json
+{\"findings\": [{$good}], \"reopens\": [{\"comment_id\": 7, \"reason\": \"\"}]}
+${fence}"
+[[ "$RC" -eq 3 ]] && ok "rejected: reopen with an empty reason" || bad "empty reopen reason accepted (rc=$RC)"
+
+echo "=== credential and provider overrides ==="
+echo '{"providers": {}}' > "$T/models.json"
+PI_REVIEW_MODELS_JSON="$T/models.json" run pi-agent "${fence}json
+{\"findings\": [], \"reopens\": []}
+${fence}"
+grep -q -- "-v $T/models.json:/opt/pi-agent/models.json:ro" "$T/docker.log.args" \
+    && ok "PI_REVIEW_MODELS_JSON mounted read-only over the image's" || bad "args: $(cat "$T/docker.log.args")"
+PI_REVIEW_MODELS_JSON="$T/no-such.json" run pi-agent ""
+[[ "$RC" -eq 1 ]] && grep -q 'PI_REVIEW_MODELS_JSON not readable' "$T/err" && ok "unreadable PI_REVIEW_MODELS_JSON -> exit 1" || bad "rc=$RC"
+printf 'DEEPSEEK_API_KEY=x\n' > "$T/creds.env"
+PI_REVIEW_ENV_FILE="$T/creds.env" run pi-agent "${fence}json
+{\"findings\": [], \"reopens\": []}
+${fence}"
+grep -q -- "--env-file $T/creds.env" "$T/docker.log.args" && ! grep -q -- '-e DEEPSEEK_API_KEY' "$T/docker.log.args" \
+    && ok "PI_REVIEW_ENV_FILE replaces the single -e key" || bad "args: $(cat "$T/docker.log.args")"
+PI_REVIEW_ENV_FILE="$T/no-such.env" run pi-agent ""
+[[ "$RC" -eq 1 ]] && grep -q 'PI_REVIEW_ENV_FILE not readable' "$T/err" && ok "unreadable PI_REVIEW_ENV_FILE -> exit 1" || bad "rc=$RC"
 
 echo "=== setup refusals ==="
 run claude-agent ""
