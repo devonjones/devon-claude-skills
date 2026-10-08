@@ -17,8 +17,9 @@
 #
 # Output JSON shape:
 # {
-#   "agents": [{name, scope, source, instructions, description?, model?, color?, kind, changed_files}, ...],
+#   "agents": [{name, scope, source, instructions, description?, model?, color?, kind, changed_files, engine, pi_model?}, ...],
 #     # kind: "default" | "user" | "user-override"
+#     # engine: "claude" | "pi" (from # Configuration .pi); pi_model set only for "pi"
 #     # description, model, color carried only on `default` entries (from frontmatter)
 #   "context": [{section, scope, source, content}, ...],
 #   "configuration": {
@@ -443,8 +444,20 @@ echo "$JQ_INPUT" | jq '
         | map({name, scope, source, instructions, kind, changed_files})
     ) as $user_agents |
 
-    # ---- 6. Final merged agent list ----
-    ($user_agents + $effective_defaults) as $merged_agents |
+    # ---- 6. Final merged agent list, each stamped with its engine ----
+    # engine "pi" runs the agent through pi-review.sh on pi_model instead of a
+    # Claude Task. Per-agent `pi.agents` entries beat `pi.all`; the parser has
+    # already rejected a pi route with no model to run on.
+    ($config.pi // {}) as $pi |
+    ($user_agents + $effective_defaults
+        | map(.name as $n | (($pi.agents // {})[$n]) as $v |
+            (if ($v | type) == "string" then $v
+             elif $v == true then $pi.model
+             elif $v == false then null
+             elif $pi.all == true then $pi.model
+             else null end) as $pm |
+            if $pm then . + {engine: "pi", pi_model: $pm} else . + {engine: "claude"} end)
+    ) as $merged_agents |
 
     # ---- 7. Stale-pin check ----
     # Stale only if the pin predates the last defaults change. Missing or
@@ -491,7 +504,10 @@ echo "$JQ_INPUT" | jq '
             default_count: ($effective_defaults | length),
             override_count: ($overridden_default_names | length),
             user_count: ($user_agents | map(select(.kind == "user")) | length),
-            overridden_default_names: $overridden_default_names
+            overridden_default_names: $overridden_default_names,
+            pi_count: ($merged_agents | map(select(.engine == "pi")) | length),
+            # pi.agents entries naming no agent on the roster (typos, disabled defaults)
+            pi_agents_unknown: ((($pi.agents // {}) | keys) - ($merged_agents | map(.name)))
         },
         language_detection: $language_detection
     }

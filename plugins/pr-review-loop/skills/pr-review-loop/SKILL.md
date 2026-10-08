@@ -6,6 +6,7 @@ description: |
   (3) iterating on PR feedback from Gemini, Cursor, Claude, or other reviewers, (4) monitoring PR status.
 
   Supports multiple review bots: Gemini Code Assist, Cursor Bugbot, and Claude agent fallback.
+  Agent reviewers can run on non-Claude models (DeepSeek, Gemini, etc.) via Pi in Docker.
   Also supports custom agent reviewers defined in AGENT-REVIEWERS.md for focused reviews (security, DRY, etc.).
   Automatically detects priority levels from different bot formats and handles rate limits.
 ---
@@ -714,6 +715,10 @@ Project-level config lives in a `# Configuration` H1 section in the **root** `AG
   },
   "bots": {
     "gemini": false
+  },
+  "pi": {
+    "model": "deepseek/deepseek-chat",
+    "agents": { "code-simplifier": true, "dry-reviewer": "google/gemini-2.5-flash" }
   }
 }
 ```
@@ -726,6 +731,7 @@ Fields:
 - **`overlap_acknowledged`** — map from a user agent name to `{ overlaps_with, reason }`. Both agents continue to spawn; this entry documents intentional duplication so the audit tool doesn't recommend renaming. **`reason` is REQUIRED** — the parser rejects entries without it, so future readers see why both agents are intentionally running.
 - **`independent_validator`** — controls the per-finding validation step (see "Independent Validator Pipeline" below). All three nested fields are optional; defaults are `enabled: true`, `skip_for: []`, `uncertain_action: "post_with_annotation"`.
 - **`bots`** — map of external review bot name (`gemini`, `cursor`) to boolean. Bots default to enabled; an explicit `false` turns one off for the repo. See "Disabling an External Review Bot" below.
+- **`pi`** — run reviewers on non-Claude models. See "Pi Engine" below.
 
 ### Disabling an External Review Bot
 
@@ -1493,6 +1499,56 @@ Task tool:
 
 **Spawn all agents in parallel** - use multiple Task tool calls in a single message.
 
+### Pi Engine (reviewers on non-Claude models)
+
+An agent whose `engine` (from `discover-agents.sh`) is `"pi"` is not a Task.
+Run it as a background Bash job, in parallel with the Tasks:
+
+```bash
+scripts/pi-review.sh <PR> <agent-name> <SHA recorded at C3>
+```
+
+The script runs [Pi](https://www.npmjs.com/package/@mariozechner/pi-coding-agent)
+once (`pi -p`) in Docker, against a throwaway `git archive` export of the
+dispatch SHA. Pi can edit and run code there for mutation proofs. It prints one
+JSON report and exits. Then the script posts the findings and reopens through
+`post-line-comment.sh` and `reopen-comment.sh`, under the agent's own name. No
+GitHub token enters the container. Every comment ends with the engine and model,
+so the operator can see which model raised it.
+
+Turn it on in `# Configuration`:
+
+```json
+{ "pi": { "all": true, "model": "deepseek/deepseek-chat",
+          "agents": { "silent-failure-hunter": false, "dry-reviewer": "google/gemini-2.5-flash" } } }
+```
+
+- **`all`** (default `false`): route every agent to Pi on `model`.
+- **`model`**: the default Pi model (`provider/id`). Required when `all` or any `true` entry routes an agent to Pi.
+- **`agents`**: per agent. `true` routes the agent to Pi on `model`, a string routes it to Pi on that model, and `false` keeps it on Claude even under `all`. Default agents can be routed this way too, without overriding their prompts.
+
+`configuration.pi_agents_unknown` lists `agents` entries that name nothing on the
+roster. Treat it like `disabled_defaults_unknown`.
+
+**Exit codes.** Only exit 0 counts as reported. 1 means setup failed, 2 means
+the PR head is not the dispatch SHA (nothing was posted, and the round is
+invalid), 3 means Pi gave no valid report, and 4 means a post failed. A Pi run
+that crashed, timed out or hit a provider error never reads as "No issues
+found". Every non-zero exit is a strike under "A reviewer that will not report".
+
+**Telemetry.** A Bash run leaves no Task description, so the script writes its
+own `reviewer-fired` dream marker on every exit. Disposition markers in F3 are
+the same as for any agent.
+
+**Credentials.** By default the script passes only `<PROVIDER>_API_KEY` into
+the container (`GEMINI_API_KEY` for `google`). To pass something else, set
+`PI_REVIEW_ENV_FILE` to a docker env file. That key is visible to any PR code
+the reviewer runs, so use a spend-capped key. `PI_REVIEW_TIMEOUT` (default
+900 s) and `PI_REVIEW_IMAGE` (default: built from `pi/Dockerfile` on first use)
+are the other two knobs. The default image has no language toolchains beyond
+Python, so a repo that needs its own for tests should point `PI_REVIEW_IMAGE` at
+an image that adds them.
+
 ### Main Loop Integration
 
 Agent reviewers run as C3 — the last step of the COLLECT phase, after C1 (Gemini) and C2 (other bots). Within C3, the individual agent reviewers spawn in parallel. All COLLECT-phase findings — Gemini + other bots + agents — flow into the BATCH POINT before any FIX-phase action.
@@ -1654,6 +1710,7 @@ When detected, the script suggests:
 | `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post line comment with agent signature |
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |
 | `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |
+| `pi-review.sh <PR> <agent> <dispatch-sha>` | Run a `pi`-engine agent once in Docker and post its findings. Prints the manifest; only exit 0 is reported. See "Pi Engine" |
 | `emit-dream-marker.sh <kind> key=value ...` | Emit a dream marker (reviewer telemetry) — best-effort, never blocks. See "Dream Markers" |
 | `discover-agents.sh <PR>` | Discover + merge agent reviewers (defaults + user agents per C+E); emits `configuration` block with `stale_pin` and (when no AGENT-REVIEWERS.md exists) the `language_detection` block driving the Language Template Offer |
 | `detect-language.sh [--repo-root <path>]` | Scan repo for language manifests (go.mod, pyproject.toml, etc.); emits `[{language, subtree, manifest}, ...]`. Deterministic; called by discover-agents.sh |
@@ -1676,6 +1733,7 @@ Bash(scripts/discover-agents.sh:*)
 Bash(scripts/get-pr-comments.sh:*)
 Bash(scripts/install-template.sh:*)
 Bash(scripts/emit-dream-marker.sh:*)
+Bash(scripts/pi-review.sh:*)
 ```
 
 ## Prerequisites
