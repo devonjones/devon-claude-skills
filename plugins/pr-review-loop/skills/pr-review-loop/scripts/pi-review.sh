@@ -34,8 +34,9 @@
 # Env: PI_REVIEW_TIMEOUT (seconds, default 900), PI_REVIEW_IMAGE (default: the
 # image built from ../pi/Dockerfile on first use), PI_REVIEW_ENV_FILE (docker
 # --env-file for credentials; default: pass only <PROVIDER>_API_KEY),
-# PI_REVIEW_MODELS_JSON (a Pi models.json that replaces the image's, for
-# account-specific endpoints such as an Alibaba workspace URL),
+# PI_REVIEW_MODELS_JSON (a Pi models.json that replaces the image's; default:
+# your own Pi config, ${PI_CODING_AGENT_DIR:-~/.pi/agent}/models.json, when it
+# exists, so host Pi and the reviewers share one provider list),
 # PI_REVIEW_EXHAUSTED_TTL, PI_REVIEW_CACHE_DIR (default ~/.cache/pr-review-loop).
 
 set -euo pipefail
@@ -215,9 +216,13 @@ for MODEL in "${CHAIN[@]}"; do
         fi
         DOCKER_ENV=(-e "$KEY_VAR")   # name only: the value never reaches argv
     fi
-    if [[ -n "${PI_REVIEW_MODELS_JSON:-}" ]]; then
-        [[ -r "$PI_REVIEW_MODELS_JSON" ]] || { echo "Error: PI_REVIEW_MODELS_JSON not readable: $PI_REVIEW_MODELS_JSON" >&2; exit 1; }
-        DOCKER_ENV+=(-v "$(cd "$(dirname "$PI_REVIEW_MODELS_JSON")" && pwd)/$(basename "$PI_REVIEW_MODELS_JSON"):/opt/pi-agent/models.json:ro")
+    MODELS_JSON="${PI_REVIEW_MODELS_JSON:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/models.json}"
+    [[ -n "${PI_REVIEW_MODELS_JSON:-}" || -r "$MODELS_JSON" ]] || MODELS_JSON=""
+    if [[ -n "$MODELS_JSON" ]]; then
+        [[ -r "$MODELS_JSON" ]] || { echo "Error: PI_REVIEW_MODELS_JSON not readable: $MODELS_JSON" >&2; exit 1; }
+        # Only models.json: auth.json can hold /login subscription tokens, and
+        # anything mounted here is readable by the PR code the reviewer runs.
+        DOCKER_ENV+=(-v "$(cd "$(dirname "$MODELS_JSON")" && pwd)/$(basename "$MODELS_JSON"):/opt/pi-agent/models.json:ro")
     fi
 
     git -C "$T/work" reset -q --hard && git -C "$T/work" clean -qfdx   # undo the last model's edits

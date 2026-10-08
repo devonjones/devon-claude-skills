@@ -66,6 +66,7 @@ GH
 cat > "$T/bin/docker" <<'DOCKER'
 #!/usr/bin/env bash
 [[ "$1" == run ]] || exit 0
+printf '%s\n' "$*" >> "$DOCKER_LOG.args"
 while [[ $# -gt 0 && "$1" != --model ]]; do shift; done
 m="${2//\//_}"; echo "$2" >> "$DOCKER_LOG"
 cat "$PI_DIR/$m" 2>/dev/null || { echo "no fake for $2" >&2; exit 1; }
@@ -86,11 +87,11 @@ report(){ printf 'thinking...\n%sjson\n%s\n%s\n' "$fence" "$1" "$fence"; }
 EMPTY='{"findings": [], "reopens": []}'
 
 # run <agent> [extra args...] -> OUT, RC; logs: $T/gh.log, $T/docker.log
-run(){ : > "$T/gh.log"; : > "$T/docker.log"; set +e
+run(){ : > "$T/gh.log"; : > "$T/docker.log"; : > "$T/docker.log.args"; set +e
   OUT=$(cd "$REPO" && PATH="$T/bin:$PATH" GH_LOG="$T/gh.log" DOCKER_LOG="$T/docker.log" PI_DIR="$T/pi" \
         FAKE_HEAD="${FAKE_HEAD:-$SHA}" FAKE_FIRST="$SHA" \
         PR_REVIEW_LOOP_TEST_CHANGED_FILES=$'src/a.py\nsrc/b.py' \
-        PI_REVIEW_CACHE_DIR="$T/cache" DREAM_HOME="$T/dream" \
+        PI_REVIEW_CACHE_DIR="$T/cache" DREAM_HOME="$T/dream" PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$T/no-pi}" \
         ZAI_API_KEY="${ZAI_API_KEY-k}" GEMINI_API_KEY="${GEMINI_API_KEY-k}" DEEPSEEK_API_KEY=k \
         bash "$PI_REVIEW" 42 "$1" "$SHA" "${@:2}" 2>"$T/err"); RC=$?; set -e; }
 ran(){ paste -sd' ' "$T/docker.log"; }
@@ -171,6 +172,16 @@ says google/gemini-2.5-flash "$(report "$EMPTY")"
 ZAI_API_KEY= run pi-agent
 [[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && jq -e '.tried[0] == "zai/glm-5.1:no-key"' <<<"$OUT" >/dev/null \
     && ok "a missing key skips that model" || bad "rc=$RC ran=$(ran)"
+
+echo "=== the host Pi config is the one source of models ==="
+says zai/glm-5.1 "$(report "$EMPTY")"
+run pi-agent
+grep -q 'models.json' "$T/docker.log.args" && bad "mounted a models.json with no host config" || ok "no host config -> the image's own models.json"
+mkdir -p "$T/pi-home" && echo '{"providers": {}}' > "$T/pi-home/models.json" && echo '{}' > "$T/pi-home/auth.json"
+PI_CODING_AGENT_DIR="$T/pi-home" run pi-agent
+grep -q -- "-v $T/pi-home/models.json:/opt/pi-agent/models.json:ro" "$T/docker.log.args" \
+    && ok "host models.json mounted read-only" || bad "args: $(cat "$T/docker.log.args")"
+grep -q 'auth.json' "$T/docker.log.args" && bad "auth.json mounted" || ok "auth.json never mounted"
 
 echo "=== a moved head stops before Pi runs ==="
 FAKE_HEAD=0000000000000000000000000000000000000000 run pi-agent
