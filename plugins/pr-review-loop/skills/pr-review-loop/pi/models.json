@@ -1,0 +1,60 @@
+{
+  "providers": {
+    "dashscope": {
+      "baseUrl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "api": "openai-completions",
+      "apiKey": "DASHSCOPE_API_KEY",
+      "compat": {
+        "supportsDeveloperRole": false
+      },
+      "models": [
+        {
+          "id": "qwen3.8-max"
+        },
+        {
+          "id": "qwen3.8-flash"
+        },
+        {
+          "id": "qwen3.7-max"
+        },
+        {
+          "id": "qwen3.7-plus"
+        },
+        {
+          "id": "qwen3.6-flash"
+        },
+        {
+          "id": "deepseek-v4-pro"
+        }
+      ]
+    },
+    "qwen-token-plan": {
+      "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      "api": "openai-completions",
+      "apiKey": "QWEN_TOKEN_PLAN_API_KEY",
+      "compat": {
+        "supportsDeveloperRole": false
+      },
+      "models": [
+        {
+          "id": "qwen3.8-max"
+        },
+        {
+          "id": "qwen3.8-flash"
+        },
+        {
+          "id": "qwen3.7-max"
+        },
+        {
+          "id": "qwen3.7-plus"
+        },
+        {
+          "id": "qwen3.6-flash"
+        },
+        {
+          "id": "deepseek-v4-pro"
+        }
+      ]
+    }
+  }
+}

@@ -209,6 +209,7 @@ UNKNOWN_KEYS="$(printf '%s\n' "$RAW_JSON" | jq -r '
         and . != "overlap_acknowledged"
         and . != "independent_validator"
         and . != "bots"
+        and . != "pi"
     )]
     | join(", ")
 ')"
@@ -217,7 +218,7 @@ UNKNOWN_KEYS="$(printf '%s\n' "$RAW_JSON" | jq -r '
 # below, so this warning is the only signal that an off switch didn't take.
 if [[ -n "$UNKNOWN_KEYS" ]]; then
     echo "Warning: # Configuration in $FILE has unknown top-level keys (likely typos): $UNKNOWN_KEYS" >&2
-    echo "Warning:   Allowed keys: defaults_version_checked, disabled, overlap_acknowledged, independent_validator, bots" >&2
+    echo "Warning:   Allowed keys: defaults_version_checked, disabled, overlap_acknowledged, independent_validator, bots, pi" >&2
 fi
 
 # Validate the `bots` block: map of KNOWN bot name -> boolean. Bots default to
@@ -372,6 +373,33 @@ IV_BAD_SKIP="$(printf '%s\n' "$RAW_JSON" | jq -r '
 if [[ -n "$IV_BAD_SKIP" ]]; then
     echo "Error: # Configuration .independent_validator.skip_for in $FILE: $IV_BAD_SKIP" >&2
     exit 1
+fi
+
+# Validate the pi block (reviewers run on a non-Claude model via Pi in Docker):
+#   { all: bool, model: "provider/id", agents: { <name>: true | false | "provider/id" } }
+# Errors, not warnings: a malformed value here silently changes which model
+# reviews the code, and an agent routed to pi with no model cannot run at all.
+PI_BAD="$(printf '%s\n' "$RAW_JSON" | jq -r '
+    def model_id: type == "string" and test("^[^/\\s]+/\\S+$");
+    select(has("pi")) | .pi
+    | if type != "object" then "must be an object (got \(type))"
+      elif has("all") and (.all | type) != "boolean" then ".all must be a boolean"
+      elif has("model") and (.model | model_id | not) then ".model must be provider/id"
+      elif has("agents") and (.agents | type) != "object" then ".agents must be an object"
+      elif any((.agents // {})[]; (type != "boolean") and (model_id | not)) then ".agents values must be true, false or provider/id"
+      elif ((.all == true) or any((.agents // {})[]; . == true)) and ((.model // "") == "") then "routes agents to pi with no .model to run them on"
+      else empty end
+')"
+if [[ -n "$PI_BAD" ]]; then
+    echo "Error: # Configuration .pi in $FILE: $PI_BAD" >&2
+    exit 1
+fi
+PI_UNKNOWN_KEYS="$(printf '%s\n' "$RAW_JSON" | jq -r '
+    .pi | select(type == "object") | [keys[] | select(. != "all" and . != "model" and . != "agents")] | join(", ")
+')"
+if [[ -n "$PI_UNKNOWN_KEYS" ]]; then
+    echo "Warning: # Configuration .pi in $FILE has unknown nested keys (likely typos): $PI_UNKNOWN_KEYS" >&2
+    echo "Warning:   Allowed nested keys: all, model, agents" >&2
 fi
 
 printf '%s\n' "$RAW_JSON" | jq -c .
