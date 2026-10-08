@@ -85,6 +85,13 @@ jq -e '.recommended == ["cheap/a", "pricey/b"]' "$R" >/dev/null && ok "recommend
 jq -e '.candidates[] | select(.model == "cheap/a") | (.usd_per_review * 1e6 | round) == 5100' "$R" >/dev/null \
     && ok "cost = measured tokens x price" || bad "cost: $(jq '.candidates[] | select(.model == "cheap/a") | .usd_per_review' "$R")"
 
+echo "=== an already-paid plan outranks a cheaper pay-per-token model ==="
+cp -f "$T/prices.json" "$T/prices.bak"
+jq '.models["pricey/b"] = {"plan": "pricey"} | .plans = {"pricey": {"monthly_usd": 10, "reviews_per_month": {}}}' "$T/prices.bak" > "$T/prices.json"
+run run x --models cheap/a,pricey/b,junk/c,failing/d --baseline anthropic/claude-sonnet-4-6
+jq -e '.recommended == ["pricey/b", "cheap/a"]' "$R" >/dev/null && ok "plan model first, then the cheapest paid one" || bad "recommended: $(jq -c .recommended "$R")"
+cp -f "$T/prices.bak" "$T/prices.json"
+
 echo "=== too few real findings is inconclusive ==="
 jq 'map(select(.sha != "2222222222222222222222222222222222222222"))' "$D/x/cases.json" > "$T/c" && cp -f "$D/x/cases.json" "$T/full" && cp -f "$T/c" "$D/x/cases.json"
 run run x --models cheap/a --baseline anthropic/claude-sonnet-4-6

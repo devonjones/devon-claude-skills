@@ -198,7 +198,10 @@ score() {   # <agent> <models...>: per-model metrics over the replayed commits
                                 | . + {value: ($gr[.id | tostring] // "material")}]}]' <<<"$rows")"
         done < "$dir/commits.txt"
         all="$(jq -c --arg m "$m" --slurpfile prices "$PRICES" --argjson acc "$all" "$weight"'
-          ($prices[0]) as $P | ($P.models[$m] // {}) as $pm |
+          ($prices[0]) as $P
+          # A model with no entry of its own is on a plan when its provider names one (zai/..., qwen-token-plan/...).
+          | (($P.models[$m] // {}) | if .plan == null and ($P.plans // {} | has($m | split("/")[0]))
+                                       then . + {plan: ($m | split("/")[0])} else . end) as $pm |
           [.[] | select(.run.failed | not)] as $ok |
           ([$ok[] | .judge.candidates[]]) as $cands |
           ([$ok[] | .originals[] | select(.verdict == "real")]) as $real |
@@ -231,7 +234,10 @@ score() {   # <agent> <models...>: per-model metrics over the replayed commits
                                         or (.match == null and (.plausible | not)))] | length) / ($cands | length) end),
             novel_plausible: ([$cands[] | select(.match == null and .plausible)] | length),
             tokens: $tok, usd_per_review: $cost,
-            subscription: ($pm.plan // (if ($m | startswith("anthropic/")) then "claude" else ($m | split("/")[0]) end))}]' <<<"$rows")"
+            subscription: ($pm.plan // (if ($m | startswith("anthropic/")) then "claude" else ($m | split("/")[0]) end)),
+            # Already-paid plans (and the Claude subscription) cost ~0 per extra review.
+            billing: (if $pm.plan or ($m | startswith("claude")) then "plan"
+                      elif $cost != null then "paid" else "unknown" end)}]' <<<"$rows")"
     done
     printf '%s\n' "$all"
 }
@@ -276,7 +282,9 @@ run_eval() {
              else .catch >= 0.5 and .junk <= 0.3 end))}] as $cands |
         {agent: $agent, baseline: $b, candidates: $cands, inconclusive: ($n < 8),
          recommended: (if $n < 8 then null else
-            ([$cands[] | select(.pass)] | sort_by(.usd_per_review // 1e9) | map(.model))
+            ([$cands[] | select(.pass)]
+             | sort_by([(if .billing == "plan" then 0 else (.usd_per_review // 1e9) end), -(.catch // 0)])
+             | map(.model))
             end)}' > "$dir/result.json"
     jq -r '"\n\(.agent)" + (if .inconclusive then "  (INCONCLUSIVE: fewer than 8 material findings replayed)" else "" end),
         "model                              pass  catch  junk  novel+  fail   tokens(in/out/cache)        $/review",
@@ -286,7 +294,7 @@ run_eval() {
         + "\(.junk | . * 100 | round | tostring + "%" | . + " " * (6 - length))"
         + "\(.novel_plausible | tostring | . + " " * (8 - length))\(.failed)/\(.runs)    "
         + "\(if .tokens then "\(.tokens.input|round)/\(.tokens.output|round)/\(.tokens.cacheRead|round)" else "-" end | . + " " * (28 - length))"
-        + "\(if .usd_per_review then (.usd_per_review * 10000 | round / 10000 | tostring) else "unpriced" end)"),
+        + "\(if .usd_per_review then (.usd_per_review * 10000 | round / 10000 | tostring) elif .billing == "plan" then "plan" else "unpriced" end)"),
         "recommended chain start: \(if .recommended == null then "none (inconclusive)" elif (.recommended | length) == 0 then "none pass - keep on claude" else (.recommended | join(", ")) end)"' \
         "$dir/result.json"
 }
@@ -308,10 +316,12 @@ assign() {
            | . + {weight: (.passing | map(toks) | max)}] | sort_by(-.weight)
       | reduce .[] as $a ({load: {}, agents: {}};
           (.load) as $load |
-          ($a.passing | sort_by([($load[.subscription] // 0), (.usd_per_review // 1e9)]) | first) as $pick |
+          ($a.passing | sort_by([($load[.subscription] // 0),
+                                  (if .billing == "plan" then 0 else (.usd_per_review // 1e9) end), -(.catch // 0)]) | first) as $pick |
           .load[$pick.subscription] = (($load[$pick.subscription] // 0) + ($pick | toks)) |
           .agents[$a.agent] = ([$pick.model]
-              + ($a.passing | map(select(.subscription != $pick.subscription)) | sort_by(.usd_per_review // 1e9)
+              + ($a.passing | map(select(.subscription != $pick.subscription))
+                 | sort_by([(if .billing == "plan" then 0 else (.usd_per_review // 1e9) end), -(.catch // 0)])
                  | unique_by(.subscription) | map(.model)) + ["claude"]
               | map(entry) | reduce .[] as $e ([]; if index($e) then . else . + [$e] end)))
       | {pi: {agents: .agents}, projected_tokens_per_round_by_subscription: .load}' "${results[@]}"
