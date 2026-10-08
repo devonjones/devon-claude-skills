@@ -69,6 +69,7 @@ else
     PROVIDER="${MODEL%%/*}"
     case "$PROVIDER" in
         google) KEY_VAR=GEMINI_API_KEY ;;
+        huggingface) KEY_VAR=HF_TOKEN ;;
         vercel-ai-gateway) KEY_VAR=AI_GATEWAY_API_KEY ;;
         opencode|opencode-go) KEY_VAR=OPENCODE_API_KEY ;;
         *) KEY_VAR="$(tr '[:lower:]-' '[:upper:]_' <<<"$PROVIDER")_API_KEY" ;;
