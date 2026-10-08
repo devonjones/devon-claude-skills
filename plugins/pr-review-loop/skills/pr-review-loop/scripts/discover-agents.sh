@@ -446,7 +446,8 @@ echo "$JQ_INPUT" | jq '
             end
           )})
         | map({name, scope, source, instructions, kind, changed_files,
-               model: ((.instructions | split("\n")[0:5] | map(capture("^\\s*model:\\s*(?<m>[A-Za-z0-9._:-]+)\\s*$").m) | first) // null)})
+               model: ((.instructions | split("\n")[0:5]
+                        | map(capture("^\\s*model:\\s*[\"]?(?<m>[A-Za-z0-9._:-]+)[\"]?\\s*$").m) | first) // null)})
     ) as $user_agents |
 
     # ---- 6. Final merged agent list, each stamped with its engine ----
@@ -462,8 +463,9 @@ echo "$JQ_INPUT" | jq '
              elif $pi.all == true then $pi.model
              else null end) as $pm |
             if $pm then . + {engine: "pi", pi_model: $pm} else . + {engine: "claude"} end
-            # Claude reviewers default to Sonnet: never the session model.
-            | .model = (if (.model // "") == "" then "sonnet" else .model end))
+            # Every agent gets a Claude model, sonnet unless it names a real one;
+            # "inherit" or anything unknown would hand the Task the session model.
+            | .model = (if (.model // "" | test("^(sonnet|haiku|opus|claude-[a-z0-9.-]+)$")) then .model else "sonnet" end))
     ) as $merged_agents |
 
     # ---- 7. Stale-pin check ----

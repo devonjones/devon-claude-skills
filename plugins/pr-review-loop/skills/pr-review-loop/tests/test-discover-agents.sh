@@ -993,8 +993,6 @@ else
 fi
 rm -rf "$repo"
 
-# ---------------------------------------------------------------------------
-# Summary
 echo
 echo "=== Every agent has a model: sonnet unless it declares one ==="
 repo="$(make_temp_repo)"
@@ -1018,6 +1016,27 @@ Line three.
 Line four.
 Line five.
 model: opus
+
+## line-five-agent
+
+One.
+Two.
+Three.
+Four.
+model: opus
+
+## inherit-agent
+
+model: inherit
+
+## quoted-agent
+
+model: "haiku"
+
+## code-reviewer
+
+model: haiku
+Override of the shipped code-reviewer.
 EOF
 run_discover "$repo" "src/foo.py" tm
 assert_exit "exit 0" "$tm_exit" "0"
@@ -1025,9 +1044,15 @@ assert_jq "no agent without a model" "$tm" '[.agents[] | select((.model // "") =
 assert_jq "undeclared user agent -> sonnet" "$tm" '[.agents[] | select(.name == "plain-agent") | .model] == ["sonnet"]'
 assert_jq "model: line declares a user agent's model" "$tm" '[.agents[] | select(.name == "haiku-agent") | .model] == ["haiku"]'
 assert_jq "a model: line past the first five lines is prose, not a declaration" "$tm" '[.agents[] | select(.name == "late-model-agent") | .model] == ["sonnet"]'
-assert_jq "every shipped default is on sonnet" "$tm" '[.agents[] | select(.kind == "default") | .model] | length == 6 and all(. == "sonnet")'
+assert_jq "a model: line on the fifth line still counts" "$tm" '[.agents[] | select(.name == "line-five-agent") | .model] == ["opus"]'
+assert_jq "model: inherit becomes sonnet, never the session model" "$tm" '[.agents[] | select(.name == "inherit-agent") | .model] == ["sonnet"]'
+assert_jq "a quoted model name is accepted" "$tm" '[.agents[] | select(.name == "quoted-agent") | .model] == ["haiku"]'
+assert_jq "a user override of a default keeps its declared model" "$tm" '[.agents[] | select(.name == "code-reviewer") | {kind, model}] == [{"kind": "user-override", "model": "haiku"}]'
+assert_jq "every remaining shipped default is on sonnet" "$tm" '[.agents[] | select(.kind == "default") | .model] | length > 0 and all(. == "sonnet")'
 rm -rf "$repo"
 
+# ---------------------------------------------------------------------------
+# Summary
 # ---------------------------------------------------------------------------
 echo
 echo "=== Summary ==="
