@@ -1033,6 +1033,10 @@ model: inherit
 
 model: "haiku"
 
+## full-id-agent
+
+model: claude-sonnet-5-5
+
 ## code-reviewer
 
 model: haiku
@@ -1047,6 +1051,7 @@ assert_jq "a model: line past the first five lines is prose, not a declaration" 
 assert_jq "a model: line on the fifth line still counts" "$tm" '[.agents[] | select(.name == "line-five-agent") | .model] == ["opus"]'
 assert_jq "model: inherit becomes sonnet, never the session model" "$tm" '[.agents[] | select(.name == "inherit-agent") | .model] == ["sonnet"]'
 assert_jq "a quoted model name is accepted" "$tm" '[.agents[] | select(.name == "quoted-agent") | .model] == ["haiku"]'
+assert_jq "a full claude-* model id is accepted" "$tm" '[.agents[] | select(.name == "full-id-agent") | .model] == ["claude-sonnet-5-5"]'
 assert_jq "a user override of a default keeps its declared model" "$tm" '[.agents[] | select(.name == "code-reviewer") | {kind, model}] == [{"kind": "user-override", "model": "haiku"}]'
 assert_jq "every remaining shipped default is on sonnet" "$tm" '[.agents[] | select(.kind == "default") | .model] | length > 0 and all(. == "sonnet")'
 rm -rf "$repo"
