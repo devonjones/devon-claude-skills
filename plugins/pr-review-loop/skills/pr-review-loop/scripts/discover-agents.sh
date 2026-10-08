@@ -17,9 +17,9 @@
 #
 # Output JSON shape:
 # {
-#   "agents": [{name, scope, source, instructions, description?, model?, color?, kind, changed_files, engine, pi_model?}, ...],
+#   "agents": [{name, scope, source, instructions, description?, model?, color?, kind, changed_files, engine, pi_models?}, ...],
 #     # kind: "default" | "user" | "user-override"
-#     # engine: "claude" | "pi" (from # Configuration .pi); pi_model set only for "pi"
+#     # engine: "claude" | "pi" (from # Configuration .pi); pi_models (fallback chain) only for "pi"
 #     # description, model, color carried only on `default` entries (from frontmatter)
 #   "context": [{section, scope, source, content}, ...],
 #   "configuration": {
@@ -445,18 +445,19 @@ echo "$JQ_INPUT" | jq '
     ) as $user_agents |
 
     # ---- 6. Final merged agent list, each stamped with its engine ----
-    # engine "pi" runs the agent through pi-review.sh on pi_model instead of a
-    # Claude Task. Per-agent `pi.agents` entries beat `pi.all`; the parser has
-    # already rejected a pi route with no model to run on.
+    # engine "pi" runs the agent through pi-review.sh down its pi_models chain
+    # instead of a Claude Task. Per-agent `pi.agents` entries beat `pi.all`; the
+    # parser has already rejected a pi route with no model to run on. A chain
+    # that starts with "claude" is just a Claude agent.
     ($config.pi // {}) as $pi |
     ($user_agents + $effective_defaults
         | map(.name as $n | (($pi.agents // {})[$n]) as $v |
-            (if ($v | type) == "string" then $v
+            (if ($v | type) == "string" or ($v | type) == "array" then $v
              elif $v == true then $pi.model
              elif $v == false then null
              elif $pi.all == true then $pi.model
-             else null end) as $pm |
-            if $pm then . + {engine: "pi", pi_model: $pm} else . + {engine: "claude"} end)
+             else null end | if type == "string" then [.] else . end) as $pm |
+            if $pm and $pm[0] != "claude" then . + {engine: "pi", pi_models: $pm} else . + {engine: "claude"} end)
     ) as $merged_agents |
 
     # ---- 7. Stale-pin check ----

@@ -1,88 +1,111 @@
 #!/usr/bin/env bash
 # Run one agent reviewer on a non-Claude model: a one-shot Pi run in Docker.
-# Usage: pi-review.sh <pr-number> <agent-name> <dispatch-sha>
+# Usage: pi-review.sh <pr-number> <agent-name> <sha> [--model <provider/id>] [--replay]
 #
-# The C3 counterpart of a reviewer Task, for agents discover-agents.sh stamps
-# engine "pi". Pi reviews a throwaway export of <dispatch-sha>, prints its report
-# as one fenced ```json block and exits. This script, not Pi, posts the findings
-# via post-line-comment.sh and reopen-comment.sh, so no GitHub token ever enters
-# the container. Pi may edit and run code in its export to prove a finding.
+# Reviews only - posts nothing. Pi reviews a throwaway export of <sha>, prints
+# its report as one fenced ```json block and exits. This script validates it
+# and prints one JSON object on stdout:
+#   {agent, pr, sha, model, tried, seconds, usage: {input, output, cacheRead, cacheWrite},
+#    report: {findings: [...], reopens: [...]}, dropped: [...]}
+# The Haiku poster Task (SKILL.md "Pi Engine") turns `report` into PR comments,
+# so no GitHub token ever enters the container.
 #
-# stdout: the posting manifest, `<severity> | <file>:<line> | <title>` per
-# posted finding, or "No issues found" - the same contract as a reviewer Task.
+# Models: --model, else the agent's chain from # Configuration .pi
+# (discover-agents.sh `pi_models`). The chain advances only on a PROVIDER
+# failure - quota or credits used up, rate limit, auth or access denied,
+# unreachable. A model that ran and produced no valid report is a reviewer
+# failure (exit 3), never a reason to try the next model. A provider that
+# reports exhausted quota is skipped for PI_REVIEW_EXHAUSTED_TTL seconds
+# (default 3600) by every later run, via ~/.cache/pr-review-loop/exhausted/.
+#
+# --replay: review a historical commit for eval-reviewer.sh. No head check, no
+# prior comments; the diff is the PR's base..<sha>, computed locally.
 #
 # Exit codes - only 0 means the reviewer REPORTED:
-#   0  reported; every finding and reopen was posted
+#   0  report on stdout
 #   1  setup failed (args, roster, docker, model key)
-#   2  the PR head is not <dispatch-sha>; nothing was posted
-#   3  Pi produced no valid report (crash, timeout, provider error, bad JSON)
-#   4  reported, but at least one post failed (manifest lists FAILED lines)
+#   2  the PR head is not <sha>
+#   3  a model ran but produced no valid report (malformed, timeout, crash)
+#   5  the chain reached "claude": spawn the normal Claude Task for this agent
+#   6  every model in the chain failed on the provider side
 #
 # Env: PI_REVIEW_TIMEOUT (seconds, default 900), PI_REVIEW_IMAGE (default: the
 # image built from ../pi/Dockerfile on first use), PI_REVIEW_ENV_FILE (docker
-# --env-file for the model's credentials; default: pass only <PROVIDER>_API_KEY),
+# --env-file for credentials; default: pass only <PROVIDER>_API_KEY),
 # PI_REVIEW_MODELS_JSON (a Pi models.json that replaces the image's, for
-# account-specific endpoints such as an Alibaba workspace URL).
+# account-specific endpoints such as an Alibaba workspace URL),
+# PI_REVIEW_EXHAUSTED_TTL, PI_REVIEW_CACHE_DIR (default ~/.cache/pr-review-loop).
 
 set -euo pipefail
 
-USAGE="Usage: pi-review.sh <pr-number> <agent-name> <dispatch-sha>"
+USAGE="Usage: pi-review.sh <pr-number> <agent-name> <sha> [--model <provider/id>] [--replay]"
 PR="${1:?$USAGE}"
 AGENT="${2:?$USAGE}"
 SHA="${3:?$USAGE}"
-[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Error: dispatch SHA must be 40 hex chars, got '$SHA'" >&2; exit 1; }
+shift 3
+MODEL_ARG="" REPLAY=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --model) MODEL_ARG="${2:?$USAGE}"; shift 2 ;;
+        --replay) REPLAY=true; shift ;;
+        *) echo "$USAGE" >&2; exit 1 ;;
+    esac
+done
+[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Error: SHA must be 40 hex chars, got '$SHA'" >&2; exit 1; }
+[[ "$REPLAY" == false || -n "$MODEL_ARG" ]] || { echo "Error: --replay needs --model" >&2; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_IMAGE="pr-review-loop-pi:0.73.1"
 IMAGE="${PI_REVIEW_IMAGE:-$DEFAULT_IMAGE}"
 TIMEOUT="${PI_REVIEW_TIMEOUT:-900}"
+EXHAUSTED_DIR="${PI_REVIEW_CACHE_DIR:-$HOME/.cache/pr-review-loop}/exhausted"
+EXHAUSTED_TTL="${PI_REVIEW_EXHAUSTED_TTL:-3600}"
 
 T="$(mktemp -d)"
 CONTAINER="pi-review-$$-$RANDOM"
-MODEL="" STATUS="failed" POSTED=0
+MODEL="" STATUS="failed" TRIED=()
 finish() {
     local rc=$?
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
     rm -rf -- "$T"
-    # Firing marker: a Bash-run reviewer leaves no Task description for dream
-    # to mine, so this is its only record of having fired.
-    "$SCRIPT_DIR/emit-dream-marker.sh" reviewer-fired pr="$PR" reviewer="$AGENT" \
-        engine=pi model="$MODEL" sha="$SHA" status="$STATUS" exit="$rc" posted="$POSTED" || true
+    # Replays are evaluation, not firings; only a live run gets a marker.
+    [[ "$REPLAY" == true ]] || "$SCRIPT_DIR/emit-dream-marker.sh" reviewer-fired pr="$PR" \
+        reviewer="$AGENT" engine=pi model="$MODEL" tried="${TRIED[*]:-}" sha="$SHA" \
+        status="$STATUS" exit="$rc" || true
     exit "$rc"
 }
 trap finish EXIT
 
 head_sha() { gh pr view "$PR" --json headRefOid --jq .headRefOid; }
+have_commit() { git cat-file -e "$1^{commit}" 2>/dev/null; }
+
+# ---- inputs, pinned to <sha> ----
+if [[ "$REPLAY" == true ]]; then
+    have_commit "$SHA" || git fetch -q origin "+refs/pull/$PR/head:refs/pr-review-loop/pr-$PR" \
+        || { echo "Error: cannot fetch PR #$PR commits" >&2; exit 1; }
+    have_commit "$SHA" || { echo "Error: $SHA is not reachable from PR #$PR" >&2; exit 1; }
+    FIRST="$(gh pr view "$PR" --json commits --jq '.commits[0].oid')" \
+        || { echo "Error: cannot list PR #$PR commits" >&2; exit 1; }
+    BASE="$(git rev-parse "$FIRST^")"
+    export PR_REVIEW_LOOP_TEST_CHANGED_FILES
+    PR_REVIEW_LOOP_TEST_CHANGED_FILES="$(git diff --name-only "$BASE" "$SHA")"
+else
+    NOW="$(head_sha)" || { echo "Error: could not read PR #$PR head" >&2; exit 1; }
+    [[ "$NOW" == "$SHA" ]] || { echo "Error: PR #$PR head is $NOW, not $SHA - round is invalid" >&2; exit 2; }
+    have_commit "$SHA" || git fetch -q origin "$SHA" || { echo "Error: cannot fetch $SHA" >&2; exit 1; }
+fi
 
 # ---- roster: the same agent definition a Task would get ----
 AGENT_JSON="$("$SCRIPT_DIR/discover-agents.sh" "$PR" | jq -c --arg n "$AGENT" '.agents[] | select(.name == $n)')"
 [[ -n "$AGENT_JSON" ]] || { echo "Error: no agent '$AGENT' on the roster for PR #$PR" >&2; exit 1; }
-[[ "$(jq -r .engine <<<"$AGENT_JSON")" == "pi" ]] \
-    || { echo "Error: agent '$AGENT' is not configured for the pi engine (# Configuration .pi)" >&2; exit 1; }
-MODEL="$(jq -r .pi_model <<<"$AGENT_JSON")"
-SCOPE_JSON="$(jq -c .changed_files <<<"$AGENT_JSON")"
-
-# ---- model credentials: only what this model's provider needs ----
-DOCKER_ENV=()
-if [[ -n "${PI_REVIEW_ENV_FILE:-}" ]]; then
-    [[ -r "$PI_REVIEW_ENV_FILE" ]] || { echo "Error: PI_REVIEW_ENV_FILE not readable: $PI_REVIEW_ENV_FILE" >&2; exit 1; }
-    DOCKER_ENV=(--env-file "$PI_REVIEW_ENV_FILE")
+if [[ -n "$MODEL_ARG" ]]; then
+    CHAIN=("$MODEL_ARG")
 else
-    PROVIDER="${MODEL%%/*}"
-    case "$PROVIDER" in
-        google) KEY_VAR=GEMINI_API_KEY ;;
-        huggingface) KEY_VAR=HF_TOKEN ;;
-        vercel-ai-gateway) KEY_VAR=AI_GATEWAY_API_KEY ;;
-        opencode|opencode-go) KEY_VAR=OPENCODE_API_KEY ;;
-        *) KEY_VAR="$(tr '[:lower:]-' '[:upper:]_' <<<"$PROVIDER")_API_KEY" ;;
-    esac
-    [[ -n "${!KEY_VAR:-}" ]] || { echo "Error: $KEY_VAR is not set (model $MODEL); set it or PI_REVIEW_ENV_FILE" >&2; exit 1; }
-    DOCKER_ENV=(-e "$KEY_VAR")   # name only: the value never reaches argv
+    [[ "$(jq -r .engine <<<"$AGENT_JSON")" == "pi" ]] \
+        || { echo "Error: agent '$AGENT' is not configured for the pi engine (# Configuration .pi)" >&2; exit 1; }
+    mapfile -t CHAIN < <(jq -r '.pi_models[]' <<<"$AGENT_JSON")
 fi
-if [[ -n "${PI_REVIEW_MODELS_JSON:-}" ]]; then
-    [[ -r "$PI_REVIEW_MODELS_JSON" ]] || { echo "Error: PI_REVIEW_MODELS_JSON not readable: $PI_REVIEW_MODELS_JSON" >&2; exit 1; }
-    DOCKER_ENV+=(-v "$(cd "$(dirname "$PI_REVIEW_MODELS_JSON")" && pwd)/$(basename "$PI_REVIEW_MODELS_JSON"):/opt/pi-agent/models.json:ro")
-fi
+SCOPE_JSON="$(jq -c .changed_files <<<"$AGENT_JSON")"
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     [[ "$IMAGE" == "$DEFAULT_IMAGE" ]] || { echo "Error: image $IMAGE not found" >&2; exit 1; }
@@ -90,21 +113,19 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     docker build -q -t "$IMAGE" "$SCRIPT_DIR/../pi" >&2 || { echo "Error: image build failed" >&2; exit 1; }
 fi
 
-# ---- inputs, pinned to the dispatch SHA ----
-NOW="$(head_sha)" || { echo "Error: could not read PR #$PR head" >&2; exit 1; }
-[[ "$NOW" == "$SHA" ]] || { echo "Error: PR #$PR head is $NOW, not dispatch SHA $SHA - round is invalid" >&2; exit 2; }
-git cat-file -e "$SHA^{commit}" 2>/dev/null || git fetch -q origin "$SHA" \
-    || { echo "Error: cannot fetch $SHA" >&2; exit 1; }
-
 mkdir -p "$T/work" "$T/review"
 git archive "$SHA" | tar -x -C "$T/work"
 git -C "$T/work" init -q
-git -C "$T/work" -c core.hooksPath=/dev/null -c user.name=pi -c user.email=pi@localhost \
-    add -A
+git -C "$T/work" -c core.hooksPath=/dev/null -c user.name=pi -c user.email=pi@localhost add -A
 git -C "$T/work" -c core.hooksPath=/dev/null -c user.name=pi -c user.email=pi@localhost \
     commit -q --no-verify -m "PR #$PR at $SHA"
-gh pr diff "$PR" > "$T/review/pr.diff"
-"$SCRIPT_DIR/get-agent-comments.sh" "$PR" "$AGENT" --with-replies > "$T/review/prior-comments.txt"
+if [[ "$REPLAY" == true ]]; then
+    git diff "$BASE" "$SHA" > "$T/review/pr.diff"
+    echo "(none - first review of this commit)" > "$T/review/prior-comments.txt"
+else
+    gh pr diff "$PR" > "$T/review/pr.diff"
+    "$SCRIPT_DIR/get-agent-comments.sh" "$PR" "$AGENT" --with-replies > "$T/review/prior-comments.txt"
+fi
 
 cat > "$T/review/prompt.md" <<EOF
 You are the "$AGENT" code reviewer for PR #$PR, reviewing commit $SHA.
@@ -151,75 +172,122 @@ Nothing to report: {"findings": [], "reopens": []}. That block is your whole
 report; anything outside it is discarded.
 EOF
 
-# ---- run Pi ----
-set +e
-timeout -k 30 "$TIMEOUT" docker run --rm --name "$CONTAINER" \
-    --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
-    --memory 4g --pids-limit 512 \
-    "${DOCKER_ENV[@]}" \
-    -v "$T/work:/work" -v "$T/review:/review:ro" -w /work \
-    "$IMAGE" -p --no-session --model "$MODEL" @/review/prompt.md \
-    > "$T/pi.out" 2> "$T/pi.err"
-PI_RC=$?
-set -e
+key_var() {   # the env var holding <provider>'s API key, per Pi's provider table
+    case "$1" in
+        google) echo GEMINI_API_KEY ;;
+        huggingface) echo HF_TOKEN ;;
+        vercel-ai-gateway) echo AI_GATEWAY_API_KEY ;;
+        opencode|opencode-go) echo OPENCODE_API_KEY ;;
+        *) echo "$(tr '[:lower:]-' '[:upper:]_' <<<"$1")_API_KEY" ;;
+    esac
+}
+exhausted() {   # true while <provider> is inside its exhausted TTL
+    local f="$EXHAUSTED_DIR/$1"
+    [[ -f "$f" ]] && (( $(date +%s) - $(stat -c %Y "$f") < EXHAUSTED_TTL ))
+}
 
-# ---- parse: the last ```json block, strictly shaped ----
-REPORT="$(awk '/^```json[[:space:]]*$/ {buf=""; inb=1; next}
-               inb && /^```[[:space:]]*$/ {last=buf; inb=0; next}
-               inb {buf = buf $0 "\n"}
-               END {printf "%s", last}' "$T/pi.out" \
-    | jq -ce '
-        def finding: (.severity | IN("P1","P2","P3")) and (.file | type == "string")
-            and (.line | type == "number" and . > 0 and floor == .)
-            and (.title | type == "string" and length > 0) and (.body | type == "string");
-        def reopen: (.comment_id | type == "number") and (.reason | type == "string" and length > 0);
-        select(type == "object" and (.findings | type == "array")
-               and ((.reopens // []) | type == "array")
-               and all(.findings[]; finding) and all((.reopens // [])[]; reopen))
-        | .reopens //= []' 2>/dev/null)" || REPORT=""
-if [[ -z "$REPORT" ]]; then
-    # A Pi that crashed, timed out or hit a provider error looks exactly like a
-    # reviewer with nothing to say. Only a well-formed report counts.
-    echo "Error: Pi produced no valid report (pi exit $PI_RC; 124 = timeout after ${TIMEOUT}s)" >&2
-    echo "--- pi stderr (tail) ---" >&2; tail -n 20 "$T/pi.err" >&2
-    echo "--- pi stdout (tail) ---" >&2; tail -n 40 "$T/pi.out" >&2
-    exit 3
-fi
-
-# Pi ran for minutes; a push in that window means nothing it saw would ship.
-NOW="$(head_sha)" || { echo "Error: could not re-read PR #$PR head" >&2; exit 1; }
-[[ "$NOW" == "$SHA" ]] || { echo "Error: PR #$PR moved to $NOW while Pi ran - round is invalid; nothing posted" >&2; exit 2; }
-
-# ---- post ----
-FAILS=0
-while IFS= read -r r; do
-    id="$(jq -r .comment_id <<<"$r")"
-    if "$SCRIPT_DIR/reopen-comment.sh" "$PR" "$id" "$AGENT" "$(jq -r .reason <<<"$r")" >&2; then
-        echo "REOPENED | comment $id"
-    else
-        echo "FAILED | reopen comment $id"; FAILS=$((FAILS + 1))
+# ---- run the chain ----
+REPORT="" USAGE_JSON="" SECS=0
+for MODEL in "${CHAIN[@]}"; do
+    if [[ "$MODEL" == "claude" ]]; then
+        echo "Chain reached claude after: ${TRIED[*]:-nothing} - spawn the Claude Task" >&2
+        STATUS="fallback-claude"; exit 5
     fi
-done < <(jq -c '.reopens[]' <<<"$REPORT")
+    PROVIDER="${MODEL%%/*}"
+    if exhausted "$PROVIDER"; then
+        echo "Skipping $MODEL: $PROVIDER marked exhausted ($EXHAUSTED_DIR/$PROVIDER)" >&2
+        TRIED+=("$MODEL:skipped"); continue
+    fi
+    DOCKER_ENV=()
+    if [[ -n "${PI_REVIEW_ENV_FILE:-}" ]]; then
+        [[ -r "$PI_REVIEW_ENV_FILE" ]] || { echo "Error: PI_REVIEW_ENV_FILE not readable: $PI_REVIEW_ENV_FILE" >&2; exit 1; }
+        DOCKER_ENV=(--env-file "$PI_REVIEW_ENV_FILE")
+    else
+        KEY_VAR="$(key_var "$PROVIDER")"
+        if [[ -z "${!KEY_VAR:-}" ]]; then
+            echo "Skipping $MODEL: $KEY_VAR is not set" >&2
+            TRIED+=("$MODEL:no-key"); continue
+        fi
+        DOCKER_ENV=(-e "$KEY_VAR")   # name only: the value never reaches argv
+    fi
+    if [[ -n "${PI_REVIEW_MODELS_JSON:-}" ]]; then
+        [[ -r "$PI_REVIEW_MODELS_JSON" ]] || { echo "Error: PI_REVIEW_MODELS_JSON not readable: $PI_REVIEW_MODELS_JSON" >&2; exit 1; }
+        DOCKER_ENV+=(-v "$(cd "$(dirname "$PI_REVIEW_MODELS_JSON")" && pwd)/$(basename "$PI_REVIEW_MODELS_JSON"):/opt/pi-agent/models.json:ro")
+    fi
 
-while IFS= read -r f; do
-    file="$(jq -r .file <<<"$f")" line="$(jq -r .line <<<"$f")"
-    sev="$(jq -r .severity <<<"$f")" title="$(jq -r .title <<<"$f")"
-    if ! jq -e --arg f "$file" 'index($f) != null' <<<"$SCOPE_JSON" >/dev/null; then
-        echo "DROPPED | $file:$line | $title (outside this agent's scope)"
+    git -C "$T/work" reset -q --hard && git -C "$T/work" clean -qfdx   # undo the last model's edits
+    START=$SECONDS
+    set +e
+    timeout -k 30 "$TIMEOUT" docker run --rm --name "$CONTAINER" \
+        --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
+        --memory 4g --pids-limit 512 \
+        "${DOCKER_ENV[@]}" \
+        -v "$T/work:/work" -v "$T/review:/review:ro" -w /work \
+        "$IMAGE" --mode json --no-session --model "$MODEL" @/review/prompt.md \
+        > "$T/pi.out" 2> "$T/pi.err"
+    PI_RC=$?
+    set -e
+    SECS=$((SECONDS - START))
+
+    # Pi reports a provider error as stopReason "error" and still exits 0.
+    LAST="$(jq -c 'select(.type == "agent_end") | [.messages[] | select(.role == "assistant")] | last' "$T/pi.out" 2>/dev/null | tail -n 1)"
+    ERR="$(jq -r 'select(.stopReason == "error") | .errorMessage // "unknown provider error"' <<<"${LAST:-null}" 2>/dev/null || true)"
+    if [[ -n "$ERR" || ( "$PI_RC" -ne 0 && "$PI_RC" -ne 124 && -z "$LAST" ) ]]; then
+        ERR="${ERR:-pi exit $PI_RC: $(tail -n 1 "$T/pi.err")}"
+        echo "Provider failure on $MODEL: $ERR" >&2
+        TRIED+=("$MODEL:provider-error")
+        if grep -qiE 'quota|credit|insufficient|exceed|429|rate.?limit|balance|billing' <<<"$ERR"; then
+            mkdir -p "$EXHAUSTED_DIR" && printf '%s\n' "$ERR" > "$EXHAUSTED_DIR/$PROVIDER"
+        fi
         continue
     fi
-    body="**${sev}: ${title}**
+    TRIED+=("$MODEL")
 
-$(jq -r .body <<<"$f")
-
-<sub>engine: pi · model: ${MODEL}</sub>"
-    if "$SCRIPT_DIR/post-line-comment.sh" "$PR" "$file" "$line" "$AGENT" "$body" >&2; then
-        echo "$sev | $file:$line | $title"; POSTED=$((POSTED + 1))
-    else
-        echo "FAILED | $file:$line | $title"; FAILS=$((FAILS + 1))
+    # ---- parse: the last ```json block of the final reply, strictly shaped ----
+    TEXT="$(jq -r '[.content[]? | select(.type == "text") | .text] | join("")' <<<"${LAST:-null}" 2>/dev/null || true)"
+    REPORT="$(awk '/^```json[[:space:]]*$/ {buf=""; inb=1; next}
+                   inb && /^```[[:space:]]*$/ {last=buf; inb=0; next}
+                   inb {buf = buf $0 "\n"}
+                   END {printf "%s", last}' <<<"$TEXT" \
+        | jq -ce '
+            def finding: (.severity | IN("P1","P2","P3")) and (.file | type == "string")
+                and (.line | type == "number" and . > 0 and floor == .)
+                and (.title | type == "string" and length > 0) and (.body | type == "string");
+            def reopen: (.comment_id | type == "number") and (.reason | type == "string" and length > 0);
+            select(type == "object" and (.findings | type == "array")
+                   and ((.reopens // []) | type == "array")
+                   and all(.findings[]; finding) and all((.reopens // [])[]; reopen))
+            | .reopens //= []' 2>/dev/null)" || REPORT=""
+    if [[ -z "$REPORT" ]]; then
+        # A model that crashed, timed out or answered off-contract looks exactly
+        # like a reviewer with nothing to say. It is a strike, not a fallback.
+        echo "Error: $MODEL produced no valid report (pi exit $PI_RC; 124 = timeout after ${TIMEOUT}s)" >&2
+        echo "--- pi stderr (tail) ---" >&2; tail -n 20 "$T/pi.err" >&2
+        echo "--- final reply (tail) ---" >&2; tail -n 40 <<<"$TEXT" >&2
+        exit 3
     fi
-done < <(jq -c '.findings[]' <<<"$REPORT")
+    USAGE_JSON="$(jq -sc '[.[] | select(.type == "agent_end") | .messages[] | select(.role == "assistant") | .usage]
+        | {input: (map(.input // 0) | add // 0), output: (map(.output // 0) | add // 0),
+           cacheRead: (map(.cacheRead // 0) | add // 0), cacheWrite: (map(.cacheWrite // 0) | add // 0)}' "$T/pi.out")"
+    break
+done
+if [[ -z "$REPORT" ]]; then
+    echo "Error: every model in the chain failed on the provider side: ${TRIED[*]:-none}" >&2
+    STATUS="providers-failed"; exit 6
+fi
 
-[[ "$(jq '(.findings | length) + (.reopens | length)' <<<"$REPORT")" -eq 0 ]] && echo "No issues found"
+if [[ "$REPLAY" == false ]]; then
+    # Pi ran for minutes; a push in that window means nothing it saw would ship.
+    NOW="$(head_sha)" || { echo "Error: could not re-read PR #$PR head" >&2; exit 1; }
+    [[ "$NOW" == "$SHA" ]] || { echo "Error: PR #$PR moved to $NOW while Pi ran - round is invalid" >&2; exit 2; }
+fi
+
 STATUS="reported"
-[[ "$FAILS" -eq 0 ]] || { STATUS="post-failed"; exit 4; }
+jq -n --arg agent "$AGENT" --argjson pr "$PR" --arg sha "$SHA" --arg model "$MODEL" \
+    --argjson secs "$SECS" --argjson usage "$USAGE_JSON" --argjson scope "$SCOPE_JSON" \
+    --argjson report "$REPORT" --args '{
+    agent: $agent, pr: $pr, sha: $sha, model: $model, tried: $ARGS.positional,
+    seconds: $secs, usage: $usage,
+    report: {findings: [$report.findings[] | select(.file as $f | $scope | index($f))],
+             reopens: $report.reopens},
+    dropped: [$report.findings[] | select(.file as $f | $scope | index($f) | not)]}' "${TRIED[@]}"

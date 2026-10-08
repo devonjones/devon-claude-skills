@@ -1501,44 +1501,84 @@ Task tool:
 
 ### Pi Engine (reviewers on non-Claude models)
 
-An agent whose `engine` (from `discover-agents.sh`) is `"pi"` is not a Task.
-Run it as a background Bash job, in parallel with the Tasks:
-
-```bash
-scripts/pi-review.sh <PR> <agent-name> <SHA recorded at C3>
-```
-
-The script runs [Pi](https://www.npmjs.com/package/@mariozechner/pi-coding-agent)
-once (`pi -p`) in Docker, against a throwaway `git archive` export of the
-dispatch SHA. Pi can edit and run code there for mutation proofs. It prints one
-JSON report and exits. Then the script posts the findings and reopens through
-`post-line-comment.sh` and `reopen-comment.sh`, under the agent's own name. No
-GitHub token enters the container. Every comment ends with the engine and model,
-so the operator can see which model raised it.
+An agent whose `engine` (from `discover-agents.sh`) is `"pi"` runs its review on
+a non-Claude model through `scripts/pi-review.sh`, which runs
+[Pi](https://www.npmjs.com/package/@mariozechner/pi-coding-agent) once in
+Docker against a throwaway `git archive` export of the dispatch SHA. Pi can edit
+and run code there for mutation proofs. The script **posts nothing**. It prints
+the validated report as JSON, so no GitHub token enters the container.
 
 Turn it on in `# Configuration`:
 
 ```json
-{ "pi": { "all": true, "model": "deepseek/deepseek-chat",
-          "agents": { "silent-failure-hunter": false, "dry-reviewer": "google/gemini-2.5-flash" } } }
+{ "pi": { "all": true, "model": ["zai/glm-5.1", "claude"],
+          "agents": { "silent-failure-hunter": false,
+                      "code-reviewer": ["qwen-token-plan/qwen3.8-max", "zai/glm-5.1", "claude"] } } }
 ```
 
 - **`all`** (default `false`): route every agent to Pi on `model`.
-- **`model`**: the default Pi model (`provider/id`). Required when `all` or any `true` entry routes an agent to Pi.
-- **`agents`**: per agent. `true` routes the agent to Pi on `model`, a string routes it to Pi on that model, and `false` keeps it on Claude even under `all`. Default agents can be routed this way too, without overriding their prompts.
+- **`model`**: the default chain. Required when `all` or any `true` entry routes an agent to Pi.
+- **`agents`**: per agent. `true` uses `model`, a chain routes the agent on that chain, and `false` keeps it on Claude even under `all`. Default agents can be routed this way too, without overriding their prompts.
+- **A chain** is a model (`provider/id`) or an ordered list of them. The script moves to the next model only when the provider fails: quota or credits used up, rate limit, auth or access denied, unreachable. A model that ran and gave no valid report is a strike, not a reason to try another. `"claude"` in a chain means "from here, use the normal Claude Task". A chain that starts with `"claude"` is just a Claude agent. A provider that reports exhausted quota is skipped by every run for an hour (`PI_REVIEW_EXHAUSTED_TTL`, marker in `~/.cache/pr-review-loop/exhausted/<provider>`).
 
 `configuration.pi_agents_unknown` lists `agents` entries that name nothing on the
 roster. Treat it like `disabled_defaults_unknown`.
 
-**Exit codes.** Only exit 0 counts as reported. 1 means setup failed, 2 means
-the PR head is not the dispatch SHA (nothing was posted, and the round is
-invalid), 3 means Pi gave no valid report, and 4 means a post failed. A Pi run
-that crashed, timed out or hit a provider error never reads as "No issues
-found". Every non-zero exit is a strike under "A reviewer that will not report".
+**Spawn a Haiku poster Task per Pi agent**, in the same parallel batch as the
+Claude reviewers. Haiku does the mechanical part, posting, so Opus never spends
+context on it, and the Task description keeps dream's firing coverage intact:
 
-**Telemetry.** A Bash run leaves no Task description, so the script writes its
-own `reviewer-fired` dream marker on every exit. Disposition markers in F3 are
-the same as for any agent.
+```yaml
+Task tool:
+  subagent_type: general-purpose
+  model: haiku
+  description: <agent-name> review for PR #<PR>
+  prompt: |
+    You post a code review that another model has already written. Do not
+    review, judge, rewrite or drop anything yourself.
+
+    1. Run (it can take up to 15 minutes; use a 900000 ms timeout):
+       scripts/pi-review.sh <PR> <agent-name> <SHA recorded at C3>
+    2. By exit code:
+       - 0: stdout is JSON. For each `report.reopens` entry run
+         scripts/reopen-comment.sh <PR> <comment_id> <agent-name> "<reason>"
+         For each `report.findings` entry run
+         scripts/post-line-comment.sh <PR> <file> <line> <agent-name> "<body>"
+         where <body> is exactly:
+           **<severity>: <title>**
+
+           <body field, verbatim>
+
+           <sub>engine: pi · model: <model></sub>
+         Never retry a GitHub write, with one exception: if a post fails with
+         HTTP 422 because the line is not part of the diff, nothing was written,
+         so post it once more on the nearest added line of that file in
+         `gh pr diff <PR>`, and add "(anchored at line <n>; reported at line
+         <line>)" under the title.
+       - 5: return exactly `FALLBACK claude` and nothing else.
+       - anything else: return `NOT REPORTED exit <n>: <first line of stderr>`.
+    3. Return the posting manifest, one line per item, nothing else:
+       `<severity> | <file>:<line> | <title>` per posted finding,
+       `REOPENED | <comment_id>` per reopen,
+       `FAILED | <file>:<line> | <title>` per post that failed,
+       `DROPPED | <file>:<line> | <title>` per entry in `dropped`,
+       or `No issues found` when the report was empty.
+       First line: `model: <model>`.
+```
+
+**What the orchestrator does with the answer:**
+
+| Answer | Meaning |
+|---|---|
+| A manifest with no `FAILED` line | Reported. |
+| A manifest with `FAILED` lines | Reported, but a post is missing. Post that finding yourself per the "agent failed to post" rule in Main Loop Integration. |
+| `FALLBACK claude` | Not a strike. Spawn this agent's normal Claude Task now, in this round. |
+| `NOT REPORTED exit 2` | The branch moved. The round is invalid (see Convergence). |
+| `NOT REPORTED` with any other exit | A strike under "A reviewer that will not report". Exit 6 means every provider in the chain failed. |
+
+**Telemetry.** The Haiku Task carries the standard description, so firing
+coverage works as for any agent. The script also writes a `reviewer-fired` dream
+marker naming the model that actually ran and the models it tried first.
 
 **Credentials.** By default the script passes only `<PROVIDER>_API_KEY` into
 the container (`GEMINI_API_KEY` for `google`). To pass something else, set
@@ -1713,7 +1753,7 @@ When detected, the script suggests:
 | `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post line comment with agent signature |
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |
 | `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |
-| `pi-review.sh <PR> <agent> <dispatch-sha>` | Run a `pi`-engine agent once in Docker and post its findings. Prints the manifest; only exit 0 is reported. See "Pi Engine" |
+| `pi-review.sh <PR> <agent> <sha> [--model M] [--replay]` | Run a `pi`-engine agent once in Docker down its model chain. Prints the report as JSON and posts nothing; a Haiku Task posts it. Exit 5 = use the Claude Task. See "Pi Engine" |
 | `emit-dream-marker.sh <kind> key=value ...` | Emit a dream marker (reviewer telemetry) — best-effort, never blocks. See "Dream Markers" |
 | `discover-agents.sh <PR>` | Discover + merge agent reviewers (defaults + user agents per C+E); emits `configuration` block with `stale_pin` and (when no AGENT-REVIEWERS.md exists) the `language_detection` block driving the Language Template Offer |
 | `detect-language.sh [--repo-root <path>]` | Scan repo for language manifests (go.mod, pyproject.toml, etc.); emits `[{language, subtree, manifest}, ...]`. Deterministic; called by discover-agents.sh |
