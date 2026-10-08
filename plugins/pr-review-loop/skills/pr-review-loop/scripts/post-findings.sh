@@ -21,7 +21,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_pace.sh"
 PR="${1:?Usage: post-findings.sh <pr-number|local> [--local|--check]}"
 MODE="${2:-post}"
 
-STORE="$(cd "$(git rev-parse --git-dir)" && pwd)/pr-review-loop/findings-$PR.jsonl"
+STORE="$(git rev-parse --absolute-git-dir)/pr-review-loop/findings-$PR.jsonl"
 
 if [[ "$MODE" == "--check" ]]; then
     if [[ -s "$STORE" ]]; then
@@ -37,7 +37,13 @@ if [[ ! -s "$STORE" ]]; then
     exit 0
 fi
 
+# Hold record-finding.sh's lock throughout, so nothing recorded mid-post is
+# archived unsent.
+exec 9>>"$STORE.lock"
+flock 9
+
 archive() { mv -f "$STORE" "$STORE.$(date +%s).done"; }
+ERR=$(mktemp); trap 'rm -f "$ERR"' EXIT
 
 GROUPS_JSON=$(jq -s '
     def sig(a): "<!-- Agent: \(a) -->";
@@ -67,7 +73,8 @@ FINDINGS=$(wc -l < "$STORE")
 if [[ "$MODE" == "--local" ]]; then
     echo "$FINDINGS finding(s) in $COUNT thread(s). Nothing posted."
     jq -r '.[] | "\n=== \(.path):\(.line) ===\n\(.body)"' <<< "$GROUPS_JSON" | grep -v '^<!-- Agent: '
-    archive
+    # A preview of a real PR's findings must leave them to be posted.
+    [[ "$PR" == "local" ]] && archive
     exit 0
 fi
 
@@ -87,7 +94,7 @@ REVIEW=$(jq --arg sha "$SHA" --arg n "$FINDINGS" '{
 }' <<< "$GROUPS_JSON")
 
 pace_github
-if RESULT=$(gh api --method POST "repos/$REPO/pulls/$PR/reviews" --input - <<< "$REVIEW" 2>&1); then
+if RESULT=$(gh api --method POST "repos/$REPO/pulls/$PR/reviews" --input - <<< "$REVIEW" 2>"$ERR"); then
     RID=$(jq -r '.id' <<< "$RESULT")
     archive
     echo "Posted review $RID: $FINDINGS finding(s) in $COUNT thread(s)."
@@ -96,16 +103,16 @@ if RESULT=$(gh api --method POST "repos/$REPO/pulls/$PR/reviews" --input - <<< "
     exit 0
 fi
 
-echo "Review rejected, posting threads one at a time: $RESULT" >&2
+echo "Review rejected, posting threads one at a time: $RESULT $(cat "$ERR")" >&2
 FAILED_FINDINGS=""
 for i in $(seq 0 $((COUNT - 1))); do
     G=$(jq -c ".[$i]" <<< "$GROUPS_JSON")
     pace_github
     if OUT=$(jq --arg sha "$SHA" '{commit_id: $sha, path, line, side: "RIGHT", body}' <<< "$G" \
-            | gh api --method POST "repos/$REPO/pulls/$PR/comments" --input - 2>&1); then
+            | gh api --method POST "repos/$REPO/pulls/$PR/comments" --input - 2>"$ERR"); then
         echo "$(jq -r '.id' <<< "$OUT") $(jq -r '"\(.path):\(.line)"' <<< "$G")"
     else
-        echo "FAILED $(jq -r '"\(.path):\(.line)"' <<< "$G"): $OUT" >&2
+        echo "FAILED $(jq -r '"\(.path):\(.line)"' <<< "$G"): $OUT $(cat "$ERR")" >&2
         FAILED_FINDINGS+="$(jq -c '.findings[]' <<< "$G")"$'\n'
     fi
 done

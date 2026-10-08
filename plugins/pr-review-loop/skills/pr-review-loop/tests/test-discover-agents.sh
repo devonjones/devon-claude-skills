@@ -1098,6 +1098,22 @@ run_discover "$repo" "" tg3
 assert_jq "defaults spawn" "$tg3" '.agents | length == 6'
 rm -rf "$repo"
 
+echo
+echo "=== Test G4: --base diffs <ref>...HEAD with no PR ==="
+repo="$(make_temp_repo)"
+(
+  cd "$repo"
+  git -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+  git branch -q base-ref
+  mkdir -p src; echo x > src/a.py; echo y > uv.lock
+  git add -A; git -c user.email=t@t -c user.name=t commit -q -m change
+)
+tg4=$(cd "$repo" && "$DISCOVER" --base base-ref 2>/dev/null); tg4_exit=$?
+assert_exit "exit 0" "$tg4_exit" "0"
+assert_jq "scope comes from the local diff" "$tg4" '[.agents[].changed_files[]] | unique == ["src/a.py"]'
+assert_jq "lockfile excluded" "$tg4" '.configuration.excluded_files == ["uv.lock"]'
+rm -rf "$repo"
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

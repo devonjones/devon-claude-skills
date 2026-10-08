@@ -22,6 +22,7 @@ case "$*" in
   *"--method POST"*/reviews*)
       cat > "$T/review.json"
       [[ -n "${FAKE_REVIEW_FAIL:-}" ]] && { echo '{"message":"Unprocessable Entity"}'; exit 1; }
+      [[ -n "${FAKE_STDERR:-}" ]] && echo "A new release of gh is available" >&2
       echo '{"id":7}' ;;
   *"--method POST"*/comments*)
       body=$(cat); jq -c . <<< "$body" >> "$T/comments.jsonl"
@@ -35,12 +36,12 @@ chmod +x "$T/bin/gh"
 
 repo(){ rm -rf "$T/r" "$T"/review.json "$T"/comments.jsonl; git init -q "$T/r"; }
 rec(){ (cd "$T/r" && bash "$RECORD" "$@" >/dev/null); }
-seed(){
-  rec 42 a.py 10 error-handling-reviewer P2 "swallows the exit code"
-  rec 42 a.py 10 concurrency-reviewer P1 "races the writer"
-  rec 42 b.py 5 test-coverage-reviewer P1 "no test pins this"
-  rec 42 c.py 1 clarity-reviewer P3 "comment narrates history; delete it"
-  rec 42 d.py 2 dead-code-reviewer P3 "unused import"
+seed(){ local pr="${1:-42}"
+  rec $pr a.py 10 error-handling-reviewer P2 "swallows the exit code"
+  rec $pr a.py 10 concurrency-reviewer P1 "races the writer"
+  rec $pr b.py 5 test-coverage-reviewer P1 "no test pins this"
+  rec $pr c.py 1 clarity-reviewer P3 "comment narrates history; delete it"
+  rec $pr d.py 2 dead-code-reviewer P3 "unused import"
 }
 run(){ set +e; OUT=$(cd "$T/r" && PATH="$T/bin:$PATH" T="$T" PR_REVIEW_LOOP_PACE_S=0 \
         PR_REVIEW_LOOP_PACE_DIR="$T/pace" bash "$POST" "$@" 2>&1); RC=$?; set -e; }
@@ -49,14 +50,21 @@ echo "=== bad severity is refused ==="
 repo; set +e; (cd "$T/r" && bash "$RECORD" 42 a.py 1 x HIGH "y" >/dev/null 2>&1); rc=$?; set -e
 check "non-P severity exits non-zero" '[[ $rc -ne 0 ]]'
 
+echo "=== bad line and no repo are refused ==="
+set +e; (cd "$T/r" && bash "$RECORD" 42 a.py abc x P1 "y" >/dev/null 2>&1); rc=$?; set -e
+check "non-numeric line exits non-zero" '[[ $rc -ne 0 ]]'
+mkdir -p "$T/norepo"; set +e; (cd "$T/norepo" && GIT_CEILING_DIRECTORIES="$T" bash "$RECORD" 42 a.py 1 x P1 "y" >/dev/null 2>&1); rc=$?; set -e
+check "outside a git repo exits non-zero" '[[ $rc -ne 0 ]]'
+check "and writes nothing" '[[ ! -e "$T/norepo/pr-review-loop" ]]'
+
 echo "=== local mode merges and posts nothing ==="
-repo; seed; run 42 --local
+repo; seed local; run local --local
 check "5 findings collapse to 3 threads" '[[ "$OUT" == *"5 finding(s) in 3 thread(s)"* ]]'
 check "same-line findings share a thread, P1 first" \
   '[[ "$(grep -A3 "=== a.py:10 ===" <<< "$OUT" | sed -n 2p)" == *"concurrency-reviewer"*"P1"* ]]'
 check "signatures are stripped from the local report" '[[ "$OUT" != *"<!-- Agent:"* ]]'
 check "no GitHub write" '[[ ! -e "$T/review.json" && ! -e "$T/comments.jsonl" ]]'
-run 42 --check; check "store consumed" '[[ $RC -eq 0 ]]'
+run local --check; check "store consumed" '[[ $RC -eq 0 ]]'
 
 echo "=== one review carries every thread ==="
 repo; seed; run 42 --check; check "--check fails while findings are unposted" '[[ $RC -eq 1 ]]'
@@ -72,6 +80,20 @@ check "P3 roll-up names both P3 flaggers" \
 check "review is pinned to the PR head" '[[ "$(jq -r .commit_id "$T/review.json")" == abc123 ]]'
 check "no per-comment POSTs when the review lands" '[[ ! -e "$T/comments.jsonl" ]]'
 run 42 --check; check "store consumed after posting" '[[ $RC -eq 0 ]]'
+
+echo "=== previewing a real PR keeps its findings ==="
+repo; seed; run 42 --local
+run 42 --check; check "--check still fails after a preview" '[[ $RC -eq 1 ]]'
+
+echo "=== a posted review with gh noise on stderr is still posted ==="
+repo; seed; FAKE_STDERR=1 run 42
+check "exits 0" '[[ $RC -eq 0 ]]'
+run 42 --check; check "store consumed (no double post on rerun)" '[[ $RC -eq 0 ]]'
+
+echo "=== a rejected review whose threads all post clears the store ==="
+repo; seed; FAKE_REVIEW_FAIL=1 run 42
+check "exits 0" '[[ $RC -eq 0 ]]'
+run 42 --check; check "store consumed" '[[ $RC -eq 0 ]]'
 
 echo "=== a rejected review falls back, and failures stay recorded ==="
 repo; seed; FAKE_REVIEW_FAIL=1 FAKE_FAIL_PATH=b.py run 42

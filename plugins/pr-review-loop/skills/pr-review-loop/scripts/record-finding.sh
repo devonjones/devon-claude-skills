@@ -13,7 +13,7 @@ AGENT="${4:?$USAGE}"; SEV="${5:?$USAGE}"; BODY="${6:?$USAGE}"
 [[ "$LINE" =~ ^[0-9]+$ ]] || { echo "Error: line must be a number (got '$LINE')" >&2; exit 1; }
 
 # Under the git dir, so the working tree stays clean for the round.
-DIR="$(cd "$(git rev-parse --git-dir)" && pwd)/pr-review-loop"
+DIR="$(git rev-parse --absolute-git-dir)/pr-review-loop"
 mkdir -p "$DIR"
 STORE="$DIR/findings-$PR.jsonl"
 
