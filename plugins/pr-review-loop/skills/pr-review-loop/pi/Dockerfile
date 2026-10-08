@@ -7,7 +7,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g "@mariozechner/pi-coding-agent@${PI_VERSION}" \
  && npm cache clean --force
-# Providers Pi does not ship (Alibaba Model Studio / Qwen Cloud, pay-as-you-go).
+# Providers Pi does not ship: Alibaba Model Studio / Qwen Cloud, pay-as-you-go
+# (dashscope) and the Token Plan (qwen-token-plan). Same models, separate keys.
 COPY models.json /opt/pi-agent/models.json
 RUN chmod 1777 /opt/pi-agent
 ENV PI_OFFLINE=1 PI_TELEMETRY=0 HOME=/tmp PI_CODING_AGENT_DIR=/opt/pi-agent
