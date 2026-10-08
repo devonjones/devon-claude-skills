@@ -131,11 +131,16 @@ Output: {\"candidates\": [{\"i\": 0, \"match\": <id or null>, \"plausible\": <bo
 
 score() {   # <agent> <models...>: per-model metrics over the replayed commits
     local agent="$1" dir="$BASE_DIR/$1"; shift
-    local m sha f all="[]"
+    local m sha f all="[]" T_EMPTY
+    T_EMPTY="$(mktemp -d)/missing.json"
+    echo '{"failed": true, "error": "replay or judgement missing"}' > "$T_EMPTY"
+    echo '{"candidates": []}' > "${T_EMPTY%.json}.judge.json"
     for m in "$@"; do
         local rows="[]"
         while read -r _ sha; do
             f="$dir/runs/${sha:0:12}__${m//\//_}.json"
+            # A replay that never finished (killed, deleted) scores as a failed run.
+            [[ -s "$f" && -s "${f%.json}.judge.json" ]] || { f="$T_EMPTY"; }
             rows="$(jq -c --slurpfile run "$f" --slurpfile j "${f%.json}.judge.json" --slurpfile cases "$dir/cases.json" \
                 --arg sha "$sha" '. + [{sha: $sha, run: $run[0], judge: $j[0],
                     originals: [$cases[0][] | select(.sha == $sha and .verdict != "unscored")]}]' <<<"$rows")"
