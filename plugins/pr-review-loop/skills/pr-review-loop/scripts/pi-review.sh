@@ -217,17 +217,30 @@ claude_replay() {
         "properties":{"comment_id":{"type":"integer"},"reason":{"type":"string","minLength":1}}}}}}'
     local START=$SECONDS rc
     set +e
-    (cd "$T/work" && env -u ANTHROPIC_API_KEY timeout -k 30 "$TIMEOUT" claude -p --model "${cm:-sonnet}" \
+    # Invocation shape follows Fleet's vigil ephemeral sessions (one-shot -p,
+    # an entrypoint tag, the result envelope read on every exit).
+    (cd "$T/work" && env -u ANTHROPIC_API_KEY CLAUDE_CODE_ENTRYPOINT=pr-review-loop \
+        timeout -k 30 "$TIMEOUT" claude -p --model "${cm:-sonnet}" \
         --no-session-persistence --output-format json --permission-mode acceptEdits \
         --allowedTools "Read Grep Glob Bash Edit Write" --disallowedTools "Bash(gh *)" "Bash(git push*)" "Bash(curl *)" \
         --add-dir "$T/review" --json-schema "$schema" < "$T/review/prompt-claude.md" > "$T/claude.out" 2> "$T/claude.err")
     rc=$?
     set -e
-    SECS=$((SECONDS - START)); TRIED+=("$MODEL")
+    SECS=$((SECONDS - START))
+    # Claude emits a result envelope on every exit; an API error or a usage
+    # limit there is the provider failing, not the reviewer.
+    local why
+    why="$(jq -r 'select(.is_error == true) | [.api_error_status, .terminal_reason, .result] | map(select(. != null) | tostring) | join(" | ")' \
+        "$T/claude.out" 2>/dev/null || true)"
+    if [[ -n "$why" ]] && grep -qiE 'limit|quota|429|5[0-9][0-9]|overloaded|rate|credit|auth|401|403' <<<"$why"; then
+        echo "Provider failure on $MODEL: $why" >&2
+        TRIED+=("$MODEL:provider-error"); return 2
+    fi
+    TRIED+=("$MODEL")
     REPORT="$(jq -ce '.structured_output | select(type == "object" and (.findings | type == "array"))
         | .reopens //= []' "$T/claude.out" 2>/dev/null)" || REPORT=""
     if [[ -z "$REPORT" ]]; then
-        echo "Error: $MODEL produced no structured report (claude exit $rc; 124 = timeout after ${TIMEOUT}s)" >&2
+        echo "Error: $MODEL produced no structured report (claude exit $rc; 124 = timeout after ${TIMEOUT}s)${why:+: $why}" >&2
         tail -n 20 "$T/claude.err" >&2; jq -r '.result // empty' "$T/claude.out" 2>/dev/null | tail -n 20 >&2
         return 1
     fi
@@ -241,6 +254,7 @@ REPORT="" USAGE_JSON="" SECS=0
 for MODEL in "${CHAIN[@]}"; do
     if [[ ( "$MODEL" == claude || "$MODEL" == claude:* ) && "$REPLAY" == true ]]; then
         claude_replay && break
+        [[ $? -eq 2 ]] && continue   # usage limit / API error: a provider failure
         exit 3
     fi
     if [[ "$MODEL" == claude || "$MODEL" == claude:* ]]; then

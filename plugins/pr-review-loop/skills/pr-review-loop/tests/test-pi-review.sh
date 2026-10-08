@@ -102,7 +102,7 @@ run(){ : > "$T/gh.log"; : > "$T/docker.log"; : > "$T/docker.log.args"; set +e
         FAKE_HEAD="${FAKE_HEAD:-$SHA}" FAKE_FIRST="$SHA" \
         PR_REVIEW_LOOP_TEST_CHANGED_FILES=$'src/a.py\nsrc/b.py' \
         PI_REVIEW_CACHE_DIR="$T/cache" DREAM_HOME="$T/dream" PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$T/no-pi}" \
-        PRIOR_SEEN="${PRIOR_SEEN:-/dev/null}" CLAUDE_LOG="${CLAUDE_LOG:-/dev/null}" FAKE_CLAUDE_NOREPORT="${FAKE_CLAUDE_NOREPORT:-}" \
+        PRIOR_SEEN="${PRIOR_SEEN:-/dev/null}" CLAUDE_LOG="${CLAUDE_LOG:-/dev/null}" FAKE_CLAUDE_NOREPORT="${FAKE_CLAUDE_NOREPORT:-}" FAKE_CLAUDE_LIMIT="${FAKE_CLAUDE_LIMIT:-}" \
         ZAI_API_KEY="${ZAI_API_KEY-k}" GEMINI_API_KEY="${GEMINI_API_KEY-k}" DEEPSEEK_API_KEY=k \
         bash "$PI_REVIEW" 42 "$1" "$SHA" "${@:2}" 2>"$T/err"); RC=$?; set -e; }
 ran(){ paste -sd' ' "$T/docker.log"; }
@@ -222,6 +222,7 @@ cat > "$T/bin/claude" <<'CL'
 #!/usr/bin/env bash
 { echo "key=${ANTHROPIC_API_KEY-unset}"; printf '%s\n' "$*"; } > "$CLAUDE_LOG"
 [[ -n "${FAKE_CLAUDE_NOREPORT:-}" ]] && { echo '{"result": "looks fine", "usage": {}}'; exit 0; }
+[[ -n "${FAKE_CLAUDE_LIMIT:-}" ]] && { echo '{"is_error": true, "api_error_status": 429, "result": "Claude usage limit reached"}'; exit 1; }
 echo '{"structured_output": {"findings": [{"severity": "P2", "file": "src/a.py", "line": 1, "title": "t", "body": "b"}], "reopens": []},
        "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 100, "cache_creation_input_tokens": 0},
        "total_cost_usd": 0.03}'
@@ -237,6 +238,8 @@ grep -q -- '--model haiku' "$T/claude.log" && grep -q 'Bash(gh \*)' "$T/claude.l
 CLAUDE_LOG="$T/claude.log" FAKE_CLAUDE_NOREPORT=1 run claude-agent --replay --model claude
 [[ "$RC" -eq 3 ]] && ok "no structured report -> exit 3" || bad "rc=$RC"
 grep -q -- '--model sonnet' "$T/claude.log" && ok "bare claude falls back to sonnet for an agent with no model" || bad "args: $(tail -1 "$T/claude.log")"
+CLAUDE_LOG="$T/claude.log" FAKE_CLAUDE_LIMIT=1 run claude-agent --replay --model claude:sonnet
+[[ "$RC" -eq 6 ]] && grep -q 'usage limit' "$T/err" && ok "a usage limit is a provider failure (exit 6), not a strike" || bad "rc=$RC"
 
 echo "=== setup refusals ==="
 run claude-agent
