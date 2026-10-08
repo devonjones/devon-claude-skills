@@ -1,0 +1,17 @@
+{
+  "providers": {
+    "dashscope": {
+      "baseUrl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "api": "openai-completions",
+      "apiKey": "DASHSCOPE_API_KEY",
+      "compat": { "supportsDeveloperRole": false },
+      "models": [
+        { "id": "qwen3-coder-plus" },
+        { "id": "qwen3-coder-flash" },
+        { "id": "qwen3-max" },
+        { "id": "qwen-plus" },
+        { "id": "qwen-flash" }
+      ]
+    }
+  }
+}
