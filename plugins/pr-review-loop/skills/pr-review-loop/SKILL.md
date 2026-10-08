@@ -1542,7 +1542,10 @@ the same as for any agent.
 
 **Credentials.** By default the script passes only `<PROVIDER>_API_KEY` into
 the container (`GEMINI_API_KEY` for `google`). To pass something else, set
-`PI_REVIEW_ENV_FILE` to a docker env file. That key is visible to any PR code
+`PI_REVIEW_ENV_FILE` to a docker env file. For an endpoint specific to your
+account (an Alibaba workspace URL, a local Ollama), point
+`PI_REVIEW_MODELS_JSON` at a Pi `models.json`; it replaces the image's
+`pi/models.json`, so copy the providers you still want. That key is visible to any PR code
 the reviewer runs, so use a spend-capped key. `PI_REVIEW_TIMEOUT` (default
 900 s) and `PI_REVIEW_IMAGE` (default: built from `pi/Dockerfile` on first use)
 are the other two knobs. The default image has no language toolchains beyond

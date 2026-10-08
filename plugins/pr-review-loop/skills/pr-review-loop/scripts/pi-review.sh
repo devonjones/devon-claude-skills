@@ -20,7 +20,9 @@
 #
 # Env: PI_REVIEW_TIMEOUT (seconds, default 900), PI_REVIEW_IMAGE (default: the
 # image built from ../pi/Dockerfile on first use), PI_REVIEW_ENV_FILE (docker
-# --env-file for the model's credentials; default: pass only <PROVIDER>_API_KEY).
+# --env-file for the model's credentials; default: pass only <PROVIDER>_API_KEY),
+# PI_REVIEW_MODELS_JSON (a Pi models.json that replaces the image's, for
+# account-specific endpoints such as an Alibaba workspace URL).
 
 set -euo pipefail
 
@@ -76,6 +78,10 @@ else
     esac
     [[ -n "${!KEY_VAR:-}" ]] || { echo "Error: $KEY_VAR is not set (model $MODEL); set it or PI_REVIEW_ENV_FILE" >&2; exit 1; }
     DOCKER_ENV=(-e "$KEY_VAR")   # name only: the value never reaches argv
+fi
+if [[ -n "${PI_REVIEW_MODELS_JSON:-}" ]]; then
+    [[ -r "$PI_REVIEW_MODELS_JSON" ]] || { echo "Error: PI_REVIEW_MODELS_JSON not readable: $PI_REVIEW_MODELS_JSON" >&2; exit 1; }
+    DOCKER_ENV+=(-v "$(cd "$(dirname "$PI_REVIEW_MODELS_JSON")" && pwd)/$(basename "$PI_REVIEW_MODELS_JSON"):/opt/pi-agent/models.json:ro")
 fi
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
