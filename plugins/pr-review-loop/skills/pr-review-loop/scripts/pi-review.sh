@@ -18,7 +18,7 @@
 # unreachable. A model that ran and produced no valid report is a reviewer
 # failure (exit 3), never a reason to try the next model. A provider that
 # reports exhausted quota is skipped for PI_REVIEW_EXHAUSTED_TTL seconds
-# (default 3600) by every later run, via ~/.cache/pr-review-loop/exhausted/.
+# (default 600) by every later run, via ~/.cache/pr-review-loop/exhausted/.
 #
 # --replay: review a historical commit for eval-reviewer.sh. No head check; the
 # diff is the PR's base..<sha>, computed locally. Prior comments come from
@@ -80,7 +80,7 @@ IMAGE="${PI_REVIEW_IMAGE:-$DEFAULT_IMAGE}"
 TIMEOUT="${PI_REVIEW_TIMEOUT:-3600}"
 IDLE_TIMEOUT="${PI_REVIEW_IDLE_TIMEOUT:-600}"
 EXHAUSTED_DIR="${PI_REVIEW_CACHE_DIR:-$HOME/.cache/pr-review-loop}/exhausted"
-EXHAUSTED_TTL="${PI_REVIEW_EXHAUSTED_TTL:-3600}"
+EXHAUSTED_TTL="${PI_REVIEW_EXHAUSTED_TTL:-600}"
 
 T="$(mktemp -d)"
 RUNS_DIR="${PI_REVIEW_CACHE_DIR:-$HOME/.cache/pr-review-loop}/runs"

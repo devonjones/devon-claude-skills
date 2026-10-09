@@ -36,7 +36,10 @@
 #
 # Cost: ~/.config/pr-review-loop/pi-prices.json (see pi/prices.example.json).
 # Every model costs measured tokens x its pay-per-token list price, plan models
-# included: a plan's quota runs out, and past it the tokens are bought.
+# included: that is what their quota draw is worth. Chains still put passing
+# plan models first, cheapest draw first: quota left unused at the end of a
+# period is wasted, and pi-review.sh falls through to the next model once the
+# provider reports the quota exhausted.
 #
 # State: $PI_REVIEW_CACHE_DIR/eval/<repo>/<agent>/ (default
 # ~/.cache/pr-review-loop); finished replays and judgements are reused.
@@ -279,7 +282,7 @@ run_eval() {
         {agent: $agent, baseline: $b, candidates: $cands, inconclusive: ($n < 8),
          recommended: (if $n < 8 then null else
             ([$cands[] | select(.pass)]
-             | sort_by([(.usd_per_review // 1e9), -(.catch // 0)])
+             | sort_by([(if .billing == "plan" then 0 else 1 end), (.usd_per_review // 1e9), -(.catch // 0)])
              | map(.model))
             end)}' > "$dir/result.json"
     jq -r '"\n\(.agent)" + (if .inconclusive then "  (INCONCLUSIVE: fewer than 8 material findings replayed)" else "" end),
@@ -313,11 +316,11 @@ assign() {
       | reduce .[] as $a ({load: {}, agents: {}};
           (.load) as $load |
           ($a.passing | sort_by([($load[.subscription] // 0),
-                                  (.usd_per_review // 1e9), -(.catch // 0)]) | first) as $pick |
+                                  (if .billing == "plan" then 0 else 1 end), (.usd_per_review // 1e9), -(.catch // 0)]) | first) as $pick |
           .load[$pick.subscription] = (($load[$pick.subscription] // 0) + ($pick | toks)) |
           .agents[$a.agent] = ([$pick.model]
               + ($a.passing | map(select(.subscription != $pick.subscription))
-                 | sort_by([(.usd_per_review // 1e9), -(.catch // 0)])
+                 | sort_by([(if .billing == "plan" then 0 else 1 end), (.usd_per_review // 1e9), -(.catch // 0)])
                  | unique_by(.subscription) | map(.model)) + ["claude"]
               | map(entry) | reduce .[] as $e ([]; if index($e) then . else . + [$e] end)))
       | {pi: {agents: .agents}, projected_tokens_per_round_by_subscription: .load}' "${results[@]}"
