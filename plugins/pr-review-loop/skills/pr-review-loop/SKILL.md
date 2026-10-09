@@ -17,16 +17,13 @@ description: |
 
 ### 1. Locate the scripts directory
 
-**FIRST**, use the Glob tool to find the scripts:
-```
-Glob pattern: **/pr-review-loop/*/scripts/commit-and-push.sh
-Path: ~/.claude/plugins/cache
-```
-This gives you the full absolute path to the scripts directory.
+The scripts are in `scripts/` under the "Base directory for this skill" shown
+when the skill loaded. Use that directory. Never search `~/.claude/plugins/cache`
+for them: it can hold stale versions, and a search can return one of those.
 
 **Then use the full literal path for every script call.** For example:
 ```bash
-/home/user/.claude/plugins/cache/devon-claude-skills/pr-review-loop/1.0.0/skills/pr-review-loop/scripts/commit-and-push.sh "msg"
+<base directory>/scripts/commit-and-push.sh "msg"
 ```
 
 **NEVER use variables** like `$SCRIPTS/commit-and-push.sh` — this breaks permission matching.
@@ -391,7 +388,7 @@ The review loop should **not** override branch protections or bypass repo-define
 ## Autonomous Loop Workflow
 
 **CRITICAL RULES - NEVER VIOLATE THESE:**
-1. **ALWAYS use full absolute paths for scripts** - Glob once to find the scripts directory, then inline the full path in every Bash call. NEVER use variables or compound commands (see setup at top of document)
+1. **ALWAYS use full absolute paths for scripts** - the scripts directory is `scripts/` under the skill's base directory (see setup); inline its full path in every Bash call. NEVER use variables or compound commands (see setup at top of document)
 2. **ALWAYS use `commit-and-push.sh`** - NEVER `git commit` or `git push` (see table at top of document)
 3. **ALWAYS reply to EVERY comment**:
    - Line comments (Gemini, agents): use `reply-to-comment.sh`
