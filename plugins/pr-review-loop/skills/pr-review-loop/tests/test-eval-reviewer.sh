@@ -85,11 +85,12 @@ jq -e '.recommended == ["cheap/a", "pricey/b"]' "$R" >/dev/null && ok "recommend
 jq -e '.candidates[] | select(.model == "cheap/a") | (.usd_per_review * 1e6 | round) == 5100' "$R" >/dev/null \
     && ok "cost = measured tokens x price" || bad "cost: $(jq '.candidates[] | select(.model == "cheap/a") | .usd_per_review' "$R")"
 
-echo "=== an already-paid plan outranks a cheaper pay-per-token model ==="
+echo "=== a plan model is charged its list price, not ranked free ==="
 cp -f "$T/prices.json" "$T/prices.bak"
-jq '.models["pricey/b"] = {"plan": "pricey"} | .plans = {"pricey": {"monthly_usd": 10, "reviews_per_month": {}}}' "$T/prices.bak" > "$T/prices.json"
+jq '.models["pricey/b"].plan = "pricey" | .plans = {"pricey": {}}' "$T/prices.bak" > "$T/prices.json"
 run run x --models cheap/a,pricey/b,junk/c,failing/d --baseline anthropic/claude-sonnet-4-6
-jq -e '.recommended == ["pricey/b", "cheap/a"]' "$R" >/dev/null && ok "plan model first, then the cheapest paid one" || bad "recommended: $(jq -c .recommended "$R")"
+jq -e '.recommended == ["cheap/a", "pricey/b"] and (.candidates[] | select(.model == "pricey/b") | .billing == "plan" and .usd_per_review > 0)' "$R" >/dev/null \
+    && ok "the cheaper pay-per-token model still ranks first" || bad "recommended: $(jq -c .recommended "$R")"
 cp -f "$T/prices.bak" "$T/prices.json"
 
 echo "=== too few real findings is inconclusive ==="
