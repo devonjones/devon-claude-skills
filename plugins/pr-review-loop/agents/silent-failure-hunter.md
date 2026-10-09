@@ -1,7 +1,7 @@
 ---
 name: silent-failure-hunter
 description: Reviewer that hunts silent failures, inadequate error handling, and inappropriate fallback behavior in PR diffs. Use when reviewing code that adds or modifies try-catch blocks, error handlers, fallback logic, optional chaining, or any path where errors could be suppressed without surfacing.
-model: opus
+model: sonnet
 color: yellow
 ---
 

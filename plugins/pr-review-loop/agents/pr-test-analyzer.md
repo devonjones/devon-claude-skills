@@ -1,7 +1,7 @@
 ---
 name: pr-test-analyzer
 description: Reviewer that audits test coverage for behavioral completeness — focuses on critical gaps, untested branches, and brittle tests that overfit implementation. Use when reviewing PRs that add or modify business logic, validation, parsing, error handling, or any code path that warrants test coverage.
-model: opus
+model: sonnet
 color: cyan
 ---
 

@@ -670,11 +670,11 @@ Located in `plugins/pr-review-loop/agents/`. Each is a native subagent with fron
 | Default | Model | Focus |
 |---------|-------|-------|
 | `code-reviewer` | sonnet | CLAUDE.md compliance + significant bugs; confidence ≥80; quote-the-rule forcing function |
-| `silent-failure-hunter` | opus | Empty / broad catches, optional-chain swallowing, fallback masking |
-| `pr-test-analyzer` | opus | Behavioral coverage gaps, criticality 1-10 |
+| `silent-failure-hunter` | sonnet | Empty / broad catches, optional-chain swallowing, fallback masking |
+| `pr-test-analyzer` | sonnet | Behavioral coverage gaps, criticality 1-10 |
 | `comment-analyzer` | sonnet | Factual accuracy, comment rot, value-free comments |
 | `type-design-analyzer` | sonnet | Encapsulation, invariant expression / usefulness / enforcement (4 axes 1-10) |
-| `code-simplifier` | opus | Genuine complexity / nested ternaries / dead code; behavior-preserving |
+| `code-simplifier` | sonnet | Genuine complexity / nested ternaries / dead code; behavior-preserving |
 
 Defaults always spawn unless explicitly overridden or disabled (see "Override and Configuration Semantics" below).
 
@@ -1008,7 +1008,7 @@ Disabled defaults: pr-test-analyzer.
 Validation: enabled (sonnet validators across all flaggers).
 ```
 
-(Math: 6 defaults − 1 disabled (pr-test-analyzer) − 1 overridden (code-reviewer) = 4 default agents spawning; plus the user's `code-reviewer` override and `pci-auditor` user agent = 6 total. Flagger model varies (some agents flag in opus, others in sonnet) but the validator model is held constant at sonnet so per-flagger acceptance-rate telemetry isn't confounded by validator strictness.)
+(Math: 6 defaults − 1 disabled (pr-test-analyzer) − 1 overridden (code-reviewer) = 4 default agents spawning; plus the user's `code-reviewer` override and `pci-auditor` user agent = 6 total. The validator model is held constant at sonnet, whatever model each flagger runs on, so per-flagger acceptance-rate telemetry isn't confounded by validator strictness.)
 
 Goes to the same task tracking state / pre-round summary surface as other setup state.
 
@@ -1397,7 +1397,7 @@ Spawn non-retired agents **in parallel** at C3 of each round. Track per-agent st
 
 ### Spawning Agent Reviewers
 
-For each agent in the merged list from `discover-agents.sh` (defaults + user agents per C+E), spawn a Task. Use the agent's declared `model` field if present; otherwise default to `sonnet`. The `instructions` field is the agent body — same shape for defaults (from `plugins/pr-review-loop/agents/*.md`) and user agents (from `AGENT-REVIEWERS.md`).
+For each agent in the merged list from `discover-agents.sh` (defaults + user agents per C+E), spawn a Task on the agent's `model`. `discover-agents.sh` always sets it: the default's frontmatter, or a `model: <name>` line in the first five lines of a user agent's `AGENT-REVIEWERS.md` section, else `sonnet`. Never leave it out of the Task call: a Task with no model runs on the session's model. Only `sonnet`, `haiku`, `opus` or a full `claude-*` ID is accepted; anything else, including `inherit`, becomes `sonnet`. The `instructions` field is the agent body — same shape for defaults (from `plugins/pr-review-loop/agents/*.md`) and user agents (from `AGENT-REVIEWERS.md`).
 
 > **One Task per reviewer, and the description MUST be exactly
 > `<agent-name> review for PR #<PR>`.** The dream firing-coverage log is mined
@@ -1411,7 +1411,7 @@ For each agent in the merged list from `discover-agents.sh` (defaults + user age
 ```yaml
 Task tool:
   subagent_type: general-purpose
-  model: <agent.model or "sonnet">
+  model: <agent.model>   # always set by discover-agents.sh; "sonnet" unless the agent declares one
   description: <agent-name> review for PR #<PR>
   prompt: |
     You are the "<agent-name>" code reviewer for PR #<PR>.

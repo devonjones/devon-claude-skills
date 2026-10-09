@@ -1,7 +1,7 @@
 ---
 name: code-simplifier
 description: Reviewer that flags genuinely confusing complexity, redundant abstractions, dense one-liners that hurt readability, and nested-ternary anti-patterns. Use when reviewing PRs where simplification would meaningfully improve clarity without altering behavior.
-model: opus
+model: sonnet
 color: orange
 ---
 
