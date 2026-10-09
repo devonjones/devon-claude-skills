@@ -81,7 +81,14 @@ if [[ -f "$PI_DIR/$m.report" ]]; then   # the model called the tools
 fi
 cat "$PI_DIR/$m" 2>/dev/null || { echo "no fake for $2" >&2; exit 1; }
 DOCKER
-chmod +x "$T/bin/gh" "$T/bin/docker"
+# Z.ai quota API: answers $FAKE_ZAI_QUOTA, or fails like an unreachable API.
+cat > "$T/bin/curl" <<'CURL'
+#!/usr/bin/env bash
+cat > "$CURL_LOG.stdin"; printf '%s\n' "$*" > "$CURL_LOG"
+[[ -n "${FAKE_ZAI_QUOTA:-}" ]] || exit 7
+printf '%s' "$FAKE_ZAI_QUOTA"
+CURL
+chmod +x "$T/bin/gh" "$T/bin/docker" "$T/bin/curl"
 
 # says <model> <report json>: Pi ran and reported that through the tools.
 # A non-JSON second argument means it answered in prose and never reported.
@@ -108,7 +115,8 @@ run(){ : > "$T/gh.log"; : > "$T/docker.log"; : > "$T/docker.log.args"; set +e
         FAKE_PI_SILENT="${FAKE_PI_SILENT:-}" FAKE_PI_TRICKLE="${FAKE_PI_TRICKLE:-}" \
         PI_REVIEW_IDLE_TIMEOUT="${PI_REVIEW_IDLE_TIMEOUT:-600}" PI_REVIEW_SANDBOX="${PI_REVIEW_SANDBOX:-docker}" \
         PRIOR_SEEN="${PRIOR_SEEN:-/dev/null}" CLAUDE_LOG="${CLAUDE_LOG:-/dev/null}" FAKE_CLAUDE_NOREPORT="${FAKE_CLAUDE_NOREPORT:-}" FAKE_CLAUDE_LIMIT="${FAKE_CLAUDE_LIMIT:-}" \
-        ZAI_API_KEY="${ZAI_API_KEY-k}" GEMINI_API_KEY="${GEMINI_API_KEY-k}" DEEPSEEK_API_KEY=k \
+        CURL_LOG="$T/curl.log" FAKE_ZAI_QUOTA="${FAKE_ZAI_QUOTA:-}" \
+        ZAI_API_KEY="${TEST_ZAI_KEY-k}" GEMINI_API_KEY="${TEST_GEMINI_KEY-k}" DEEPSEEK_API_KEY=k \
         bash "$PI_REVIEW" 42 "$1" "$SHA" "${@:2}" 2>"$T/err"); RC=$?; set -e; }
 ran(){ paste -sd' ' "$T/docker.log"; }
 posts(){ tr '\0' ' ' < "$T/gh.log" | grep -c -- '--method POST' || true; }
@@ -166,6 +174,31 @@ run pi-agent
 [[ "$(ran)" == "zai/glm-5.1" ]] && ok "after the TTL zai is tried again" || bad "ran: $(ran)"
 rm -rf "$T/cache"
 
+echo "=== Z.ai plan pacing ==="
+week(){ jq -nc --argjson p "$1" --argjson d "$2" '{data: {limits: [
+    {unit: 3, number: 5, percentage: 0},
+    {unit: 6, number: 1, percentage: $p, nextResetTime: ((now + $d * 86400) * 1000 | floor)}]}}'; }
+says zai/glm-5.1 "$(report "$EMPTY")"; says google/gemini-2.5-flash "$(report "$EMPTY")"
+FAKE_ZAI_QUOTA="$(week 95 3)" run pi-agent
+[[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && jq -e '.tried[0] == "zai/glm-5.1:plan-cap"' <<<"$OUT" >/dev/null \
+    && ok "a window at 95% skips zai (past the limit the key bills)" || bad "rc=$RC ran=$(ran) out=$OUT"
+grep -q 'Bearer k' "$T/curl.log.stdin" && ! grep -q 'Bearer' "$T/curl.log" \
+    && ok "the key reaches curl on stdin, not argv" || bad "curl argv: $(cat "$T/curl.log")"
+FAKE_ZAI_QUOTA="$(week 0 3)" run pi-agent
+[[ "$(ran)" == "google/gemini-2.5-flash" ]] && ok "the reading is cached, not re-fetched each run" || bad "ran: $(ran)"
+rm -rf "$T/cache/quota"
+(cd "$REPO" && sed -i 's|"pi-agent": \["zai/glm-5.1", "google/gemini-2.5-flash"\]|"pi-agent": ["google/gemini-2.5-flash", "zai/glm-5.1"]|' AGENT-REVIEWERS.md)
+FAKE_ZAI_QUOTA="$(week 20 1)" run pi-agent
+[[ "$(ran)" == "zai/glm-5.1" ]] && ok "80% left with 1 day to reset: zai goes first" || bad "ran: $(ran)"
+rm -rf "$T/cache/quota"
+FAKE_ZAI_QUOTA="$(week 80 2)" run pi-agent
+[[ "$(ran)" == "google/gemini-2.5-flash" ]] && ok "80% used with 2 days left is on pace: configured order stands" || bad "ran: $(ran)"
+rm -rf "$T/cache/quota"
+run pi-agent
+[[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && ok "no quota reading: no pacing" || bad "rc=$RC ran=$(ran)"
+(cd "$REPO" && sed -i 's|"pi-agent": \["google/gemini-2.5-flash", "zai/glm-5.1"\]|"pi-agent": ["zai/glm-5.1", "google/gemini-2.5-flash"]|' AGENT-REVIEWERS.md)
+rm -rf "$T/cache"
+
 echo "=== chain endings ==="
 fails zai/glm-5.1 "503 unavailable"
 run fallback-agent
@@ -175,7 +208,7 @@ fails google/gemini-2.5-flash "401 bad key"
 run pi-agent
 [[ "$RC" -eq 6 ]] && ok "every provider failed -> exit 6" || bad "rc=$RC"
 says google/gemini-2.5-flash "$(report "$EMPTY")"
-ZAI_API_KEY= run pi-agent
+TEST_ZAI_KEY= run pi-agent
 [[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && jq -e '.tried[0] == "zai/glm-5.1:no-key"' <<<"$OUT" >/dev/null \
     && ok "a missing key skips that model" || bad "rc=$RC ran=$(ran)"
 

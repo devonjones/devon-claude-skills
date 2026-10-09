@@ -20,6 +20,12 @@
 # reports exhausted quota is skipped for PI_REVIEW_EXHAUSTED_TTL seconds
 # (default 600) by every later run, via ~/.cache/pr-review-loop/exhausted/.
 #
+# Z.ai plan pacing: past the plan limit the same key bills per token, so zai/*
+# is skipped once any plan window reaches PI_REVIEW_PLAN_CAP percent (default
+# 90). Unused weekly quota is wasted at reset, so while the week has more quota
+# left than time left, a configured chain tries its zai/* models first. No
+# quota reading (API down, no key) means neither.
+#
 # --replay: review a historical commit for eval-reviewer.sh. No head check; the
 # diff is the PR's base..<sha>, computed locally. Prior comments come from
 # --prior <file> (the agent's threads as they stood at that commit), else none.
@@ -44,7 +50,7 @@
 # PI_REVIEW_MODELS_JSON (a Pi models.json that replaces the image's; default:
 # your own Pi config, ${PI_CODING_AGENT_DIR:-~/.pi/agent}/models.json, when it
 # exists, so host Pi and the reviewers share one provider list),
-# PI_REVIEW_EXHAUSTED_TTL, PI_REVIEW_CACHE_DIR (default ~/.cache/pr-review-loop),
+# PI_REVIEW_EXHAUSTED_TTL, PI_REVIEW_PLAN_CAP, PI_REVIEW_CACHE_DIR (default ~/.cache/pr-review-loop),
 # PI_REVIEW_SANDBOX (docker (default) | host). host runs your installed pi
 # directly - the host's toolchains for proofs, your ~/.pi/agent config - with a
 # stripped environment (HOME, PATH, the one model key), but WITHOUT the
@@ -81,6 +87,8 @@ TIMEOUT="${PI_REVIEW_TIMEOUT:-3600}"
 IDLE_TIMEOUT="${PI_REVIEW_IDLE_TIMEOUT:-600}"
 EXHAUSTED_DIR="${PI_REVIEW_CACHE_DIR:-$HOME/.cache/pr-review-loop}/exhausted"
 EXHAUSTED_TTL="${PI_REVIEW_EXHAUSTED_TTL:-600}"
+QUOTA_DIR="${PI_REVIEW_CACHE_DIR:-$HOME/.cache/pr-review-loop}/quota"
+PLAN_CAP="${PI_REVIEW_PLAN_CAP:-90}"
 
 T="$(mktemp -d)"
 RUNS_DIR="${PI_REVIEW_CACHE_DIR:-$HOME/.cache/pr-review-loop}/runs"
@@ -121,6 +129,26 @@ else
     have_commit "$SHA" || git fetch -q origin "$SHA" || { echo "Error: cannot fetch $SHA" >&2; exit 1; }
 fi
 
+# Z.ai plan quota, cached 5 minutes: {pct: fullest window, behind: the weekly
+# window has more quota left than time left}, or {} when it cannot be read.
+# Window unit codes (3 = hours, 6 = weeks) are inferred, not documented.
+zai_quota() {
+    local f="$QUOTA_DIR/zai.json"
+    if [[ ! -s "$f" ]] || (( $(date +%s) - $(stat -c %Y "$f") > 300 )); then
+        mkdir -p "$QUOTA_DIR"
+        { printf 'Authorization: Bearer %s\n' "${ZAI_API_KEY:-}" \
+              | curl -sf --max-time 5 -H @- https://api.z.ai/api/monitor/usage/quota/limit \
+              | jq -c '(now * 1000) as $now | [.data.limits[]] as $l | if ($l | length) == 0 then {} else
+                  {pct: ([$l[].percentage // 0] | max),
+                   behind: ([$l[] | select(.unit == 6 and .nextResetTime != null)
+                            | (100 - .percentage) / 100 > (.nextResetTime - $now) / (7 * 86400000)] | any)} end' \
+              || echo '{}'; } > "$f.$$" 2>/dev/null
+        mv -f "$f.$$" "$f"
+    fi
+    cat "$f"
+}
+near_cap() { [[ "$1" == zai ]] && jq -e --argjson cap "$PLAN_CAP" '(.pct // 0) >= $cap' <<<"$(zai_quota)" >/dev/null; }
+
 # ---- roster: the same agent definition a Task would get ----
 AGENT_JSON="$("$SCRIPT_DIR/discover-agents.sh" "$PR" | jq -c --arg n "$AGENT" '.agents[] | select(.name == $n)')"
 [[ -n "$AGENT_JSON" ]] || { echo "Error: no agent '$AGENT' on the roster for PR #$PR" >&2; exit 1; }
@@ -130,6 +158,10 @@ else
     [[ "$(jq -r .engine <<<"$AGENT_JSON")" == "pi" ]] \
         || { echo "Error: agent '$AGENT' is not configured for the pi engine (# Configuration .pi)" >&2; exit 1; }
     mapfile -t CHAIN < <(jq -r '.pi_models[]' <<<"$AGENT_JSON")
+    if [[ " ${CHAIN[*]} " == *" zai/"* ]] && jq -e '.behind' <<<"$(zai_quota)" >/dev/null; then
+        mapfile -t CHAIN < <(printf '%s\n' "${CHAIN[@]}" | grep '^zai/'; printf '%s\n' "${CHAIN[@]}" | grep -v '^zai/')
+        echo "Z.ai plan is behind its weekly pace: trying zai first" >&2
+    fi
 fi
 SCOPE_JSON="$(jq -c .changed_files <<<"$AGENT_JSON")"
 
@@ -300,6 +332,10 @@ for MODEL in "${CHAIN[@]}"; do
     if exhausted "$PROVIDER"; then
         echo "Skipping $MODEL: $PROVIDER marked exhausted ($EXHAUSTED_DIR/$PROVIDER)" >&2
         TRIED+=("$MODEL:skipped"); continue
+    fi
+    if near_cap "$PROVIDER"; then
+        echo "Skipping $MODEL: Z.ai plan at ${PLAN_CAP}%+ of a window; past the limit it bills" >&2
+        TRIED+=("$MODEL:plan-cap"); continue
     fi
     DOCKER_ENV=()
     if [[ -n "${PI_REVIEW_ENV_FILE:-}" ]]; then
