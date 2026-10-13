@@ -17,11 +17,15 @@
 #
 # Output JSON shape:
 # {
-#   "agents": [{name, scope, source, instructions, description?, model?, color?, kind, changed_files, engine, pi_model?}, ...],
+#   "agents": [{name, scope, source, instructions, summary?, spec?, bin?, description?, model?, color?, kind, changed_files, engine, pi_model?}, ...],
+#     # A user agent whose spec lives in .reviewers/<name>.md next to the
+#     #   AGENT-REVIEWERS.md that names it: instructions = that file, summary =
+#     #   its H2 body (what it checks, when to spawn it), spec = the file's
+#     #   repo-relative path, bin = .reviewers/bin when that directory exists.
 #     # kind: "default" | "user" | "user-override"
 #     # engine: "claude" | "pi" (from # Configuration .pi); pi_model set only for "pi"
 #     # model: every agent has one - frontmatter for defaults, a `model:` line in
-#     #   the first lines of a user agent's section, else "sonnet". Never absent:
+#     #   the first lines of a user agent's summary or spec, else "sonnet". Never absent:
 #     #   an absent model made the orchestrator spawn on its own (session) model.
 #     # description, color carried only on `default` entries (from frontmatter)
 #   "context": [{section, scope, source, content}, ...],
@@ -272,6 +276,43 @@ if [[ ${#AGENT_FILES[@]} -gt 0 ]]; then
     )
 fi
 
+# A reviewer with a .reviewers/<name>.md beside the index that names it takes
+# that file as its full spec; the H2 body becomes its summary.
+if [[ -n "$ALL_SECTIONS" ]]; then
+    ALL_SECTIONS=$(
+        while IFS= read -r section; do
+            if [[ "$(jq -r .type <<< "$section")" == agent ]]; then
+                name=$(jq -r .name <<< "$section")
+                [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] || echo "Warning: '## $name' under # Agents in $(jq -r .source <<< "$section") is not a reviewer name, but every H2 there is spawned as one; move notes out of # Agents" >&2
+                dir=$(dirname "$(jq -r .source <<< "$section")")
+                [[ "$dir" == "." ]] && dir="" || dir="$dir/"
+                spec="${dir}.reviewers/$name.md"
+                if [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ && -f "$REPO_ROOT/$spec" ]]; then
+                    bin="${dir}.reviewers/bin"
+                    [[ -d "$REPO_ROOT/$bin" ]] || bin=""
+                    section=$(jq -c --rawfile body "$REPO_ROOT/$spec" --arg spec "$spec" --arg bin "$bin" \
+                        '. + {summary: .instructions, instructions: $body, spec: $spec}
+                           + (if $bin == "" then {} else {bin: $bin} end)' <<< "$section")
+                fi
+            fi
+            printf '%s\n' "$section"
+        done <<< "$ALL_SECTIONS"
+    )
+fi
+
+# A spec file nothing indexes never runs; say so rather than drop it quietly.
+for file in "${AGENT_FILES[@]}"; do
+    dir="$(dirname "$file")"
+    [[ -d "$dir/.reviewers" ]] || continue
+    for spec in "$dir"/.reviewers/*.md; do
+        [[ -f "$spec" ]] || continue
+        name="$(basename "$spec" .md)"
+        [[ "$name" == README ]] && continue
+        grep -qxE "## +$name *" "$file" \
+            || echo "Warning: ${spec#$REPO_ROOT/} has no '## $name' entry in ${file#$REPO_ROOT/}, so it never runs" >&2
+    done
+done
+
 # Build JSON array of changed files for scoping
 CHANGED_FILES_JSON=$(jq -n --arg files "$CHANGED_FILES" '$files | split("\n") | map(select(. != ""))')
 EXCLUDED_FILES_JSON=$(jq -n --arg files "$EXCLUDED_FILES" '$files | split("\n") | map(select(. != ""))')
@@ -372,20 +413,20 @@ fi
 # Prepare input for jq:
 #   {sections: [...], defaults: [...], configuration: {...}, current_version: "...",
 #    language_detection: null | {...}}
-# Pass JSON via env (not --argjson) to avoid MAX_ARG_STRLEN (~128KB on
-# Linux). ALL_SECTIONS and DEFAULTS_JSON are the most likely to grow:
-# many user agents in AGENT-REVIEWERS.md, or many shipped defaults.
+# Neither argv nor one env var may exceed MAX_ARG_STRLEN (128KB on Linux).
+# The sections carry every reviewer's full spec, so they go in on stdin; the
+# rest is small enough for env.
 SECTIONS_JSON="$([[ -z "$ALL_SECTIONS" ]] && echo "[]" || (printf '%s\n' "$ALL_SECTIONS" | jq -s '.'))"
 JQ_INPUT=$(
-    SECTIONS_JSON="$SECTIONS_JSON" \
+    printf '%s' "$SECTIONS_JSON" |
     DEFAULTS_JSON="$DEFAULTS_JSON" \
     CONFIGURATION_JSON="$CONFIGURATION_JSON" \
     FILES_JSON="$CHANGED_FILES_JSON" \
     EXCLUDED_JSON="$EXCLUDED_FILES_JSON" \
     LANGUAGE_DETECTION_JSON="$LANGUAGE_DETECTION_JSON" \
-    jq -n --arg current_version "$CURRENT_PLUGIN_VERSION" --arg defaults_version "$DEFAULTS_VERSION" '
+    jq --arg current_version "$CURRENT_PLUGIN_VERSION" --arg defaults_version "$DEFAULTS_VERSION" '
         {
-            sections: (env.SECTIONS_JSON | fromjson),
+            sections: .,
             defaults: (env.DEFAULTS_JSON | fromjson),
             configuration: (env.CONFIGURATION_JSON | fromjson),
             files: (env.FILES_JSON | fromjson),
@@ -454,9 +495,10 @@ echo "$JQ_INPUT" | jq '
     # {description, model, color} from their YAML frontmatter (see
     # _load_defaults.sh). User agents come from AGENT-REVIEWERS.md markdown
     # H2 sections which have no frontmatter; their `instructions` is the
-    # full body. A user agent names its model with a `model: <name>` line in
-    # the first five lines of its section; step 6 gives every agent without
-    # one "sonnet", so none inherits the orchestrator session model.
+    # full body, or the .reviewers/<name>.md spec when there is one. A user
+    # agent names its model with a `model: <name>` line in the first five
+    # lines of its summary or, failing that, its spec; step 6 gives every
+    # agent without one "sonnet", so none inherits the orchestrator session model.
     ($user_agents_raw
         | map(.name as $n | . + {kind: (if ($default_agent_names | index($n)) != null then "user-override" else "user" end)})
         | map(.scope as $s | . + {changed_files: (
@@ -464,9 +506,13 @@ echo "$JQ_INPUT" | jq '
             else [$files[] | select(startswith($s | ltrimstr("/")))]
             end
           )})
-        | map({name, scope, source, instructions, kind, changed_files,
-               model: ((.instructions | split("\n")[0:5]
-                        | map(capture("^\\s*model:\\s*[\"]?(?<m>[A-Za-z0-9._:-]+)[\"]?\\s*$").m) | first) // null)})
+        | map({name, scope, source, instructions, kind, changed_files}
+               + (if .summary then {summary, spec} else {} end)
+               + (if .bin then {bin} else {} end)
+               + {model: ([.summary // "", .instructions]
+                          | map(split("\n")[0:5]
+                                | map(capture("^\\s*model:\\s*[\"]?(?<m>[A-Za-z0-9._:-]+)[\"]?\\s*$").m) | first)
+                          | map(select(. != null)) | first // null)})
     ) as $user_agents |
 
     # ---- 6. Final merged agent list, each stamped with its engine ----

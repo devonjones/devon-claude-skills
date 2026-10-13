@@ -1114,6 +1114,70 @@ assert_jq "scope comes from the local diff" "$tg4" '[.agents[].changed_files[]] 
 assert_jq "lockfile excluded" "$tg4" '.configuration.excluded_files == ["uv.lock"]'
 rm -rf "$repo"
 
+echo
+echo "=== Test R1: .reviewers/<name>.md is the spec, the H2 is the summary ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/.reviewers/bin" "$repo/svc/.reviewers"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+- [store-reviewer](#store-reviewer) - store invariants
+
+# Agents
+
+## store-reviewer
+
+**Checks:** store invariants. **Spawn when:** the diff writes to the store.
+
+## inline-reviewer
+
+Reviews inline, the old way.
+
+## spec-model-reviewer
+
+**Checks:** a thing.
+
+## Retired reviewers
+
+These used to run.
+
+## summary-model-reviewer
+
+model: haiku
+**Checks:** a thing.
+EOF
+printf 'verification: mutation\nFull store spec.\n' > "$repo/.reviewers/store-reviewer.md"
+printf 'model: opus\nSpec body.\n' > "$repo/.reviewers/spec-model-reviewer.md"
+printf 'model: opus\nSpec body.\n' > "$repo/.reviewers/summary-model-reviewer.md"
+printf 'Nobody indexes me.\n' > "$repo/.reviewers/orphan-reviewer.md"
+printf 'About this dir.\n' > "$repo/.reviewers/README.md"
+cat > "$repo/svc/AGENT-REVIEWERS.md" <<'EOF'
+# Agents
+
+## svc-reviewer
+
+**Checks:** the service.
+EOF
+printf 'Service spec.\n' > "$repo/svc/.reviewers/svc-reviewer.md"
+run_discover "$repo" $'src/a.py\nsvc/b.py' tr1
+assert_exit "exit 0" "$tr1_exit" "0"
+assert_jq "spec file becomes instructions" "$tr1" '[.agents[] | select(.name=="store-reviewer") | .instructions] == ["verification: mutation\nFull store spec.\n"]'
+assert_jq "H2 body becomes summary" "$tr1" '[.agents[] | select(.name=="store-reviewer") | .summary | contains("Spawn when")] == [true]'
+assert_jq "spec path reported" "$tr1" '[.agents[] | select(.name=="store-reviewer") | .spec] == [".reviewers/store-reviewer.md"]'
+assert_jq "bin reported when it exists" "$tr1" '[.agents[] | select(.name=="store-reviewer") | .bin] == [".reviewers/bin"]'
+assert_jq "inline reviewer unchanged, no summary" "$tr1" '[.agents[] | select(.name=="inline-reviewer") | (.summary == null) and (.instructions | contains("the old way"))] == [true]'
+assert_jq "model read from the spec when the summary has none" "$tr1" '[.agents[] | select(.name=="spec-model-reviewer") | .model] == ["opus"]'
+assert_jq "the summary's model wins over the spec's" "$tr1" '[.agents[] | select(.name=="summary-model-reviewer") | .model] == ["haiku"]'
+assert_jq "a subdirectory index reads its own .reviewers/" "$tr1" '[.agents[] | select(.name=="svc-reviewer") | {spec, instructions}] == [{"spec": "svc/.reviewers/svc-reviewer.md", "instructions": "Service spec.\n"}]'
+assert_jq "no bin when the directory is absent" "$tr1" '[.agents[] | select(.name=="svc-reviewer") | has("bin")] == [false]'
+assert_stderr_contains "a prose H2 under # Agents warns" "$tr1_err" "'## Retired reviewers' under # Agents"
+assert_stderr_contains "an unindexed spec warns" "$tr1_err" ".reviewers/orphan-reviewer.md has no '## orphan-reviewer' entry"
+if [[ "$tr1_err" == *README* ]]; then
+    echo "  FAIL  README.md is not a reviewer"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("README.md is not a reviewer")
+else
+    echo "  PASS  README.md is not a reviewer"; TESTS_PASSED=$((TESTS_PASSED + 1))
+fi
+assert_jq "a table of contents above the first H1 is not a section" "$tr1" '[.context[] | select(.content | contains("store invariants"))] == []'
+rm -rf "$repo"
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
