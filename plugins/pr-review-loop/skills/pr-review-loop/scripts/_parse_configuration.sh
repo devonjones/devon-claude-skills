@@ -392,18 +392,26 @@ if [[ -n "$IV_BAD_SKIP" ]]; then
 fi
 
 # Validate the pi block (reviewers run on a non-Claude model via Pi in Docker):
-#   { all: bool, model: "provider/id", agents: { <name>: true | false | "provider/id" } }
+#   { all: bool, model: <chain>, agents: { <name>: true | false | <chain> } }
+# A chain is "provider/id" or an ordered list of them; "claude" or
+# "claude:<sonnet|haiku|opus>" means "use the Claude Task from here".
 # Errors, not warnings: a malformed value here silently changes which model
 # reviews the code, and an agent routed to pi with no model cannot run at all.
 PI_BAD="$(printf '%s\n' "$RAW_JSON" | jq -r '
     def model_id: type == "string" and test("^[^/\\s]+/\\S+$");
+    # A chain entry: provider/id, or "claude" / "claude:<model>" (checked below).
+    def entry: model_id or (type == "string" and test("^claude(:|$)"));
+    def chain: entry or (type == "array" and length > 0 and all(.[]; entry));
     select(has("pi")) | .pi
     | if type != "object" then "must be an object (got \(type))"
       elif has("all") and (.all | type) != "boolean" then ".all must be a boolean"
-      elif has("model") and (.model | model_id | not) then ".model must be provider/id"
+      elif has("model") and (.model | chain | not) then ".model must be provider/id, claude[:<model>], or a non-empty list of them"
       elif has("agents") and (.agents | type) != "object" then ".agents must be an object"
-      elif any((.agents // {})[]; (type != "boolean") and (model_id | not)) then ".agents values must be true, false or provider/id"
-      elif ((.all == true) or any((.agents // {})[]; . == true)) and ((.model // "") == "") then "routes agents to pi with no .model to run them on"
+      elif any((.agents // {})[]; (type != "boolean") and (chain | not)) then ".agents values must be true, false, provider/id, claude[:<model>] or a list of them"
+      elif any(((.agents // {})[], .model // empty) | if type == "array" then .[] elif type == "string" then . else empty end;
+               startswith("claude:") and (ltrimstr("claude:") | IN("sonnet","haiku","opus") | not))
+        then "claude:<model> must be claude:sonnet, claude:haiku or claude:opus"
+      elif ((.all == true) or any((.agents // {})[]; . == true)) and (has("model") | not) then "routes agents to pi with no .model to run them on"
       else empty end
 ')"
 if [[ -n "$PI_BAD" ]]; then
