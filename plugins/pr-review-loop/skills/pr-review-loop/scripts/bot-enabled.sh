@@ -32,6 +32,7 @@ if ! REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
 fi
 
 CONFIG="$REPO_ROOT/AGENT-REVIEWERS.md"
+[[ -f "$REPO_ROOT/.reviewers/config.json" ]] && CONFIG="$REPO_ROOT/.reviewers/config.json"
 # No AGENT-REVIEWERS.md is not an error: it's the documented "all bots on"
 # default, so this stays exit 0 rather than exit 2.
 [[ -f "$CONFIG" ]] || exit 0

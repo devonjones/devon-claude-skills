@@ -479,6 +479,12 @@ GH_LAST_COMMENT="You have reached your daily quota limit" run_stubbed "$repo" "$
 unset GH_LAST_COMMENT
 check_contains "enabled gemini: rate limit still reported" "rate-limited" "$RUN_OUT"
 
+# .reviewers/config.json is read in place of AGENT-REVIEWERS.md's block.
+repo="$(make_repo '{"bots": {"gemini": true}}')"
+mkdir -p "$repo/.reviewers"; printf '{"bots": {"gemini": false}}\n' > "$repo/.reviewers/config.json"
+check ".reviewers/config.json disables gemini -> exit 1" "1" "$(bot_status "$repo" gemini)"
+check ".reviewers/config.json leaves cursor on -> exit 0" "0" "$(bot_status "$repo" cursor)"
+
 echo "---"
 echo "Passed: $PASSED, Failed: $FAILED"
 [[ "$FAILED" -eq 0 ]]

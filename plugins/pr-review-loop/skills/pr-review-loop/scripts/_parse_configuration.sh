@@ -73,6 +73,10 @@ fi
 #   - On any other `# ` (outside fences), leave configuration section.
 #   - Inside configuration section, when we see ```json, capture lines
 #     until the next ``` (which is the closing of the json fence).
+if [[ "$FILE" == *.json ]]; then
+    # .reviewers/config.json: the file is the JSON, no section to find.
+    RAW_JSON="$(sed '1s/^\xEF\xBB\xBF//' "$FILE")"
+else
 RAW_JSON="$(awk '
     BEGIN { in_config = 0; in_fence = 0; in_json = 0 }
     # A UTF-8 BOM ahead of the first `#` would defeat every heading rule below
@@ -128,8 +132,9 @@ RAW_JSON="$(awk '
         }
     }
 ' "$FILE")"
+fi
 
-if [[ -z "$RAW_JSON" ]]; then
+if [[ -z "$RAW_JSON" && "$FILE" != *.json ]]; then
     # "No # Configuration section at all" is a legitimate empty config. "The
     # user clearly meant to write one and it didn't parse" is not — under
     # --bots-only that would silently report a disabled bot as enabled.
@@ -164,7 +169,8 @@ fi
 # usually parses fine, so under --bots-only a correctly-read `"gemini": false`
 # would turn into exit 1 -> exit 2 -> treated as enabled, switching the bot back
 # on to punish a duplicate heading.
-CONFIG_HEADINGS="$(grep -cE '^[[:space:]]*#[[:space:]]+Configuration[[:space:]]*$' "$FILE" || true)"
+CONFIG_HEADINGS=0
+[[ "$FILE" == *.json ]] || CONFIG_HEADINGS="$(grep -cE '^[[:space:]]*#[[:space:]]+Configuration[[:space:]]*$' "$FILE" || true)"
 if [[ "${CONFIG_HEADINGS:-0}" -gt 1 ]]; then
     echo "Warning: $FILE has $CONFIG_HEADINGS '# Configuration' sections; only the first is read." >&2
     echo "Warning:   Merge them into one section — settings in the later ones are ignored." >&2
