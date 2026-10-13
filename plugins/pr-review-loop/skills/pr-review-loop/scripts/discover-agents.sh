@@ -146,7 +146,17 @@ SEEN_AGENT_FILES="|"
 _seen() { [[ "$SEEN_AGENT_FILES" == *"|$1|"* ]]; }
 _mark() { SEEN_AGENT_FILES="${SEEN_AGENT_FILES}$1|"; }
 
+# A converted repo (a root .reviewers/ holding at least one reviewer file, and no
+# root AGENT-REVIEWERS.md) runs exactly the reviewer files it has.
+REVIEWERS_LAYOUT=false
+if [[ ! -f "$REPO_ROOT/AGENT-REVIEWERS.md" ]] \
+    && find "$REPO_ROOT/.reviewers" -maxdepth 1 -name '*.md' ! -name README.md 2>/dev/null | grep -q .; then
+    REVIEWERS_LAYOUT=true
+fi
+
+# The root .reviewers/ applies to every diff, empty or all-generated included.
 REVIEWER_DIRS=()
+[[ -d "$REPO_ROOT/.reviewers" ]] && { REVIEWER_DIRS+=("$REPO_ROOT/./.reviewers"); _mark "$REPO_ROOT/./.reviewers"; }
 for dir in "${UNIQUE_DIRS[@]}"; do
     current="$dir"
     while true; do
@@ -321,12 +331,17 @@ for rdir in "${REVIEWER_DIRS[@]}"; do
         rel_spec="$rel_dir/$name.md"
         if [[ "$name" == README ]]; then
             section=$(jq -nc --rawfile body "$spec" --arg scope "$scope" --arg source "$rel_spec" \
-                '{type: "context", section: "Reviewers README", scope: $scope, source: $source, content: $body}')
+                '{type: "context", section: ("Reviewers README " + $scope), scope: $scope, source: $source, content: $body}')
             ALL_SECTIONS+=$'\n'"$section"
             continue
         fi
         # Indexed by an H2 beside it: already attached above as that H2's spec.
         if [[ -n "$ALL_SECTIONS" ]] && jq -e --arg spec "$rel_spec" 'select(.spec == $spec)' <<< "$ALL_SECTIONS" >/dev/null 2>&1; then
+            continue
+        fi
+        # Until the repo converts, only AGENT-REVIEWERS.md decides what runs.
+        if [[ "$REVIEWERS_LAYOUT" == false ]]; then
+            echo "Warning: $rel_spec has no '## $name' entry in an AGENT-REVIEWERS.md, so it does not run (it would after converting to .reviewers/)" >&2
             continue
         fi
         [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
@@ -355,8 +370,6 @@ EXCLUDED_FILES_JSON=$(jq -n --arg files "$EXCLUDED_FILES" '$files | split("\n") 
 # A converted repo (root .reviewers/, no root AGENT-REVIEWERS.md) runs exactly
 # the reviewers it has: the shipped defaults are starter files it copied in or
 # chose not to, so none is added here and there is no defaults pin to go stale.
-REVIEWERS_LAYOUT=false
-[[ -d "$REPO_ROOT/.reviewers" && ! -f "$REPO_ROOT/AGENT-REVIEWERS.md" ]] && REVIEWERS_LAYOUT=true
 if [[ "$REVIEWERS_LAYOUT" == true ]]; then
     DEFAULTS_JSON='[]'
 else

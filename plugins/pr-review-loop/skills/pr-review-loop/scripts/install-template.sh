@@ -54,6 +54,8 @@ trap 'rm -rf -- "$STAGE"' EXIT
 declare -A SUBTREE_SEEN
 STARTERS=()
 CONFIGS=()
+# An existing config.json is merged with the packs' settings, not clobbered.
+[[ -f "$REPO_ROOT/.reviewers/config.json" ]] && CONFIGS+=("$(cat "$REPO_ROOT/.reviewers/config.json")")
 for pair in "${PAIRS[@]}"; do
     [[ "$pair" == *:* ]] || { echo "Error: bad pair '$pair' — expected <lang>:<subtree>" >&2; exit 2; }
     lang="${pair%%:*}"
@@ -84,10 +86,11 @@ for pair in "${PAIRS[@]}"; do
     echo "Staged ${lang} -> ${subtree}/.reviewers/" >&2
 done
 
-# Starters a pack already defines at the root are its own, not the starter.
+# Starters a pack already defines at the root are its own, not the starter;
+# starters the repo already has stay as they are.
 WANT=()
 for s in $(printf '%s\n' "${STARTERS[@]}" | sort -u); do
-    [[ -f "$STAGE/.reviewers/$s.md" ]] || WANT+=("$s")
+    [[ -f "$STAGE/.reviewers/$s.md" || -f "$REPO_ROOT/.reviewers/$s.md" ]] || WANT+=("$s")
 done
 if [[ ${#WANT[@]} -gt 0 ]]; then
     python3 "$SCRIPT_DIR/convert-reviewers.py" starters --into "$STAGE" "${WANT[@]}" >/dev/null
@@ -99,7 +102,8 @@ if [[ ${#CONFIGS[@]} -gt 0 ]]; then
             if a.overlaps_with != b.overlaps_with then
                 error("overlap_acknowledged conflict: overlaps_with differs (\"" + a.overlaps_with + "\" vs \"" + b.overlaps_with + "\")")
             else a + {reason: ([a.reason, b.reason] | map(select(. != null and . != "")) | unique | join(" | "))} end;
-        reduce .[] as $c ({};
+        (reduce .[] as $c ({}; . + ($c | del(.overlap_acknowledged)))) as $rest |
+        $rest + reduce .[] as $c ({};
             .overlap_acknowledged = reduce ($c.overlap_acknowledged // {} | to_entries[]) as $e (
                 (.overlap_acknowledged // {});
                 if has($e.key) then . + {($e.key): merge_overlap(.[$e.key]; $e.value)} else . + {($e.key): $e.value} end))
@@ -112,6 +116,7 @@ fi
 
 CLASH=""
 while IFS= read -r f; do
+    [[ "$f" == .reviewers/config.json ]] && continue   # the merge above included it
     [[ -e "$REPO_ROOT/$f" ]] && CLASH+="  $f"$'\n'
 done < <(cd "$STAGE" && find . -type f | sed 's|^\./||' | sort)
 if [[ -n "$CLASH" ]]; then
@@ -119,6 +124,6 @@ if [[ -n "$CLASH" ]]; then
     exit 1
 fi
 
-cp -rn "$STAGE"/. "$REPO_ROOT"/
+cp -rf "$STAGE"/. "$REPO_ROOT"/
 [[ ${#WANT[@]} -gt 0 ]] && echo "Starters -> .reviewers/: ${WANT[*]}" >&2
 echo "Done. Installed ${#PAIRS[@]} pack(s)." >&2

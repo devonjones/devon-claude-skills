@@ -1169,8 +1169,8 @@ assert_jq "the summary's model wins over the spec's" "$tr1" '[.agents[] | select
 assert_jq "a subdirectory index reads its own .reviewers/" "$tr1" '[.agents[] | select(.name=="svc-reviewer") | {spec, instructions}] == [{"spec": "svc/.reviewers/svc-reviewer.md", "instructions": "Service spec.\n"}]'
 assert_jq "no bin when the directory is absent" "$tr1" '[.agents[] | select(.name=="svc-reviewer") | has("bin")] == [false]'
 assert_stderr_contains "a prose H2 under # Agents warns" "$tr1_err" "'## Retired reviewers' under # Agents"
-assert_jq "a file with no H2 is a reviewer of its own" "$tr1" '[.agents[] | select(.name=="orphan-reviewer") | .spec] == [".reviewers/orphan-reviewer.md"]'
-assert_stderr_contains "a reviewer file with no Spawn when: line warns" "$tr1_err" ".reviewers/orphan-reviewer.md has no 'Spawn when:' line"
+assert_jq "until conversion, a file with no H2 does not run" "$tr1" '[.agents[] | select(.name=="orphan-reviewer")] == []'
+assert_stderr_contains "and discovery says so" "$tr1_err" ".reviewers/orphan-reviewer.md has no '## orphan-reviewer' entry in an AGENT-REVIEWERS.md, so it does not run"
 if [[ "$tr1_err" == *README* ]] || jq -e '.agents[] | select(.name=="README")' <<< "$tr1" >/dev/null; then
     echo "  FAIL  README.md is not a reviewer"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("README.md is not a reviewer")
 else
@@ -1247,6 +1247,33 @@ printf '{"disabled": "nope"' > "$repo/.reviewers/config.json"
 run_discover "$repo" "src/a.py" tr3b
 assert_jq "a broken config.json is not silently empty" "$tr3b" 'true' 2>/dev/null
 assert_stderr_contains "a broken config.json is reported" "$tr3b_err" "config.json"
+rm -rf "$repo"
+
+echo
+echo "=== Test R4: a converted repo's root reviewers apply to every diff ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/.reviewers" "$repo/svc/.reviewers"
+printf '# root-reviewer\n**Spawn when:** always.\n' > "$repo/.reviewers/root-reviewer.md"
+printf 'root notes\n' > "$repo/.reviewers/README.md"
+printf '# svc-reviewer\n**Spawn when:** svc.\n' > "$repo/svc/.reviewers/svc-reviewer.md"
+printf 'svc notes\n' > "$repo/svc/.reviewers/README.md"
+run_discover "$repo" "" tr4
+assert_jq "an empty diff still finds the root reviewers" "$tr4" '[.agents[].name] == ["root-reviewer"]'
+run_discover "$repo" $'uv.lock' tr4b
+assert_jq "an all-generated diff spawns nobody" "$tr4b" '.agents == []'
+assert_jq "and names the root reviewer as not dispatched" "$tr4b" '.configuration.not_dispatched_no_files == ["root-reviewer"]'
+run_discover "$repo" $'a.py\nsvc/b.py' tr4c
+assert_jq "every README is context, the nested one does not replace the root one" "$tr4c" '[.context[].content] | sort == ["root notes\n", "svc notes\n"]'
+rm -rf "$repo"
+
+echo
+echo "=== Test R5: a root .reviewers/ with no reviewer files is not a converted repo ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/.reviewers"
+printf '{"bots": {"gemini": false}}\n' > "$repo/.reviewers/config.json"
+run_discover "$repo" "a.py" tr5
+assert_jq "legacy layout" "$tr5" '.configuration.layout == "agent-reviewers"'
+assert_jq "so the shipped defaults still run" "$tr5" '[.agents[] | select(.kind == "default")] | length == 6'
 rm -rf "$repo"
 
 # ---------------------------------------------------------------------------

@@ -76,6 +76,10 @@ fi
 if [[ "$FILE" == *.json ]]; then
     # .reviewers/config.json: the file is the JSON, no section to find.
     RAW_JSON="$(sed '1s/^\xEF\xBB\xBF//' "$FILE")"
+    if [[ -z "${RAW_JSON//[[:space:]]/}" ]]; then
+        echo "Warning: $FILE is empty, so none of its settings apply" >&2
+        [[ "$BOTS_ONLY" == "true" ]] && exit 1
+    fi
 else
 RAW_JSON="$(awk '
     BEGIN { in_config = 0; in_fence = 0; in_json = 0 }

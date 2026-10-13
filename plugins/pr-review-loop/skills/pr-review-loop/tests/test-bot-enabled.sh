@@ -484,6 +484,8 @@ repo="$(make_repo '{"bots": {"gemini": true}}')"
 mkdir -p "$repo/.reviewers"; printf '{"bots": {"gemini": false}}\n' > "$repo/.reviewers/config.json"
 check ".reviewers/config.json disables gemini -> exit 1" "1" "$(bot_status "$repo" gemini)"
 check ".reviewers/config.json leaves cursor on -> exit 0" "0" "$(bot_status "$repo" cursor)"
+: > "$repo/.reviewers/config.json"
+check "an empty .reviewers/config.json is undetermined, not 'enabled' -> exit 2" "2" "$(bot_status "$repo" gemini)"
 
 echo "---"
 echo "Passed: $PASSED, Failed: $FAILED"

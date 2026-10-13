@@ -17,6 +17,8 @@ check(){ if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 fixture(){
   rm -rf "$T/r"; mkdir -p "$T/r/.reviewers" "$T/r/svc"; cd "$T/r"; git init -q
   cat > AGENT-REVIEWERS.md <<'EOF'
+Intro prose above every heading.
+
 # Configuration
 
 ```json
@@ -29,6 +31,7 @@ fixture(){
 
 model: haiku
 verification: mutation
+**Checks:** the inline things.
 Flags the inline things.
 
 ### What to flag
@@ -82,6 +85,7 @@ check "indexes removed" '[[ ! -e AGENT-REVIEWERS.md && ! -e svc/AGENT-REVIEWERS.
 H="$(head -n 12 .reviewers/inline-reviewer.md)"
 check "header: title, model, verification first" '[[ "$(sed -n 1,3p <<< "$H")" == $'"'"'# inline-reviewer\nmodel: haiku\nverification: mutation'"'"' ]]'
 check "header: contents from the spec's sections" '[[ "$H" == *"**Contents:** What to flag · Do not flag"* ]]'
+check "header: an inline Checks line is lifted into the header" '[[ "$H" == *"**Checks:** the inline things."* && "$(grep -c "^\*\*Checks:" .reviewers/inline-reviewer.md)" == 1 ]]'
 check "header: TODO where the source had no checks/spawn text" '[[ "$H" == *"**Spawn when:** TODO"* ]]'
 check "model line not left in the body" '[[ "$(grep -c "^model:" .reviewers/inline-reviewer.md)" == 1 ]]'
 H="$(head -n 12 .reviewers/indexed-reviewer.md)"
@@ -89,13 +93,15 @@ check "index text becomes Checks / Spawn when" '[[ "$H" == *"**Checks:** the ind
 check "pointer line dropped" '! grep -q "Read \`.reviewers" .reviewers/indexed-reviewer.md'
 check "existing spec body kept" 'grep -q "The indexed spec body." .reviewers/indexed-reviewer.md'
 check "subtree index converts beside itself" '[[ -f svc/.reviewers/svc-reviewer.md ]]'
+check "prose above the first heading is kept in README.md" 'grep -q "Intro prose above every heading." .reviewers/README.md'
 check "prose H2 and other H1s go to README.md" 'grep -q "old-reviewer was retired" .reviewers/README.md && grep -q "parameterized queries" .reviewers/README.md'
 check "config.json keeps what still applies" '[[ "$(jq -c . .reviewers/config.json)" == "{\"bots\":{\"gemini\":false}}" ]]'
 
 PR_REVIEW_LOOP_TEST_CHANGED_FILES="$(git ls-files; find .reviewers svc -type f)" "$DISCOVER" 0 > "$T/after.json" 2>"$T/after.err"
 check "discovery sees the new layout" '[[ "$(jq -r .configuration.layout "$T/after.json")" == reviewers ]]'
-check "same reviewers, same models (minus the prose H2)" \
-  '[[ "$(jq -r ".agents[] | select(.kind != \"default\") | select(.name != \"Retired reviewers\") | \"\(.name) \(.model)\"" "$T/before.json" | sort)" == "$(jq -r ".agents[] | \"\(.name) \(.model)\"" "$T/after.json" | sort)" ]]'
+check "same reviewers, same models (minus the prose H2, plus the stray file that now runs)" \
+  '[[ "$(jq -r ".agents[] | select(.kind != \"default\") | select(.name != \"Retired reviewers\") | \"\(.name) \(.model)\"" "$T/before.json" | sort)" == "$(jq -r ".agents[] | select(.name != \"stray-reviewer\") | \"\(.name) \(.model)\"" "$T/after.json" | sort)" ]]'
+check "the stray file runs after conversion" '[[ "$(jq -r ".agents[] | select(.name == \"stray-reviewer\") | .name" "$T/after.json")" == stray-reviewer ]]'
 check "spec text survives" '[[ "$(jq -r ".agents[] | select(.name==\"inline-reviewer\") | .instructions" "$T/after.json")" == *"Flags the inline things."*"Other things."* ]]'
 check "TODO headers are reported" 'grep -q "inline-reviewer.md has a TODO in its header" "$T/after.err"'
 

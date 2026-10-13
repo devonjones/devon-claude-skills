@@ -312,6 +312,18 @@ assert_jq "overlap key present" "$root_json" '.overlap_acknowledged | has("test-
 assert_jq "overlap reason contains ' | ' separator" "$root_json" '.overlap_acknowledged["test-coverage-reviewer"].reason | contains(" | ")'
 
 echo
+echo "=== Test I4b: a second pack joins an installed one ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/backend" "$repo/infra"
+run_install "$repo" i4b golang:backend
+jq '. + {bots: {gemini: false}}' "$repo/.reviewers/config.json" > "$repo/cfg.tmp" && mv -f "$repo/cfg.tmp" "$repo/.reviewers/config.json"
+run_install "$repo" i4c terraform:infra
+assert_exit "second install exit 0" "$i4c_exit" "0"
+assert_file_exists "second pack's reviewers installed" "$repo/infra/.reviewers/lifecycle-reviewer.md"
+assert_jq "config.json still holds the first pack's settings" "$(cat "$repo/.reviewers/config.json")" '.overlap_acknowledged | has("test-coverage-reviewer")'
+assert_jq "and the user's own settings" "$(cat "$repo/.reviewers/config.json")" '.bots.gemini == false'
+
+echo
 echo "=== Test I5: refuse a repo still on AGENT-REVIEWERS.md ==="
 repo="$(make_temp_repo)"
 echo "existing" > "$repo/AGENT-REVIEWERS.md"

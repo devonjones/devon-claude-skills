@@ -41,7 +41,7 @@ def sections(text):
     out, h1, h2, buf, fence = [], None, None, [], False
 
     def flush():
-        if h1 is not None:
+        if h1 is not None or "".join(buf).strip():
             out.append((h1, h2, "\n".join(buf).strip("\n") + "\n"))
 
     for line in text.lstrip("﻿").splitlines():
@@ -90,6 +90,10 @@ def render(name, body, summary="", checks=None, spawn=None, model=None):
         lines.pop(0)  # an existing title; ours replaces it
     model_line = take(lines, MODEL_RE)
     verify = take(lines, VERIFY_RE)
+    inline_checks = take(lines, CHECKS_RE, limit=8)
+    inline_spawn = take(lines, SPAWN_RE, limit=8)
+    checks = checks or (inline_checks and CHECKS_RE.match(inline_checks).group(1))
+    spawn = spawn or (inline_spawn and SPAWN_RE.match(inline_spawn).group(1))
     extra = []
     for line in summary.splitlines():
         if MODEL_RE.match(line):
@@ -130,7 +134,9 @@ def plan_file(src, into):
     rdir = into / ".reviewers"
     writes, notes, readme, config = [], [], [], None
     for h1, h2, body in sections(text):
-        if h1 == "Configuration":
+        if h1 is None:  # prose above the first heading
+            readme.append(body)
+        elif h1 == "Configuration":
             m = re.search(r"```json\n(.*?)\n```", body, re.S)
             if m:
                 config = json.loads(m.group(1))
