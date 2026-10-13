@@ -61,9 +61,12 @@ harvest() {
     local q='query($o:String!,$n:String!,$pr:Int!,$c:String){repository(owner:$o,name:$n){pullRequest(number:$pr){
       reviewThreads(first:100,after:$c){pageInfo{hasNextPage endCursor}
         nodes{comments(first:30){nodes{databaseId body path originalLine line createdAt originalCommit{oid committedDate}}}}}}}}'
-    local pr cursor page
+    local pr cursor page prlist
+    # Not inline in the for list: a failed substitution there does not trip set -e.
+    prlist="$(gh pr list -R "$REPO" --state all --limit "$prs" --json number --jq '.[].number')" \
+        || { echo "Error: cannot list PRs in $REPO" >&2; exit 1; }
     : > "$dir/cases.jsonl"
-    for pr in $(gh pr list -R "$REPO" --state all --limit "$prs" --json number --jq '.[].number'); do
+    for pr in $prlist; do
         cursor=""
         while :; do
             page="$(gh api graphql -f query="$q" -f o="$owner" -f n="$name" -F pr="$pr" ${cursor:+-f c="$cursor"})" \
@@ -99,7 +102,9 @@ replay_model() {   # <agent> <model> <commits-file>: one model, commits in turn
     local agent="$1" model="$2" dir="$BASE_DIR/$1" pr sha out rc
     while read -r pr sha; do
         out="$dir/replays/${sha:0:12}__${model//\//_}.json"
-        [[ -s "$out" ]] && continue
+        # A failed run is retried on a rerun, and its empty judgement with it.
+        if [[ -s "$out" ]] && ! jq -e '.failed // false' "$out" >/dev/null; then continue; fi
+        rm -f "${out%.json}.judge.json"
         # Retry once, as the loop re-runs a reviewer that failed to report; only
         # a second failure counts. Setup (1) and a moved head (2) are not retried.
         for attempt in 1 2; do
@@ -190,7 +195,6 @@ score() {   # <agent> <models...>: per-model metrics over the replayed commits
             f="$dir/replays/${sha:0:12}__${m//\//_}.json"
             # A replay that never finished (killed, deleted) scores as a failed run.
             [[ -s "$f" && -s "${f%.json}.judge.json" ]] || { f="$T_EMPTY"; }
-            [[ -s "$dir/grades/${sha:0:12}.json" ]] || echo '{"grades": []}' > "$dir/grades/${sha:0:12}.json"
             rows="$(jq -c --slurpfile run "$f" --slurpfile j "${f%.json}.judge.json" --slurpfile cases "$dir/cases.json" \
                 --slurpfile g "$dir/grades/${sha:0:12}.json" --arg sha "$sha" --arg files "$FILES" '
                 ($g[0].grades | map({key: (.id | tostring), value: .value}) | from_entries) as $gr |
@@ -241,6 +245,8 @@ score() {   # <agent> <models...>: per-model metrics over the replayed commits
     printf '%s\n' "$all"
 }
 
+wait_all() { local p rc=0; for p in "$@"; do wait "$p" || rc=1; done; return "$rc"; }
+
 run_eval() {
     local agent="$1" models="$2" baseline="$3" ncommits="$4" dir="$BASE_DIR/$1"
     FILES="$5"
@@ -255,20 +261,20 @@ run_eval() {
     IFS=, read -r -a all_models <<<"$models"
     [[ -n "$baseline" ]] && all_models+=("$baseline")
     [[ -s "$dir/commits.txt" ]] || { echo "Error: no commits with real findings${FILES:+ matching $FILES}" >&2; exit 1; }
-    local pr sha
-    while read -r pr sha; do prior_file "$agent" "$pr" "$sha"; grade "$agent" "$sha" & done < "$dir/commits.txt"
-    wait
+    local pr sha pids=()
+    while read -r pr sha; do prior_file "$agent" "$pr" "$sha"; grade "$agent" "$sha" & pids+=($!); done < "$dir/commits.txt"
+    wait_all "${pids[@]}" || { echo "Error: grading failed; rerun to retry (finished grades are kept)" >&2; exit 1; }
     echo "Replaying $(wc -l < "$dir/commits.txt") commits on ${all_models[*]}" >&2
     for m in "${all_models[@]}"; do replay_model "$agent" "$m" "$dir/commits.txt" & done
     wait
-    local sha f
+    local f; pids=()
     while read -r _ sha; do
         for m in "${all_models[@]}"; do
             f="$dir/replays/${sha:0:12}__${m//\//_}.json"
-            judge "$agent" "$f" "$sha" &
+            judge "$agent" "$f" "$sha" & pids+=($!)
         done
-        wait
     done < "$dir/commits.txt"
+    wait_all "${pids[@]}" || { echo "Error: judging failed; rerun to retry (finished judgements are kept)" >&2; exit 1; }
 
     local scores
     scores="$(score "$agent" "${all_models[@]}")"

@@ -151,6 +151,7 @@ zai_quota() {
                             | (100 - .percentage) / 100 > (.nextResetTime - $now) / (7 * 86400000)] | any)} end' \
               || echo '{}'; } > "$f.$$" 2>/dev/null
         mv -f "$f.$$" "$f"
+        [[ "$(cat "$f")" != "{}" ]] || echo "Warning: no Z.ai quota reading; plan pacing and the plan cap are off for 5 minutes" >&2
     fi
     cat "$f"
 }
@@ -410,7 +411,7 @@ for MODEL in "${CHAIN[@]}"; do
         ERR="${ERR:-pi exit $PI_RC: $(tail -n 1 "$T/pi.err")}"
         echo "Provider failure on $MODEL: $ERR" >&2
         TRIED+=("$MODEL:provider-error")
-        if grep -qiE 'quota|credit|insufficient|exceed|429|rate.?limit|balance|billing' <<<"$ERR"; then
+        if grep -qiE 'quota|credit|insufficient|429|rate.?limit|billing' <<<"$ERR"; then
             mkdir -p "$EXHAUSTED_DIR" && printf '%s\n' "$ERR" > "$EXHAUSTED_DIR/$PROVIDER"
         fi
         continue

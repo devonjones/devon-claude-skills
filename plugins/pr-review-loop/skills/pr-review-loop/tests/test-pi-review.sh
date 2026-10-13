@@ -168,6 +168,9 @@ run pi-agent
 jq -e '.model == "google/gemini-2.5-flash" and .tried == ["zai/glm-5.1:provider-error", "google/gemini-2.5-flash"]' <<<"$OUT" >/dev/null \
     && ok "tried records both" || bad "tried: $(jq -c .tried <<<"$OUT")"
 [[ ! -e "$T/cache/exhausted/zai" ]] && ok "an auth error does not mark the provider exhausted" || bad "zai marked exhausted"
+fails zai/glm-5.1 "context length exceeded: 210000 > 200000 tokens"
+run pi-agent
+[[ ! -e "$T/cache/exhausted/zai" ]] && ok "a context-length error does not mark the provider exhausted" || bad "zai marked exhausted"
 
 echo "=== exhausted quota is remembered across runs ==="
 fails zai/glm-5.1 "429 You have exceeded your monthly quota"
