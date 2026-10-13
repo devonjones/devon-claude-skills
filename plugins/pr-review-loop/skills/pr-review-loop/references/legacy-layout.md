@@ -34,9 +34,10 @@ fenced `json` block. It takes the same keys as `.reviewers/config.json`, plus:
 
 ## Stale pin
 
-Before round 1, compare `defaults_version_checked` with `DEFAULTS_VERSION` (plugin
-root), the version in which the defaults last changed. If the pin is missing or
-older, print this and exit non-zero unless `--skip-stale-check` was passed:
+Before round 1, if `configuration.stale_pin` is `true` (`defaults_version_checked`
+is missing or older than `DEFAULTS_VERSION`, the version in which the defaults
+last changed), print this and exit non-zero unless `--skip-stale-check` was
+passed:
 
 ```
 ⚠️  AGENT-REVIEWERS.md was last audited against pr-review-loop v1.2.5.
@@ -54,4 +55,4 @@ what one checks enough that users should revisit their overrides.
 Don't add a `verification:` line under `## pr-test-analyzer` or any other
 default name. A section with a default's name *replaces* that default, so a
 section holding only the declaration swaps the whole shipped prompt for one
-line. The starters declare their own.
+line.

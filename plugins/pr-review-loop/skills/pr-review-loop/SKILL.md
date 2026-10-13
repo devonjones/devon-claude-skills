@@ -19,9 +19,10 @@ description: |
 
 ### 1. Locate the scripts directory
 
-Glob `**/skills/pr-review-loop/scripts/discover-agents.sh` under `~/.claude`. It
-matches both the plugin cache and a `~/.claude/skills/` checkout. Call every
-script by that full path. The examples below write `scripts/` for short.
+The scripts are in `scripts/` under the skill's base directory, which Claude
+Code states when the skill loads ("Base directory for this skill: …"). Failing
+that, Glob `**/skills/pr-review-loop/scripts/discover-agents.sh` under
+`~/.claude`. Call every script by its full path. The examples below write `scripts/` for short.
 Permission allowlists match the literal command, so don't route calls through
 variables or `&&` chains.
 
@@ -417,7 +418,7 @@ follow [`references/local-mode.md`](references/local-mode.md).
    - The `language_detection` block (`null` when the repo already has reviewers; otherwise `{matched: [...], same_directory_polyglot: bool}`)
 2. **Offer language templates** (only when `language_detection != null` AND `language_detection.matched` is non-empty). See "Language Template Offer" below for the full flow.
 3. **If `configuration.layout` is `"agent-reviewers"`**, offer once to convert ([`references/reviewers-dir.md`](references/reviewers-dir.md)); on no, run as is. Then check the stale pin ([`references/legacy-layout.md`](references/legacy-layout.md)).
-4. **Choose the roster** (see "Choosing the Roster" below), then **emit the spawning summary**: a one-line summary of which agents will run and which you skipped (see "Spawning Summary" above).
+4. **Choose the roster** (see "Choosing the Roster" below), then **emit the spawning summary**: a one-line summary of which agents will run and which you skipped (see "Spawning Summary" below).
 5. **Track --skip-stale-check usage** (legacy layout) for the merge-readiness summary.
 
 After setup, proceed to The Loop.
@@ -531,7 +532,9 @@ scripts/check-ci.sh <PR> --wait
 # (edit the file to add the missing blank line)
 
 # Commit and push the fix
-git add src/utils.py && git commit -m "fix: lint error in utils.py" && git push
+git add src/utils.py
+git commit -m "fix: lint error in utils.py"
+git push
 
 # Check again
 scripts/check-ci.sh <PR> --wait
