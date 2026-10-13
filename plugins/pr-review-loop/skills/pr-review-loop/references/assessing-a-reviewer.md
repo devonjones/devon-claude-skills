@@ -66,6 +66,7 @@ and the path you infer may not be the path it reads.
 | Check | Pass when |
 |---|---|
 | Header (reviewer files) | The first 12 lines hold `# <name>` matching the file name, `**Checks:**` (one line, what it flags) and `**Spawn when:**` (decidable from a diff: paths, imports, file types, kinds of change, plus a skip rule if the spec has one; "when relevant" fails), with no TODO. `**Contents:**` lists the spec's sections when it has two or more. |
+| Contents on long files | A reviewer file (or `.reviewers/README.md`) over 100 lines has a `**Contents:**` line in its header naming every section. Claude reads files with `head -n 100`, so whatever the contents line doesn't name past line 100 goes unread. Measure with `wc -l`. |
 | Verification line | The header's `verification:` line (or, for a legacy section, the first body line) is `verification: mutation`, `evidence-query`, `judgement` or `mixed`, followed by how this reviewer proves its findings. Missing = **undeclared**. |
 | `mixed` is earned | `mixed` names which kinds of finding are mutations and which are evidence-queries, not just the word. |
 | Model | Resolves to the model the author intended (check `discover-agents.sh` output). A `model:` line after line five is ignored. |

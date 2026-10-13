@@ -1235,7 +1235,10 @@ verification: mutation — breaks the write path in a scratch copy and shows the
   relevant" decides nothing. Discovery warns when this line is missing from the
   header or still says TODO.
 - **`**Contents:**`** lists the spec's sections, so the orchestrator knows what
-  the reviewer covers without reading it.
+  the reviewer covers without reading it. **Required once a file passes 100
+  lines** (README.md included): Claude reads files with `head -n 100`, so
+  sections past that point are unread unless the contents line names them.
+  Discovery warns when it is missing.
 
 Everything after the header is the spec, handed to the reviewer as its
 `instructions`. Anything the reviewer needs from the repo's rules goes here:

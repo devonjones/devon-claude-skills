@@ -1,3 +1,5 @@
+**Contents:** Guidelines · How the pack runs · Tooling assumed in CI · Severity convention · Output format · Deferring findings with beads
+
 # Guidelines
 
 A reviewer pack for Python projects. Each section below is an independent reviewer prompt with its own scope, set of patterns to flag, and disposition.

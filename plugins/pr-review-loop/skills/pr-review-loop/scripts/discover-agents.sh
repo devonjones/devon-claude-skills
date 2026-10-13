@@ -351,6 +351,9 @@ for rdir in "${REVIEWER_DIRS[@]}"; do
             || echo "Warning: $rel_spec has no 'Spawn when:' line in its first $REVIEWER_HEADER_LINES lines, so the orchestrator cannot tell when it applies" >&2
         ! grep -qE '^\**(Checks|Spawn when):?\**:? *TODO' <<< "$header" \
             || echo "Warning: $rel_spec has a TODO in its header; fill in what it checks and when to spawn it" >&2
+        if [[ "$(wc -l < "$spec")" -gt 100 ]] && ! grep -qE '^\**Contents:?\**' <<< "$header"; then
+            echo "Warning: $rel_spec is over 100 lines with no 'Contents:' line in its header; Claude reads files with head -n 100, so name its sections" >&2
+        fi
         bin="$rel_dir/bin"
         [[ -d "$rdir/bin" ]] || bin=""
         section=$(jq -nc --rawfile body "$spec" --arg name "$name" --arg scope "$scope" --arg source "$rel_spec" \

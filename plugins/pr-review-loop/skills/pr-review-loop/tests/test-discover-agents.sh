@@ -1276,6 +1276,21 @@ assert_jq "legacy layout" "$tr5" '.configuration.layout == "agent-reviewers"'
 assert_jq "so the shipped defaults still run" "$tr5" '[.agents[] | select(.kind == "default")] | length == 6'
 rm -rf "$repo"
 
+echo
+echo "=== Test R6: a reviewer file over 100 lines needs a Contents line ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/.reviewers"
+{ printf '# long-reviewer\n**Checks:** x.\n**Spawn when:** always.\n\n'; for i in $(seq 1 110); do echo "line $i"; done; } > "$repo/.reviewers/long-reviewer.md"
+{ printf '# toc-reviewer\n**Checks:** x.\n**Spawn when:** always.\n**Contents:** A · B\n\n'; for i in $(seq 1 110); do echo "line $i"; done; } > "$repo/.reviewers/toc-reviewer.md"
+run_discover "$repo" "a.py" tr6
+assert_stderr_contains "a long file without Contents warns" "$tr6_err" ".reviewers/long-reviewer.md is over 100 lines with no 'Contents:' line"
+if [[ "$tr6_err" == *toc-reviewer* ]]; then
+    echo "  FAIL  a long file with Contents is quiet"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("long file with Contents quiet")
+else
+    echo "  PASS  a long file with Contents is quiet"; TESTS_PASSED=$((TESTS_PASSED + 1))
+fi
+rm -rf "$repo"
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

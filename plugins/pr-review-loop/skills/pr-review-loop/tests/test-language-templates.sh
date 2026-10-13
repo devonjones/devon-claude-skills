@@ -505,6 +505,12 @@ for f in "$SCRIPT_DIR/../../../agent-reviewer-templates"/*/*.md; do
         echo "  FAIL  $n header"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("$n header")
     fi
 done
+for f in "$SCRIPT_DIR/../../../agent-reviewer-templates"/*/*.md "$SCRIPT_DIR/../../../agents"/*.md; do
+    n="${f#"$SCRIPT_DIR/../../../"}"
+    if [[ "$(wc -l < "$f")" -gt 100 ]] && ! head -n 12 "$f" | grep -q '^\*\*Contents:\*\*'; then
+        echo "  FAIL  $n is over 100 lines with no Contents line"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("$n contents")
+    fi
+done
 echo "  checked template headers"
 
 # ---------------------------------------------------------------------------
