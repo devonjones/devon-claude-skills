@@ -22,7 +22,9 @@ description: |
 The scripts are in `scripts/` under the skill's base directory, which Claude
 Code states when the skill loads ("Base directory for this skill: …"). Failing
 that, Glob `**/skills/pr-review-loop/scripts/discover-agents.sh` under
-`~/.claude`. Call every script by its full path. The examples below write `scripts/` for short.
+`~/.claude`. That search can return several copies: `~/.claude/plugins/cache`
+keeps old versions, so ask which one to use rather than picking one. Call every
+script by its full path. The examples below write `scripts/` for short.
 Permission allowlists match the literal command, so don't route calls through
 variables or `&&` chains.
 
