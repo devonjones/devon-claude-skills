@@ -43,7 +43,7 @@ channel_id: <metadata.channel_id>      # stable handle, survives channel renames
 playlist_id: <metadata.playlist_id>    # null unless invoked via playlist URL
 playlist_title: <metadata.playlist_title>
 duration_seconds: <metadata.duration_seconds>
-chapter_markers:                       # if present in metadata; otherwise omit
+chapter_markers:                       # omit when metadata has none (empty or null)
   - title: "..."
     start_time: 0.0
     end_time: 153.0

@@ -43,6 +43,8 @@ scripts/extract.py "<URL_OR_VIDEO_ID>" -t 1 -t 30 -t 500 -o ./out
 }
 ```
 
+`video_path` is `null` with `--no-download`; `source_published_date` is `""` when unknown.
+
 ## Sub-scripts
 
 `scripts/extract.py` composes three primitives that can also be invoked independently:

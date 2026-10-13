@@ -45,7 +45,7 @@ Fetch `<URL>` with the WebFetch tool, prompting for the full article content —
 If WebFetch is unavailable in the session, errors out, or returns content that is obviously truncated or boilerplate-only, fall back to fetching the raw HTML:
 
 ```
-page="$(mktemp --suffix=.html)"; curl -sL "<URL>" -o "$page"; echo "$page"
+page="$(mktemp)"; curl -fsSL "<URL>" -o "$page"; echo "$page"
 ```
 
 Read that file directly and extract the article content and head metadata yourself. Record `fetched_via: curl`.

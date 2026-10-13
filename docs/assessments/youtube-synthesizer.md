@@ -12,7 +12,7 @@ Values are as measured on the skill before the fixes in "Changes made".
 | description | pass | 399 chars (`sed`/`wc -c` on the value, 1,024 limit), third person, no XML tags |
 | SKILL.md body | fail | 622 lines (`wc -l`), limit 500; now 425 |
 | reference depth | pass | no reference files existed; the new one is linked directly from SKILL.md |
-| TOC on long refs | pass | new reference is 190 lines and opens with a contents list |
+| TOC on long refs | pass | new reference is 191 lines and opens with a contents list |
 | paths | pass | `grep -c '\\' SKILL.md` = 0 |
 | unlinked files | pass | `scripts/sync_to_dropbox.sh` (174 lines) and `scripts/preview.py` (299 lines) are both named in SKILL.md; no orphans |
 | scripts syntax | pass | `bash -n sync_to_dropbox.sh`, `python3 -m py_compile preview.py` both clean |
