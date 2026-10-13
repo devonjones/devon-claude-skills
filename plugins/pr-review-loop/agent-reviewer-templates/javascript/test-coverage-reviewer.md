@@ -1,4 +1,5 @@
 # test-coverage-reviewer
+verification: evidence-query — reads package.json for the declared test runner and checks the diff for matching test files, citing the paths.
 **Checks:** Missing tests: new or modified functions, bug fixes and components in JS/TS source without matching tests for the runner declared in package.json (node --test, jest, vitest, mocha).
 **Spawn when:** Diff modifies non-test .js/.jsx/.ts/.tsx source. Skip when it only touches .d.ts, *.config.*, tsconfig/package.json, barrel re-exports, or test files.
 **Contents:** Core rule: Every PR that modifies a non-test JS/TS file must include matching test changes. · Test runner detection · What to flag · Do NOT flag · Acceptable substitutes

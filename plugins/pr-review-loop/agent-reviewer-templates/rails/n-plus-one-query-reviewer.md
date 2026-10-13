@@ -1,4 +1,5 @@
 # n-plus-one-query-reviewer
+verification: judgement — read the iteration body and the controller's preloads; the Bullet or log check is a suggestion to the author, not a proof the reviewer runs.
 **Checks:** N+1 queries: loops over ActiveRecord relations or collection partials that touch associations not eager-loaded, missed counter caches, per-element queries
 **Spawn when:** Diff touches Rails controllers, views/partials, jobs, or mailers that iterate (each/map/select/render collection) over relations. Skip diffs with no iteration over records.
 **Contents:** What to flag · Do NOT flag · Severity guidance · When flagging, suggest

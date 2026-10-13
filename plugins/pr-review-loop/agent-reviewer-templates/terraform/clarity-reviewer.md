@@ -1,4 +1,5 @@
 # clarity-reviewer
+verification: evidence-query — greps the module for the variable, output and resource names that docs and comments mention, and checks them against the current .tf files.
 **Checks:** Stale or inaccurate .md docs, variable/output descriptions and HCL comments that no longer match the resources they describe.
 **Spawn when:** Diff touches .md files, or variable/output blocks' description, or comments in .tf files. Skip diffs with no docs, description or comment changes.
 **Contents:** What to check · Flag issues if · Do NOT flag · When flagging, provide

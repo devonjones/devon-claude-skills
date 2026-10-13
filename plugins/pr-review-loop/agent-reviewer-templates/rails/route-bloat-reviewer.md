@@ -1,4 +1,5 @@
 # route-bloat-reviewer
+verification: mixed — missing only:/except: is proven by reading the controller's defined actions (evidence-query); nesting, wildcard and duplicate routes are judgement.
 **Checks:** Over-broad routes: resources without only:/except: beyond implemented actions, nesting over 1 level, unguarded wildcard catch-alls, duplicate routes
 **Spawn when:** Diff modifies config/routes.rb. Skip all other diffs.
 **Contents:** Patterns to flag · What to flag · Don't flag · When flagging, suggest

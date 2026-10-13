@@ -1,4 +1,5 @@
 # importlib-resources-reviewer
+verification: evidence-query — grep the diff for Path(__file__).parent and __file__.parents and check each hit loads bundled data.
 **Checks:** Package data loaded via Path(__file__).parent, os.path.dirname(__file__) or __file__.parents[N] instead of importlib.resources.
 **Spawn when:** Diff in .py files adds or changes use of __file__ to locate bundled data files. Skip otherwise.
 **Contents:** FLAG when a file in a packaged module contains · Acceptable pattern · Do NOT flag · Review approach

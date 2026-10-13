@@ -1,6 +1,6 @@
 # pr-test-analyzer
 model: sonnet
-verification: mutation — fault-injects the code under review and runs the suite against the mutation before claiming a gap.
+verification: mutation — fault-injects the code under review in a scratch copy, never the working tree, and runs the suite against the mutation before claiming a gap.
 **Checks:** Reviewer that audits test coverage for behavioral completeness — focuses on critical gaps, untested branches, and brittle tests that overfit implementation. Use when reviewing PRs that add or modify business logic, validation, parsing, error handling, or any code path that warrants test coverage.
 **Spawn when:** diff changes non-test source files with logic (branches, validation, parsing, error paths), or edits test files; skip for docs, config, generated and rename-only diffs.
 **Contents:** What to check · Flag issues if · Do NOT flag · When flagging, suggest · Output format

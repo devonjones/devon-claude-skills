@@ -1,4 +1,5 @@
 # js-vs-ts-policy-reviewer
+verification: evidence-query — each finding cites an existing review comment found by scanning the PR's comments for migration-pushing language.
 **Checks:** Existing review comments pushing a .js file to TypeScript (convert to .ts, add types); records each as a P3 out-of-scope policy finding. Does not review code.
 **Spawn when:** Every PR that has at least one .js/.jsx/.mjs/.cjs file in the diff; skip when the diff has no JS files or the PR description cites a JS-to-TS migration issue.
 **Contents:** Core policy · What this reviewer flags · Implementation note · Does NOT flag

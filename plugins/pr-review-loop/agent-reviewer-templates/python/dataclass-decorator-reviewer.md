@@ -1,4 +1,5 @@
 # dataclass-decorator-reviewer
+verification: evidence-query — grep changed files for field(default and check the decorator above each enclosing class.
 **Checks:** Classes using dataclasses field(default_factory=...) or field(default=...) without a @dataclass decorator, which leaves a literal Field object as the attribute.
 **Spawn when:** Diff in .py files adds or edits a class body that calls field( or imports from dataclasses. Skip otherwise.
 **Contents:** FLAG when a PR adds or modifies a class that uses `field(default_factory=...)` or `field(default=...)` without a `@dataclass` (or `@dataclass(...)`) decorator on the line above · Acceptable patterns (do NOT flag) · Review approach

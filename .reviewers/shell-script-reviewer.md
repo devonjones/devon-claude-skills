@@ -1,5 +1,5 @@
 # shell-script-reviewer
-verification: mutation — runs the scripts it reviews and fault-injects their failure paths.
+verification: mutation — runs the scripts it reviews and fault-injects their failure paths in a scratch copy, never the working tree.
 **Checks:** new or modified .sh files missing set -euo pipefail, sending errors to stdout instead of stderr, exiting zero on failure, or leaving risky variables unquoted.
 **Spawn when:** the diff adds or edits any .sh file (or a script with a bash shebang). Skip if no shell script is touched.
 **Contents:** What to check · Flag issues if · Do NOT flag

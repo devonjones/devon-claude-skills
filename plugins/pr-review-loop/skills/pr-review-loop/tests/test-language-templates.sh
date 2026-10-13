@@ -529,6 +529,23 @@ for f in "$SCRIPT_DIR/../../../agent-reviewer-templates"/*/*.md "$SCRIPT_DIR/../
         echo "  FAIL  $n is over 100 lines with no Contents line"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("$n contents")
     fi
 done
+# The reviewer contract (references/assessing-a-reviewer.md) for every shipped
+# reviewer: a proof mode, a statement of what it won't flag, and mutation done
+# on a scratch copy.
+for f in "$SCRIPT_DIR/../../../agent-reviewer-templates"/*/*.md "$SCRIPT_DIR/../../../agents"/*.md; do
+    [[ "$(basename "$f")" == README.md ]] && continue
+    n="${f#"$SCRIPT_DIR/../../../"}"
+    if [[ "$f" == */agents/* ]]; then v="$(sed -n '/^---$/,/^---$/!p' "$f" | grep -m1 -E '^verification:' || true)"; else v="$(head -n 12 "$f" | grep -m1 -E '^verification:' || true)"; fi
+    if ! grep -qE '^verification: (mutation|evidence-query|judgement|mixed)\b' <<< "$v"; then
+        echo "  FAIL  $n has no verification: line"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("$n verification")
+    fi
+    if ! grep -qiE '^(#{1,4} *|\*\*|- \*\*)?(do(es)? not flag|don.t flag|acceptable patterns?)' "$f"; then
+        echo "  FAIL  $n never says what it won't flag"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("$n do-not-flag")
+    fi
+    if grep -qiE '^verification: (mutation|mixed .*(mutat|fault-inject))' <<< "$v" && ! grep -qiE 'scratch|mktemp' "$f"; then
+        echo "  FAIL  $n asks for mutation without a scratch copy"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("$n scratch copy")
+    fi
+done
 echo "  checked template headers"
 
 # ---------------------------------------------------------------------------

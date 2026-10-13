@@ -1,4 +1,5 @@
 # error-handling-reviewer
+verification: judgement — error-handling findings are read from the diff; the spec asks for no command or query to prove them.
 **Checks:** Unchecked or discarded errors (`_ =`), swallowed errors, missing %w wrapping, panics for recoverable errors, and error paths that log nothing
 **Spawn when:** Diff changes .go files that call functions returning error or contain `_ =`, err handling, or panic; skip if no error-returning calls change
 **Contents:** Patterns to FLAG: Unchecked error returns; Errors assigned to `_`; Missing error wrapping; Equality comparisons against potentially-wrapped errors; Sentinel errors for caller-handleable cases; `defer` calls that swallow errors on writers/flushers; Error checks after multiple statements; Bare `return` after partial writes to `http.ResponseWriter`; HTTP handlers returning 200 OK while swallowing errors · Do NOT flag · Require at least a log line (do not allow silent `_ =`) · Review approach

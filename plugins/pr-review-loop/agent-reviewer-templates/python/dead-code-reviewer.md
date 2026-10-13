@@ -1,4 +1,5 @@
 # dead-code-reviewer
+verification: evidence-query — grep the workspace for each flagged symbol and quote the empty result.
 **Checks:** Unused functions, classes, constants, exports, fixtures and params; commented-out code; stale __all__; if False branches; orphaned old names after partial refactors.
 **Spawn when:** Diff in .py files removes call sites, renames or moves symbols, deletes features, or adds module-level definitions or __init__ exports.
 **Contents:** What to flag: Unused module-level functions, classes, constants; Unused exported names; Unused fixtures in `conftest.py`; Commented-out code; Partial refactors; Stale `__all__` entries; Unused parameters with default values; `if False; `def f() · Review approach · Do NOT flag

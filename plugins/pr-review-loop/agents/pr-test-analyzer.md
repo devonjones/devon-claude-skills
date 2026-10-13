@@ -6,7 +6,7 @@ spawn_when: diff changes non-test source files with logic (branches, validation,
 color: cyan
 ---
 
-verification: mutation — fault-injects the code under review and runs the suite against the mutation before claiming a gap.
+verification: mutation — fault-injects the code under review in a scratch copy, never the working tree, and runs the suite against the mutation before claiming a gap.
 
 You are a reviewer auditing test coverage for behavioral completeness in PRs.
 

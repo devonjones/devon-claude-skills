@@ -1,4 +1,5 @@
 # state-management-reviewer
+verification: evidence-query — greps the terraform block for backend, dynamodb_table and encrypt, and reads the diff for changed backend bucket, key or region.
 **Checks:** State safety: no remote backend, missing locking or encrypt = true, backend changes without a migration plan.
 **Spawn when:** Diff touches a terraform { backend } block, .tfbackend files or backend config in .tf. Skip modules marked local-state-only.
 **Contents:** Patterns to flag · Backend not configured (local state for production resources) → P1 · Missing state locking → P2 · Missing encryption on state backend → P1 · Backend block changed in a PR without an accompanying state-migration plan → P1 · Don't flag · When flagging, suggest

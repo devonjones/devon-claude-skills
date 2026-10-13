@@ -1,4 +1,5 @@
 # external-process-reviewer
+verification: judgement — os/exec findings are read from the diff; the spec asks for no command or query to prove them.
 **Checks:** os/exec calls missing timeout/context, unchecked exit status or stderr, unvalidated output parsing, missing-binary handling, and shell-injection risk
 **Spawn when:** Diff adds or edits .go code importing os/exec or calling exec.Command(Context); skip otherwise
 **Contents:** Patterns to FLAG: Missing timeout / context; Unbounded output capture; Missing `cmd.Dir`; No differentiation between failure modes; Output parsing without validation; No stderr capture on failure; `exec.LookPath` skipped or done at wrong time · Do NOT flag · Review approach

@@ -1,4 +1,5 @@
 # concurrency-reviewer
+verification: mixed — missing -race in CI is proven by reading the CI config, and search finds the go/chan/select/sync sites; leaks, ownership and lock-design findings are judgement.
 **Checks:** New sync.Mutex/RWMutex, goroutine leaks, channel close/ownership errors, select without ctx.Done, WaitGroup misuse, time.After in loops, missing -race in CI
 **Spawn when:** Diff adds or edits Go code using go statements, chan, select, sync.*, sync/atomic or context; skip otherwise
 **Contents:** Top-priority pattern to FLAG — any new `sync.Mutex` / `sync.RWMutex` · Other patterns to FLAG: Goroutine leaks; Missing `context.Context` propagation; Ignoring `ctx.Err()` in long loops; Channel ownership; Channel direction at function boundaries; Buffered channels as a deadlock band-aid; `select` missing `<-ctx.Done()`; `select` with `default` that turns blocking into busy-loop; Shared state without synchronization; `sync.WaitGroup` misuse; Goroutines without panic recovery; `time.After` in a loop; Loop variable capture in goroutines · Tolerated uses of `sync.*` primitives · Do NOT flag · Required tooling · Review approach

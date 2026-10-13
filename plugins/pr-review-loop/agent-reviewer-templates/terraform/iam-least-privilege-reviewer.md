@@ -1,4 +1,5 @@
 # iam-least-privilege-reviewer
+verification: evidence-query — greps the changed policy documents and trust policies for wildcard Action/Resource, Principal "*" and missing Condition blocks.
 **Checks:** Over-broad IAM: Action/Resource wildcards, Principal AWS "*" trust policies, cross-account trust without Condition (AWS, GCP, Azure).
 **Spawn when:** Diff touches .tf with aws_iam_*, assume_role_policy, google_*_iam_*, azurerm_role_assignment or policy documents. Skip otherwise.
 **Contents:** Patterns to flag · `Action: "*"` + `Resource: "*"` on a non-admin role → P1 · Action wildcards scoped to a resource → P2 · Trust policy too broad → P1 · Missing `Condition` for cross-account or external trust → P2 · Don't flag · When flagging, suggest

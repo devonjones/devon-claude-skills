@@ -1,7 +1,8 @@
 # test-coverage-reviewer
+verification: mixed — missing coverage is proven by grepping tests/ for the touched functions; mock-target, over-mocking and missing-assert findings are judgement.
 **Checks:** Code touched by the PR lacking test coverage; weak mocking, missing assertions, skips without reason, and tests with no real check.
 **Spawn when:** Diff changes .py production code or test files. Skip docs-only or non-Python diffs.
-**Contents:** Core rule: Code touched by a PR must be covered by tests. Either the coverage already exists, or this PR adds it. · Rules to enforce: Coverage required for all touched code; Refactors preserve coverage, not duplicate it; New behavior needs new assertions; Test file naming and structure; Bug fix documentation · Integration tests as coverage — acceptable boundary · Test quality patterns to flag (P2): `mock.patch` at point-of-definition instead of point-of-use; Mocking what you don't own; Over-mocking; `@pytest.mark.skip` without `reason=`; Tests that don't assert anything · Review approach · What to flag · Do NOT allow · Acceptable exceptions (each requires a beads ticket created before merge)
+**Contents:** Core rule: Code touched by a PR must be covered by tests. Either the coverage already exists, or this PR adds it. · Rules to enforce: Coverage required for all touched code; Refactors preserve coverage, not duplicate it; New behavior needs new assertions; Test file naming and structure; Bug fix documentation · Integration tests as coverage — acceptable boundary · Test quality patterns to flag (P2): `mock.patch` at point-of-definition instead of point-of-use; Mocking what you don't own; Over-mocking; `@pytest.mark.skip` without `reason=`; Tests that don't assert anything · Review approach · What to flag · Do NOT allow · Acceptable exceptions (each requires a beads ticket created before merge) · Do NOT flag
 
 Review code changes to **ensure the code touched by the PR has test coverage**. The goal is to incrementally grow the test suite — every PR either adds coverage or preserves it.
 
@@ -140,5 +141,11 @@ Beyond coverage existence, the reviewer also flags tests whose behavior is broke
 - Adding tests to legacy uncovered code is genuinely larger than this PR.
 - The change is a config/data file edit with no executable logic.
 - The change is a dependency bump with no source change in this repo.
+
+**Do NOT flag:**
+
+- A pure refactor of code that existing tests already exercise.
+- Fixture, parametrize-table or conftest.py edits that change no executable logic.
+- Glue code with no branching that an integration test already covers.
 
 ---

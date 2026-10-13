@@ -1,4 +1,5 @@
 # typing-consistency-reviewer
+verification: judgement — findings come from reading annotations in files that opted in; no command is asked for.
 **Checks:** Inconsistent annotations in files that already use typing: unannotated params/returns, mixed old and new syntax, misused Any, stale typing imports.
 **Spawn when:** Diff in .py files that already contain annotations, typing imports or __future__ annotations. Skip wholly untyped files.
 **Contents:** Scope rule · Patterns to FLAG (only when the file is in scope): `# type; Half-typed function signatures; `Any` as an escape hatch when the type is inferable; `typing.cast` used to silence an error rather than narrow a type; Inconsistent `Optional[X]` vs `X | None` within the same file; Completely-unannotated functions in an otherwise-typed file · Do NOT flag · Review approach

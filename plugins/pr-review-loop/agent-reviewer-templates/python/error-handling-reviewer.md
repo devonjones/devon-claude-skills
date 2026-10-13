@@ -1,4 +1,5 @@
 # error-handling-reviewer
+verification: mixed — bare pass after except, return in finally and raise without from are found by grep; whether a handler is justified is judgement.
 **Checks:** Swallowed exceptions, errors converted to defaults without logging, and raise statements missing 'from' that strip exception context.
 **Spawn when:** Diff in .py files adds or changes try/except, raise, bare except, or fallback-return error paths. Skip diffs with none.
 **Contents:** Patterns to FLAG: Silent exception swallowing — the most damaging pattern; `return` statement inside a `finally` block; Generic `except Exception` without re-raise; Bare `except; Missing exception chaining; Custom exception classes for caller-handleable cases; `try/finally` for cleanup when a context manager would do; `assert` used for runtime validation rather than invariants · Acceptable patterns: Assertions with context; Specific exception handling with `raise ... from`; Known exception handling for documented expected cases; Bare `except` with `raise` for cleanup; `contextlib.suppress` for genuinely-ignorable cases · Review approach

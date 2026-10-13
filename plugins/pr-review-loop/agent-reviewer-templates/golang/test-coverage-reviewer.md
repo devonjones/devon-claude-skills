@@ -1,7 +1,8 @@
 # test-coverage-reviewer
+verification: evidence-query — each touched function is proven uncovered by grepping the package and its _test package for tests that name or call it.
 **Checks:** Touched Go code lacking test coverage: uncovered new/modified functions and branches, tests that cannot fail, and coverage deferred without a beads ticket
 **Spawn when:** Diff modifies or adds non-trivial .go code (functions, branches) or tests; skip pure renames, docs and generated files
-**Contents:** Core rule: Code touched by a PR must be covered by tests. Either the coverage already exists, or this PR adds it. · Rules to enforce: Coverage required for all touched code; Refactors preserve coverage, not duplicate it; New behavior needs new assertions; Test file naming and structure; Bug fix documentation · Integration tests as coverage — acceptable boundary · Review approach · What to flag · Do NOT allow · Acceptable exceptions (each requires a beads ticket created before merge)
+**Contents:** Core rule: Code touched by a PR must be covered by tests. Either the coverage already exists, or this PR adds it. · Rules to enforce: Coverage required for all touched code; Refactors preserve coverage, not duplicate it; New behavior needs new assertions; Test file naming and structure; Bug fix documentation · Integration tests as coverage — acceptable boundary · Do NOT flag · Review approach · What to flag · Do NOT allow · Acceptable exceptions (each requires a beads ticket created before merge)
 
 Review code changes to **ensure the code touched by the PR has test coverage**. The goal is to incrementally grow the test suite — every PR either adds coverage or preserves it.
 
@@ -34,6 +35,11 @@ The unit of obligation is *coverage of the touched code*, not *net-new test func
 Integration tests count as coverage when the unit boundary is **glue code with no branching logic** — e.g., an HTTP handler that decodes a request, calls one service method, and encodes the response. Demanding a separate unit test for such handlers produces low-value mock-heavy tests.
 
 Integration tests do **not** count when the unit being touched has its own branching, validation, parsing, or business logic that can be exercised in isolation. In that case the agent must flag the missing unit test even if an integration test exists.
+
+**Do NOT flag:**
+- Pure renames or extract-method refactors of code that existing tests still exercise.
+- Config/data-file edits with no executable logic, and dependency bumps with no source change.
+- Generated files, and docs-only changes.
 
 **Review approach:**
 1. Identify all functions added or modified in the PR.

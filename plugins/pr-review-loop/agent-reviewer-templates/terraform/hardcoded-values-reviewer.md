@@ -1,4 +1,5 @@
 # hardcoded-values-reviewer
+verification: evidence-query — greps the changed .tf files for 12-digit account IDs, region literals, ARN literals and environment names in resource names.
 **Checks:** Hardcoded account IDs (P1), region literals, cross-stack ARNs (P2) and environment names in resource names (P3) in .tf files.
 **Spawn when:** Diff adds or changes .tf files with resource, policy or ARN string literals. Skip diffs touching only variables, outputs or comments.
 **Contents:** Patterns to flag · Hardcoded account IDs (12-digit numerics) → P1 · Hardcoded region literals → P2 · Hardcoded ARNs from other Terraform stacks → P2 · Hardcoded environment names in resource names → P3 · Don't flag · When flagging, suggest

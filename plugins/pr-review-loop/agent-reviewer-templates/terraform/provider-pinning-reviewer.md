@@ -1,4 +1,5 @@
 # provider-pinning-reviewer
+verification: evidence-query — greps required_providers and required_version in the changed .tf files for missing or loose (>=, *) constraints.
 **Checks:** Provider version discipline in required_providers: missing or loose (>=, *) constraints, and missing required_version.
 **Spawn when:** Diff touches a terraform { } block, required_providers or required_version in .tf files (usually versions.tf). Skip otherwise.
 **Contents:** Patterns to flag · Missing version constraint → P2 · Loose constraints (`>=`, `*`) on production providers → P2 · Missing `required_version` on the `terraform` block → P3 · Don't flag · When flagging, suggest

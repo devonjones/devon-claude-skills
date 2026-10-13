@@ -1,4 +1,5 @@
 # mass-assignment-reviewer
+verification: judgement — trace each params path to a model write by reading the code; no mutation or query is asked for.
 **Checks:** Paths from params to a model write that bypass .permit: to_unsafe_h then create/update, params merged into hashes, services taking raw hashes
 **Spawn when:** Diff touches app/controllers, app/services, or app/interactors and passes params, to_unsafe_h, or a raw attrs hash into create/update/new/attributes=.
 **Contents:** Patterns to flag · What to flag · Severity guidance · Don't flag · When flagging, suggest

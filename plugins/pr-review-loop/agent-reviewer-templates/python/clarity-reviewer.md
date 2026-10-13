@@ -1,4 +1,5 @@
 # clarity-reviewer
+verification: mixed — docstring claims about the code are proven by grepping the function body for the named symbols, counts and keys; wordiness and structure findings are judgement.
 **Checks:** Wordy, padded or mis-structured markdown docs, and Python docstrings/comments that are verbose or contradict what the code does.
 **Spawn when:** Diff touches any .md file or adds/changes a docstring or comment in a .py file. Skip diffs with neither.
 **Contents:** Markdown — what to check: Read the full file, not just the diff · Word-level patterns to flag · Structural patterns to flag · Python docstrings — what to flag: Restate-the-signature docstrings; Doc style for public APIs; No docstrings on trivial private functions; WHY vs WHAT in inline comments; Stale comments; Docstring grep-verify — claims must match the code · Flag content issues if · Do NOT flag · Review approach · When flagging, provide

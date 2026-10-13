@@ -1,4 +1,5 @@
 # clarity-reviewer
+verification: judgement — findings rest on comparing the changed docs and comments with the code they describe; the spec asks for no command, mutation or query proof.
 **Checks:** Stale docs: JSDoc/TSDoc whose params or text no longer match the code, comments describing removed behavior, README examples naming removed APIs or old config.
 **Spawn when:** Diff changes .md files, or JSDoc/TSDoc or comments on exported JS/TS functions or classes, or alters an API/config that README or docs describe.
 **Contents:** What to check · Flag issues if · Do NOT flag · When flagging, provide

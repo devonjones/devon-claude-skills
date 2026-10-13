@@ -1,4 +1,5 @@
 # lifecycle-reviewer
+verification: evidence-query — reads the diff for removed prevent_destroy and added ignore_changes or create_before_destroy, and greps the module for the resource's name and references.
 **Checks:** Risky lifecycle blocks: removed prevent_destroy on stateful resources, ignore_changes = all, create_before_destroy on name-bound resources.
 **Spawn when:** Diff adds, removes or edits a lifecycle { } block in .tf files (prevent_destroy, ignore_changes, create_before_destroy). Skip otherwise.
 **Contents:** Patterns to flag · Removing `prevent_destroy` from a stateful resource → P1 · Adding `ignore_changes` that masks drift → P2 · `create_before_destroy = true` on a resource with hard external references → P2 · Don't flag · When flagging, suggest

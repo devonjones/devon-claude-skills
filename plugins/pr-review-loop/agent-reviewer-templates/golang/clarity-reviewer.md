@@ -1,4 +1,5 @@
 # clarity-reviewer
+verification: judgement — wordiness and structure findings are editorial calls; no command proves them.
 **Checks:** Wordy or poorly structured markdown (filler, walls of prose, missing tables/lists) and Go doc/inline comments that restate code or tell history
 **Spawn when:** Diff touches any .md file or adds/changes comments in .go files; skip if neither
 **Contents:** Markdown — what to check: Read the full file, not just the diff · Word-level patterns to flag · Structural patterns to flag · Go code comments — what to flag: Restate-the-code comments; Doc comments on exported identifiers — Go style; No doc comments on unexported funcs; Block comments explaining WHY are good. Block comments explaining WHAT are bad; Stale comments · Flag content issues if · Do NOT flag · When flagging, provide

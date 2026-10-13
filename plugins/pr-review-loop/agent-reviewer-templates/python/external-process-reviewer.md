@@ -1,4 +1,5 @@
 # external-process-reviewer
+verification: judgement — findings come from reading each subprocess call site against the listed patterns; no command is asked for.
 **Checks:** subprocess calls missing timeout=, check handling or output validation, unsafe shell=True, and unhandled missing-binary or malformed-output failures.
 **Spawn when:** Diff in .py files imports or calls subprocess, os.system, or os.popen. Skip otherwise.
 **Contents:** Patterns to FLAG: Missing `timeout=`; `shell=True` with any non-literal input; `subprocess.Popen` without context manager; No stderr capture on failure; Missing `cwd=`; No differentiation between failure modes; Unbounded output capture; Binary presence assumed, never checked; Output parsing without validation · Do NOT flag · Review approach

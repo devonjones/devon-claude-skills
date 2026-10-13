@@ -1,4 +1,5 @@
 # test-coverage-reviewer
+verification: mixed — a missing matching test file is proven from the diff's changed-file list (evidence-query); untested behaviour, bug fixes and scopes are judgement.
 **Checks:** Changed app/**/*.rb (controllers, models, jobs, mailers, services, helpers) with no matching test/ or spec/ change; untested public methods, bug fixes, scopes, routes
 **Spawn when:** Diff modifies app/**/*.rb. Skip view-only, config, schema, formatting/comment-only, or attr_accessor-only changes.
 **Contents:** Rails-specific placement rules · What to flag · Do NOT flag · Acceptable substitutes

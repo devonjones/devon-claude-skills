@@ -1,4 +1,5 @@
 # dangerous-html-reviewer
+verification: judgement — findings rest on reading the changed code for unsanitized sinks; the spec asks for no command, mutation or query proof.
 **Checks:** XSS and injection sinks: unsanitized dangerouslySetInnerHTML or innerHTML, eval/new Function on dynamic input, SQL built with template-string interpolation.
 **Spawn when:** Diff adds JS/TS/JSX/TSX using dangerouslySetInnerHTML, innerHTML, eval, new Function, or db.query/raw SQL with ${} interpolation. Skip diffs with none of these.
 **Contents:** Patterns to flag · `dangerouslySetInnerHTML` without sanitization → P1 · `element.innerHTML = userInput` → P1 · `eval()` or `new Function(string)` on dynamic input → P1 · Template-string SQL → P1 · Don't flag · When flagging, suggest

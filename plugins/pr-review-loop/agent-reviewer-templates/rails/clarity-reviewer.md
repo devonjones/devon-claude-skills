@@ -1,4 +1,5 @@
 # clarity-reviewer
+verification: judgement — compare each comment or doc passage with the code it describes; no mutation or query is asked for.
 **Checks:** Verbose or stale prose: .md docs and Ruby comments that restate method names, reference removed params/gems/commands, or no longer match the code
 **Spawn when:** Diff touches .md files or adds/edits comments or docstrings in .rb files. Skip diffs with no prose or comment changes.
 **Contents:** What to check · Flag issues if · Do NOT flag · When flagging, provide

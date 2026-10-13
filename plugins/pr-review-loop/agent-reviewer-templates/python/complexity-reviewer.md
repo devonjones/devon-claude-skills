@@ -1,4 +1,5 @@
 # complexity-reviewer
+verification: mixed — McCabe over 10 is proven by running ruff C901; the and/or, parameter-count and naming heuristics are judgement.
 **Checks:** Production functions with McCabe complexity over 10, too many and/or duties, >5 positional params, >20 public methods, pass-through wrappers, misleading generic names.
 **Spawn when:** Diff adds/changes .py functions or classes outside tests/. Skip test-only or non-Python diffs.
 **Contents:** Do NOT flag · DO flag (match/elif-specific)

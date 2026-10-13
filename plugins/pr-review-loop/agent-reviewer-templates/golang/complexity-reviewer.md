@@ -1,4 +1,5 @@
 # complexity-reviewer
+verification: mixed — the gocognit floor is proven by running gocognit -over 10 (or CI output); the heuristics (and/or test, nesting, naming) are judgement.
 **Checks:** Go functions over gocognit 10, deep nesting (4+), mixed and/or responsibilities, branchy switch cases, single-call wrappers, vague names in long functions
 **Spawn when:** Diff changes non-test .go files with new or edited functions; skip test-only (*_test.go) or non-Go diffs
 **Contents:** Do NOT flag · DO flag (switch-specific)

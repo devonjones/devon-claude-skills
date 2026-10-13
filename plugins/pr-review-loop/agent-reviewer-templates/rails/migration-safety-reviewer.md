@@ -1,4 +1,5 @@
 # migration-safety-reviewer
+verification: judgement — read each migration and the app code that references the affected columns; no mutation or query is asked for.
 **Checks:** Zero-downtime migration hazards: NOT NULL without default, non-concurrent index, FK without index, remove/rename_column in use, irreversible change
 **Spawn when:** Diff adds or edits files in db/migrate/. Skip diffs with no migration files.
 **Contents:** Patterns to flag · Adding a NOT NULL column without default → P1 · Adding an indexed column to a large table inline → P2 · New foreign key column without index → P2 · Dropping a column still referenced by app code → P1 · Rename without alias → P1 · Irreversible migrations without explicit `def up` / `def down` → P2 · Don't flag · When flagging, suggest

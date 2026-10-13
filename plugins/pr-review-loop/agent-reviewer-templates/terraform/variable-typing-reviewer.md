@@ -1,4 +1,5 @@
 # variable-typing-reviewer
+verification: evidence-query — greps variable blocks for missing type or description, type = any, and secret-named variables without sensitive = true.
 **Checks:** Variable blocks missing type or description, type = any without reason, secret-named variables lacking sensitive = true.
 **Spawn when:** Diff adds or edits a variable block in .tf files (typically variables.tf). Skip diffs with no variable changes.
 **Contents:** Patterns to flag · Missing `type` → P2 · Missing `description` on a required variable (no default) → P2 · `type = any` without justification → P2 · Sensitive variable missing `sensitive = true` → P1 · Don't flag · When flagging, suggest

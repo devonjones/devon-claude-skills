@@ -1,4 +1,5 @@
 # resource-leak-reviewer
+verification: judgement — leak findings are read from the diff; the spec asks for no command or query to prove them.
 **Checks:** Leaks in long-running Go services: exec.Command without Wait, unclosed files/bodies/conns, unstopped tickers/timers, unbounded maps/slices and goroutines
 **Spawn when:** Diff changes .go code opening files, HTTP bodies, conns, exec processes, tickers or growing caches; skip short-lived CLI-only code
 **Contents:** Patterns to FLAG: `exec.Command` without `Wait()`; HTTP response bodies not closed; File descriptors not closed; Unbounded memory from untrusted input; `bufio.Scanner` with the default buffer; Slice growth without capacity hints; Long-lived caches without eviction · Do NOT flag · Review approach

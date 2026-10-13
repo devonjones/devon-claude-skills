@@ -1,4 +1,5 @@
 # strong-params-reviewer
+verification: judgement — read each params path and permit list; no mutation or query is asked for.
 **Checks:** Controller params reaching create/update/new/assign_attributes without require().permit(), permit!, column-wildcard permits, unpermitted nested attributes
 **Spawn when:** Diff touches app/controllers/*.rb and uses params with create/update/new/assign_attributes or edits a *_params method. Skip read-only actions.
 **Contents:** Core rules · What to flag · Severity guidance · Don't flag · When flagging, suggest

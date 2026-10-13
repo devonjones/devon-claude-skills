@@ -1,4 +1,5 @@
 # callback-overuse-reviewer
+verification: judgement — read the model's callback declarations and bodies; no mutation or query is asked for.
 **Checks:** ActiveRecord callbacks that hit other models, hold business logic in before_save, pile up (4+), or use after_commit on destroy without destroyed_by_association?
 **Spawn when:** Diff changes app/models/*.rb and adds or edits before_/after_ callbacks (before_save, after_create, after_commit...). Skip models with no callback changes.
 **Contents:** Patterns to flag · Callbacks that touch other models → P2 · `before_save` for non-validation business logic → P2 · Too many callbacks on the same model → P2 · `after_commit` on `:destroy` without `unless: -> { destroyed_by_association? }` → P2 · Don't flag · When flagging, suggest

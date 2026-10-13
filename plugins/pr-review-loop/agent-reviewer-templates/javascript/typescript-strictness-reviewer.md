@@ -1,4 +1,5 @@
 # typescript-strictness-reviewer
+verification: judgement — findings rest on reading the changed TS for type-system escapes; the spec asks for no command, mutation or query proof.
 **Checks:** Type-safety escapes in TS: unjustified any, unsafe as casts (JSON.parse as T), @ts-ignore without reason, as NonNullable laundering, missing return types on exports.
 **Spawn when:** Diff touches .ts/.tsx files (non-.d.ts). Skip when the PR only changes JavaScript files.
 **Contents:** Patterns to flag · `any` without justifying comment → P2 · Unsafe `as` cast across unrelated types → P2 · `// @ts-ignore` without justification → P2 · Missing return type on exported function → P3 · Strict-null violations from `as NonNullable` casts → P2 · Don't flag · When flagging, suggest

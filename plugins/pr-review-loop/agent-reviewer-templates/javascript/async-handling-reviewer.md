@@ -1,4 +1,5 @@
 # async-handling-reviewer
+verification: judgement — findings rest on reading the changed code; the spec asks for no command, mutation or query proof.
 **Checks:** Unawaited promises, Promise.all over order-dependent steps, async functions with no await, and setTimeout(async) callbacks that swallow rejections.
 **Spawn when:** Diff touches .js/.jsx/.ts/.tsx/.mjs source adding or changing async/await, .then chains, Promise.* or timers. Skip docs-only or non-JS diffs.
 **Contents:** Patterns to flag · Unawaited promise → P2 (P1 if in a request handler or test) · `Promise.all` where order matters → P2 · `async` function with no `await` → P3 · `setTimeout(async () => ...)` losing rejections → P2 · Don't flag · When flagging, suggest
