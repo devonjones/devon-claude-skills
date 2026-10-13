@@ -196,8 +196,6 @@ the web UI, where no script is in the loop to carry a marker.
 This disjunct and the "lead with the disposition word" rule hold each other up.
 Break the template convention and the gate goes blind again.
 
-**Delete this once `devon-claude-skills-cq0` lands** — the fix is `reply-to-comment.sh` adopting the `|| { ...; exit 1; }` that `post-line-comment.sh:49-53` already has, after which the exit status is trustworthy.
-
 Commit ONCE per round, if any fixes were made, staging the round's files by name (⛔ rule 2):
 
 ```bash

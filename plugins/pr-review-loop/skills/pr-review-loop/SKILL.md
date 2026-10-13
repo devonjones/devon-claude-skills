@@ -517,7 +517,9 @@ CI FIX SUB-LOOP (max 3 attempts per round):
 
 4. **Max 3 attempts** — If CI still fails after 3 fix-push cycles, stop and escalate to the user.
 
-5. **Timeout (exit code 2)** — If `check-ci.sh` times out waiting for checks to complete, ask the user whether to wait longer.
+5. **Exit code 2** — `check-ci.sh` timed out, or could not read the head SHA or its check runs. On a timeout, ask the user whether to wait longer; otherwise re-run it once, and if it fails again, stop and ask.
+
+6. **Exit code 3** — the PR head moved while `check-ci.sh` waited. Its verdict was for an old commit; re-run it against the new head.
 
 ### Example CI Fix Flow
 
@@ -1666,7 +1668,7 @@ When detected, the script suggests:
 
 | Script | Purpose |
 |--------|---------|
-| `reply-to-comment.sh <PR> <id> "msg"` | **ALWAYS USE** - Reply and auto-resolve every comment |
+| `reply-to-comment.sh <PR> <id> "msg"` | **ALWAYS USE** - Reply and auto-resolve every comment. Exit 1: not posted, thread left open; fix the cause and re-send. Exit 3: GitHub's secondary rate limit; keep the bodies and re-send later, since retrying at once keeps it triggered |
 | `get-review-comments.sh <PR> [--with-ids] [--wait]` | **USE --wait** - Fetch line comments (Gemini, Cursor), polls 5min if --wait |
 | `get-pr-comments.sh <PR> [--with-ids] [--wait] [--author]` | Fetch PR-level comments (Claude, Copilot) with priority detection |
 | `trigger-review.sh [PR] [--gemini\|--cursor\|--claude] [--wait]` | **USE --wait** - Trigger review and poll for response |

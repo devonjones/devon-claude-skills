@@ -12,7 +12,8 @@
 # Exit codes:
 #   0 - All checks passed (or no checks found)
 #   1 - One or more checks failed (failure details on stdout)
-#   2 - Timeout waiting for checks to complete
+#   2 - Timeout, or the head SHA or its check runs could not be read
+#   3 - The PR head moved while waiting; re-run against the new head
 
 set -euo pipefail
 
@@ -56,10 +57,26 @@ fi
 
 # Function to get check status summary
 # Returns: "pending", "passing", or "failing"
+#
+# Resolved against a SHA, never against the PR. `gh pr checks <PR>` attributes
+# results to the pull request, so on a merge-forward or a fast fix-and-push it
+# can answer for a commit that is no longer the head - and because the previous
+# commit was usually also green, a stale green and a real green are identical.
+# "A CI fix is a fix", so a stale green can carry a round to convergence on code
+# nobody checked.
 get_check_status() {
+    local sha="${1:-}"
     local checks_json
-    checks_json=$(gh pr checks "$PR_NUMBER" $REPO_FLAG --json name,state,bucket 2>/dev/null) || {
-        echo "no_checks"
+    if [[ -z "$sha" ]]; then
+        # No SHA means we cannot say which commit a verdict belongs to. That is
+        # not "passing".
+        echo "unknown_sha"
+        return
+    fi
+    # stderr is left alone so the reason for an api_error reaches the caller.
+    checks_json=$(gh api "repos/${REPO}/commits/${sha}/check-runs" --paginate \
+        | jq -s '[.[].check_runs[]] | map({name, state: (if .status != "completed" then (.status|ascii_upcase) else (.conclusion|ascii_upcase) end)})') || {
+        echo "api_error"
         return
     }
 
@@ -77,8 +94,9 @@ get_check_status() {
 
     if [[ "$pending" -gt 0 ]]; then
         echo "pending:$pending/$total"
-    elif [[ "$fail" -gt 0 ]]; then
-        echo "failing:$fail/$total"
+    elif [[ "$fail" -gt 0 || "$pass" -lt "$total" ]]; then
+        # A conclusion none of the lists names (STALE, a new one) is not a pass.
+        echo "failing:$((total - pass))/$total"
     else
         echo "passing:$pass/$total"
     fi
@@ -129,12 +147,36 @@ get_failure_details() {
     done <<< "$failed_checks"
 }
 
+# Pin the commit under test ONCE. Every verdict below is about THIS commit.
+TARGET_SHA=$(gh pr view "$PR_NUMBER" $REPO_FLAG --json headRefOid --jq .headRefOid 2>/dev/null) || TARGET_SHA=""
+if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "Error: could not resolve the PR head SHA - cannot attribute CI results to a commit." >&2
+    exit 2
+fi
+echo "Checking CI for ${TARGET_SHA:0:7}"
+
+# If the branch moves while we wait, the verdict we are about to report belongs
+# to code that is no longer what would ship. That is neither pass nor fail.
+head_moved() {
+    local now
+    now=$(gh pr view "$PR_NUMBER" $REPO_FLAG --json headRefOid --jq .headRefOid 2>/dev/null) || return 1
+    [[ "$now" =~ ^[0-9a-f]{40}$ && "$now" != "$TARGET_SHA" ]]
+}
+
 # Single check (no wait)
 if [[ "$WAIT_MODE" == "false" ]]; then
-    status=$(get_check_status)
+    status=$(get_check_status "$TARGET_SHA")
     case "$status" in
+        unknown_sha)
+            echo "Error: no commit to attribute CI results to." >&2
+            exit 2
+            ;;
+        api_error)
+            echo "Error: could not read check runs for ${TARGET_SHA:0:7} - that is not 'no CI'." >&2
+            exit 2
+            ;;
         no_checks)
-            echo "No CI checks found on PR #$PR_NUMBER"
+            echo "No CI checks found for ${TARGET_SHA:0:7}"
             exit 0
             ;;
         passing:*)
@@ -167,7 +209,13 @@ sleep 5
 ELAPSED=5
 
 while [[ $ELAPSED -lt $TIMEOUT ]]; do
-    status=$(get_check_status)
+    if head_moved; then
+        echo "" >&2
+        echo "Branch moved while waiting: results for ${TARGET_SHA:0:7} no longer describe the head." >&2
+        echo "Re-run against the new head rather than trusting this verdict." >&2
+        exit 3
+    fi
+    status=$(get_check_status "$TARGET_SHA")
 
     case "$status" in
         no_checks)
@@ -205,6 +253,9 @@ while [[ $ELAPSED -lt $TIMEOUT ]]; do
             fi
             echo "No CI checks found yet (${ELAPSED}s elapsed)"
             ;;
+        api_error)
+            echo "warning: could not read check runs (${ELAPSED}s elapsed); retrying" >&2
+            ;;
         passing:*)
             echo "✓ All CI checks passed (${status#passing:})"
             exit 0
@@ -230,7 +281,7 @@ done
 echo ""
 echo "⏰ Timeout after ${TIMEOUT}s"
 echo ""
-status=$(get_check_status)
+status=$(get_check_status "$TARGET_SHA")
 case "$status" in
     failing:*)
         echo "✗ CI checks failed"
@@ -240,6 +291,10 @@ case "$status" in
         ;;
     pending:*)
         echo "⏳ Checks still running after timeout"
+        exit 2
+        ;;
+    api_error)
+        echo "Error: could not read check runs for ${TARGET_SHA:0:7}." >&2
         exit 2
         ;;
     *)
