@@ -409,7 +409,7 @@ if [[ ${#AGENT_FILES[@]} -eq 0 && ${#REVIEWER_DIRS[@]} -eq 0 ]] && [[ ! -f "$ROO
             LANGUAGE_DETECTION_JSON=$(RAW_DETECT="$RAW_DETECT" jq -n '
                 (env.RAW_DETECT | fromjson) as $matches
                 | {
-                    matched: ($matches | map(. + {template: (.language + ".md")})),
+                    matched: ($matches | map(. + {template: .language})),
                     same_directory_polyglot: (
                         # True iff two matches share a subtree with different languages
                         ($matches

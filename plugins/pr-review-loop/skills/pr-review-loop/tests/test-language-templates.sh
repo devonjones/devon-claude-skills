@@ -154,6 +154,20 @@ assert_agent_count() {
     fi
 }
 
+# The pack's reviewer files all landed in .reviewers/ (starters and README aside).
+assert_reviewer_files() {
+    local name="$1" repo="$2" lang="$3" expected="$4" actual=0 f
+    for f in "$SCRIPT_DIR/../../../agent-reviewer-templates/$lang"/*.md; do
+        [[ "$(basename "$f")" == README.md ]] && continue
+        [[ -f "$repo/.reviewers/$(basename "$f")" ]] && actual=$((actual + 1))
+    done
+    if [[ "$actual" == "$expected" ]]; then
+        echo "  PASS  $name"; TESTS_PASSED=$((TESTS_PASSED + 1))
+    else
+        echo "  FAIL  $name (got $actual, expected $expected)"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("$name")
+    fi
+}
+
 run_detect() {
     local repo="$1" out_var="$2"
     local out exit_code=0
@@ -252,50 +266,53 @@ assert_jq "no entries (node_modules pruned)" "$d8" '. == []'
 # ---------------------------------------------------------------------------
 
 echo
-echo "=== Test I1: single golang:. installs full file at root ==="
+echo "=== Test I1: golang:. installs its reviewers and starters into .reviewers/ ==="
 repo="$(make_temp_repo)"
 run_install "$repo" i1 golang:.
 assert_exit "exit 0" "$i1_exit" "0"
-assert_file_exists "root file created" "$repo/AGENT-REVIEWERS.md"
-assert_file_grep "has # Configuration" "$repo/AGENT-REVIEWERS.md" '^# Configuration'
-assert_file_grep "has # Agents" "$repo/AGENT-REVIEWERS.md" '^# Agents'
-assert_file_grep "has # Guidelines" "$repo/AGENT-REVIEWERS.md" '^# Guidelines'
-assert_file_grep "version pin present" "$repo/AGENT-REVIEWERS.md" 'defaults_version_checked'
+assert_file_exists "a pack reviewer" "$repo/.reviewers/error-handling-reviewer.md"
+assert_file_exists "the pack README" "$repo/.reviewers/README.md"
+assert_file_exists "a starter the pack keeps" "$repo/.reviewers/code-reviewer.md"
+if [[ -e "$repo/.reviewers/silent-failure-hunter.md" ]]; then
+    echo "  FAIL  starter the pack disabled was copied"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("disabled starter skipped")
+else
+    echo "  PASS  starter the pack disabled is not copied"; TESTS_PASSED=$((TESTS_PASSED + 1))
+fi
+if [[ -e "$repo/AGENT-REVIEWERS.md" ]]; then
+    echo "  FAIL  no AGENT-REVIEWERS.md written"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("no AGENT-REVIEWERS.md")
+else
+    echo "  PASS  no AGENT-REVIEWERS.md written"; TESTS_PASSED=$((TESTS_PASSED + 1))
+fi
+assert_file_grep "reviewer header has a Spawn when line" "$repo/.reviewers/error-handling-reviewer.md" '^\*\*Spawn when:\*\*'
+assert_file_not_grep "installed headers carry no TODO" "$repo/.reviewers/error-handling-reviewer.md" '^\*\*(Checks|Spawn when):\*\* TODO'
+d1="$(cd "$repo" && PR_REVIEW_LOOP_TEST_CHANGED_FILES="main.go" "$SCRIPT_DIR/../scripts/discover-agents.sh" 0 2>/dev/null)"
+assert_jq "discovery reads it as the .reviewers layout" "$d1" '.configuration.layout == "reviewers"'
+assert_jq "discovery spawns pack reviewers and starters, no built-in defaults" "$d1" '[.agents[].kind] | all(. == "user")'
 
 echo
-echo "=== Test I2: per-subtree polyglot creates 3 files (2 subtree + 1 root config) ==="
+echo "=== Test I2: per-subtree polyglot installs beside each subtree ==="
 repo="$(make_temp_repo)"
 mkdir -p "$repo/backend" "$repo/frontend"
 run_install "$repo" i2 golang:backend python:frontend
 assert_exit "exit 0" "$i2_exit" "0"
-assert_file_exists "backend file" "$repo/backend/AGENT-REVIEWERS.md"
-assert_file_exists "frontend file" "$repo/frontend/AGENT-REVIEWERS.md"
-assert_file_exists "root config file" "$repo/AGENT-REVIEWERS.md"
-assert_file_not_grep "subtree backend has NO # Configuration" "$repo/backend/AGENT-REVIEWERS.md" '^# Configuration'
-assert_file_not_grep "subtree frontend has NO # Configuration" "$repo/frontend/AGENT-REVIEWERS.md" '^# Configuration'
-assert_file_grep "root has # Configuration" "$repo/AGENT-REVIEWERS.md" '^# Configuration'
-assert_file_not_grep "root has NO # Agents" "$repo/AGENT-REVIEWERS.md" '^# Agents'
+assert_file_exists "backend reviewer" "$repo/backend/.reviewers/error-handling-reviewer.md"
+assert_file_exists "frontend reviewer" "$repo/frontend/.reviewers/importlib-resources-reviewer.md"
+assert_file_exists "starters at the root" "$repo/.reviewers/code-reviewer.md"
+assert_file_exists "merged config at the root" "$repo/.reviewers/config.json"
 
 echo
-echo "=== Test I3: merged config has union of disabled defaults ==="
-repo="$(make_temp_repo)"
-mkdir -p "$repo/backend" "$repo/frontend"
-run_install "$repo" i3 golang:backend python:frontend
-root_json="$(awk '/^```json$/,/^```$/' "$repo/AGENT-REVIEWERS.md" | sed '1d;$d')"
-assert_jq "3 disabled (both packs disable the same 3)" "$root_json" '.disabled | length == 3'
-assert_jq "disabled list sorted" "$root_json" '.disabled == (.disabled | sort)'
+echo "=== Test I3: merged config drops what no longer applies ==="
+assert_jq "no disabled list" "$(cat "$repo/.reviewers/config.json")" 'has("disabled") | not'
+assert_jq "no defaults pin" "$(cat "$repo/.reviewers/config.json")" 'has("defaults_version_checked") | not'
 
 echo
 echo "=== Test I4: merged config concatenates same-key overlap reasons with ' | ' ==="
-repo="$(make_temp_repo)"
-mkdir -p "$repo/backend" "$repo/frontend"
-run_install "$repo" i4 golang:backend python:frontend
-root_json="$(awk '/^```json$/,/^```$/' "$repo/AGENT-REVIEWERS.md" | sed '1d;$d')"
+root_json="$(cat "$repo/.reviewers/config.json")"
 assert_jq "overlap key present" "$root_json" '.overlap_acknowledged | has("test-coverage-reviewer")'
 assert_jq "overlap reason contains ' | ' separator" "$root_json" '.overlap_acknowledged["test-coverage-reviewer"].reason | contains(" | ")'
 
 echo
-echo "=== Test I5: refuse to overwrite existing root file ==="
+echo "=== Test I5: refuse a repo still on AGENT-REVIEWERS.md ==="
 repo="$(make_temp_repo)"
 echo "existing" > "$repo/AGENT-REVIEWERS.md"
 mkdir -p "$repo/backend"
@@ -303,12 +320,18 @@ run_install "$repo" i5 golang:backend
 assert_exit "exit 1 (refused)" "$i5_exit" "1"
 
 echo
-echo "=== Test I6: refuse to overwrite existing subtree file ==="
+echo "=== Test I6: refuse to overwrite an existing reviewer file, writing nothing ==="
 repo="$(make_temp_repo)"
-mkdir -p "$repo/backend"
-echo "existing" > "$repo/backend/AGENT-REVIEWERS.md"
+mkdir -p "$repo/backend/.reviewers"
+echo "mine" > "$repo/backend/.reviewers/error-handling-reviewer.md"
 run_install "$repo" i6 golang:backend
 assert_exit "exit 1 (refused)" "$i6_exit" "1"
+assert_file_grep "existing file untouched" "$repo/backend/.reviewers/error-handling-reviewer.md" '^mine$'
+if [[ -e "$repo/.reviewers" || -e "$repo/backend/.reviewers/dead-code-reviewer.md" ]]; then
+    echo "  FAIL  nothing else written"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("transactional refuse")
+else
+    echo "  PASS  nothing else written"; TESTS_PASSED=$((TESTS_PASSED + 1))
+fi
 
 echo
 echo "=== Test I7: refuse same-directory polyglot (two packs at same subtree) ==="
@@ -425,21 +448,21 @@ echo
 echo "=== Test I_FA3: rails.md installs all 8 reviewers (fence-aware regression) ==="
 repo="$(make_temp_repo)"
 run_install "$repo" iFA3 rails:.
-assert_agent_count "rails.md installs all 8 reviewers" "$repo/AGENT-REVIEWERS.md" 8
+assert_reviewer_files "rails installs all 8 reviewers" "$repo" rails 8
 rm -rf "$repo"
 
 echo
 echo "=== Test I_FA4: terraform.md installs all 7 reviewers ==="
 repo="$(make_temp_repo)"
 run_install "$repo" iFA4 terraform:.
-assert_agent_count "terraform.md installs all 7 reviewers" "$repo/AGENT-REVIEWERS.md" 7
+assert_reviewer_files "terraform installs all 7 reviewers" "$repo" terraform 7
 rm -rf "$repo"
 
 echo
 echo "=== Test I_FA5: javascript.md installs all 7 reviewers ==="
 repo="$(make_temp_repo)"
 run_install "$repo" iFA5 javascript:.
-assert_agent_count "javascript.md installs all 7 reviewers" "$repo/AGENT-REVIEWERS.md" 7
+assert_reviewer_files "javascript installs all 7 reviewers" "$repo" javascript 7
 rm -rf "$repo"
 
 echo
@@ -447,23 +470,30 @@ echo "=== Test I_FA1: fence-aware extract — python.md installs all 13 reviewer
 repo="$(make_temp_repo)"
 run_install "$repo" iFA1 python:.
 # Counts agents under # Agents H1 ONLY, fence-aware (don't be fooled by # BAD/# GOOD in code blocks)
-assert_agent_count "python.md installs all 13 reviewers" "$repo/AGENT-REVIEWERS.md" 13
+assert_reviewer_files "python installs all 13 reviewers" "$repo" python 13
 rm -rf "$repo"
 
 echo
 echo "=== Test I_FA2: fence-aware extract — golang.md installs all 8 reviewers ==="
 repo="$(make_temp_repo)"
 run_install "$repo" iFA2 golang:.
-assert_agent_count "golang.md installs all 8 reviewers" "$repo/AGENT-REVIEWERS.md" 8
+assert_reviewer_files "golang installs all 8 reviewers" "$repo" golang 8
 rm -rf "$repo"
 
 echo
-echo "=== Test I10: install pins defaults_version_checked to plugin version ==="
-repo="$(make_temp_repo)"
-run_install "$repo" i10 golang:.
-plugin_version="$(jq -r '.version' "$SCRIPT_DIR/../../../.claude-plugin/plugin.json")"
-root_json="$(awk '/^```json$/,/^```$/' "$repo/AGENT-REVIEWERS.md" | sed '1d;$d')"
-assert_jq "version pinned to plugin.json value" "$root_json" ".defaults_version_checked == \"$plugin_version\""
+echo "=== Test I10: every shipped reviewer file has a usable header ==="
+for f in "$SCRIPT_DIR/../../../agent-reviewer-templates"/*/*.md; do
+    [[ "$(basename "$f")" == README.md ]] && continue
+    h="$(head -n 12 "$f")"
+    n="${f#"$SCRIPT_DIR/../../../agent-reviewer-templates/"}"
+    if grep -qE '^\*\*Checks:\*\* .' <<< "$h" && grep -qE '^\*\*Spawn when:\*\* .' <<< "$h" \
+        && ! grep -qE '^\*\*(Checks|Spawn when):\*\* TODO' <<< "$h" && [[ "$(sed -n 1p <<< "$h")" == "# $(basename "$f" .md)" ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+    else
+        echo "  FAIL  $n header"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("$n header")
+    fi
+done
+echo "  checked template headers"
 
 # ---------------------------------------------------------------------------
 # Summary

@@ -692,7 +692,7 @@ repo="$(make_temp_repo)"
 touch "$repo/go.mod"
 run_discover "$repo" "main.go" t24
 assert_jq "one match" "$t24" '.language_detection.matched | length == 1'
-assert_jq "golang detected at root" "$t24" '.language_detection.matched[0] | (.language == "golang" and .subtree == "." and .template == "golang.md")'
+assert_jq "golang detected at root" "$t24" '.language_detection.matched[0] | (.language == "golang" and .subtree == "." and .template == "golang")'
 rm -rf "$repo"
 
 echo
@@ -702,7 +702,7 @@ mkdir -p "$repo/backend" "$repo/frontend"
 touch "$repo/backend/go.mod" "$repo/frontend/pyproject.toml"
 run_discover "$repo" "backend/main.go" t25
 assert_jq "two matches" "$t25" '.language_detection.matched | length == 2'
-assert_jq "templates include both" "$t25" '[.language_detection.matched[].template] | sort == ["golang.md","python.md"]'
+assert_jq "templates include both" "$t25" '[.language_detection.matched[].template] | sort == ["golang","python"]'
 assert_jq "same_directory_polyglot false" "$t25" '.language_detection.same_directory_polyglot == false'
 rm -rf "$repo"
 

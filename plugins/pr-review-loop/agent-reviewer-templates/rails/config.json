@@ -1,0 +1,8 @@
+{
+  "overlap_acknowledged": {
+    "test-coverage-reviewer": {
+      "overlaps_with": "pr-test-analyzer",
+      "reason": "Different lenses: test-coverage-reviewer enforces Rails-specific test placement rules (controller\u2192test/controllers, model\u2192test/models, etc.) and require-before-merge discipline. pr-test-analyzer scores behavioral gaps on a criticality 1-10 axis. Both contribute independent signal during review loops."
+    }
+  }
+}
