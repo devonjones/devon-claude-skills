@@ -1067,6 +1067,14 @@ assert_jq "dispatched reviewers are not listed as skipped" "$tg1" '.configuratio
 rm -rf "$repo"
 
 echo
+echo "=== Test G1b: each generated-file pattern, and only at a path boundary ==="
+repo="$(make_temp_repo)"
+run_discover "$repo" $'uv.lock\npoetry.lock\nPipfile.lock\nweb/package-lock.json\nweb/yarn.lock\npnpm-lock.yaml\nbun.lockb\nCargo.lock\ngo.sum\nGemfile.lock\ncomposer.lock\nflake.lock\ninfra/.terraform.lock.hcl\napp.min.css\napp.js.map\nsub/.beads/x.jsonl\nnotuv.lock\nsrc/go.sumx\nnotes.beads/x.md\nfoomap\nappxmin.js\nkeep.py' tg1b
+assert_jq "all 16 generated paths excluded" "$tg1b" '.configuration.excluded_files | length == 16'
+assert_jq "a name that only ends like one is kept" "$tg1b" '[.agents[0].changed_files[]] | sort == ["appxmin.js", "foomap", "keep.py", "notes.beads/x.md", "notuv.lock", "src/go.sumx"]'
+rm -rf "$repo"
+
+echo
 echo "=== Test G2: a diff of only generated files spawns nobody ==="
 repo="$(make_temp_repo)"
 run_discover "$repo" $'uv.lock\n.beads/issues.jsonl' tg2

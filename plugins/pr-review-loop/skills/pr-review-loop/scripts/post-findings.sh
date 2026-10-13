@@ -20,6 +20,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/_pace.sh"
 
 PR="${1:?Usage: post-findings.sh <pr-number|local> [--local|--check]}"
 MODE="${2:-post}"
+case "$MODE" in
+    post|--local|--check) ;;
+    *) echo "Error: unknown mode '$MODE' (expected --local or --check)" >&2; exit 1 ;;
+esac
 
 STORE="$(git rev-parse --absolute-git-dir)/pr-review-loop/findings-$PR.jsonl"
 
@@ -78,7 +82,6 @@ if [[ "$MODE" == "--local" ]]; then
     exit 0
 fi
 
-[[ "$MODE" == "post" ]] || { echo "Error: unknown mode '$MODE'" >&2; exit 1; }
 
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
     echo "Error: Could not determine repository. Run from within a git repository." >&2
@@ -98,8 +101,11 @@ if RESULT=$(gh api --method POST "repos/$REPO/pulls/$PR/reviews" --input - <<< "
     RID=$(jq -r '.id' <<< "$RESULT")
     archive
     echo "Posted review $RID: $FINDINGS finding(s) in $COUNT thread(s)."
-    gh api --paginate "repos/$REPO/pulls/$PR/reviews/$RID/comments" \
-        --jq '.[] | "\(.id) \(.path):\(.line // .original_line) \(.body | split("\n")[0])"'
+    # The per-review comments endpoint carries no line numbers; the PR's does.
+    # The post succeeded; a listing failure must not report it as failed.
+    gh api --paginate "repos/$REPO/pulls/$PR/comments" \
+        --jq ".[] | select(.pull_request_review_id == $RID)"' | "\(.id) \(.path):\(.line // .original_line) \(.body | split("\n")[0])"' \
+        || echo "Warning: review $RID is posted, but its comment ids could not be listed; read them with get-agent-comments.sh" >&2
     exit 0
 fi
 
