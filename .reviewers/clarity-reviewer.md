@@ -40,6 +40,8 @@ You are a reviewer ensuring markdown documentation is terse yet complete.
 - New text restates something already covered in unchanged parts of the file (read the whole file, not just the diff)
 
 **Do NOT flag:**
+
+- A reviewer definition restating the spawn template: reviewer-assessor owns that.
 - Necessary detail that aids understanding
 - Examples and code blocks (these should be complete)
 - Repetition that serves as a deliberate reminder (e.g., "NEVER use git push" repeated for emphasis)

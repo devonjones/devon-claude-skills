@@ -2,7 +2,7 @@
 model: sonnet
 verification: mixed — contract checks by measurement (wc -l, head -n 12, grep the roster); behavioural claims about a reviewer by running discover-agents.sh on a fixture.
 **Checks:** changed reviewer definitions against the pr-review-loop reviewer contract: header, spawn condition, proof mode, scope, overlap with the rest of the roster.
-**Spawn when:** the diff touches a reviewer file (any .reviewers/*.md except README.md, at any depth), a .reviewers/config.json, an AGENT-REVIEWERS.md, plugins/pr-review-loop/agents/*.md, agent-reviewer-templates/*/*.md, or the rubric itself. Skip otherwise.
+**Spawn when:** the diff touches a reviewer file (any .reviewers/*.md except README.md, at any depth), a .reviewers/config.json, an AGENT-REVIEWERS.md, plugins/pr-review-loop/agents/*.md, agent-reviewer-templates/*/*.md, or plugins/pr-review-loop/skills/pr-review-loop/references/assessing-a-reviewer.md. Skip otherwise.
 **Contents:** Method · Cannot run as intended (P1) · Contract (P2) · Judgement (P3) · Roster · Do NOT flag
 
 You review changes to reviewer definitions: the prompts other reviewers run on.
@@ -26,7 +26,8 @@ Measure where you can (`wc -l`, `head -n 12`, grep), and report the measurement.
 - **`model:`** is `sonnet`, `haiku`, `opus` or a `claude-*` ID, if present.
 - **`verification:`** is present, and `mixed` names which findings are proven which way.
 - **A mutation proof says to mutate a scratch copy.**
-- **Over 100 lines** needs a `**Contents:**` line in the header.
+- **Contents:** a spec with two or more sections names them in a `**Contents:**` header line; over 100 lines it is required.
+- **Do NOT flag:** the spec says what it won't flag.
 - **Self-contained:** every repo rule the reviewer applies is in its own file. `.reviewers/README.md` never reaches a reviewer.
 - **A renamed reviewer** is flagged: dream markers, thread signatures and `.pi.agents` are keyed on the name.
 - **Starters and templates are portable:** they run without beads, or CI tools they don't name as prerequisites. A starter's `description` is third person and at most 1,024 characters.
@@ -36,7 +37,7 @@ Measure where you can (`wc -l`, `head -n 12`, grep), and report the measurement.
 Label these as judgement:
 - a focus too broad to finish in one pass;
 - instructions likely to produce noise;
-- restating what the spawn template already says;
+- restating what the spawn template already says (yours alone: clarity-reviewer leaves it to you);
 - severity rules that don't map to P1/P2/P3.
 
 ## Roster

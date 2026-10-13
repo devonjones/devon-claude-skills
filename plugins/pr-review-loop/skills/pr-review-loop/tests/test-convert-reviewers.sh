@@ -83,6 +83,7 @@ check "prints the plan" '[[ "$OUT" == *"write  .reviewers/inline-reviewer.md"* &
 check "tree untouched" '[[ -z "$(git status --porcelain)" ]]'
 check "names the defaults that ran before" '[[ "$OUT" == *"code-reviewer"* && "$OUT" != *"starters: "*"code-simplifier"* ]]'
 check "flags the unindexed spec that will start running" '[[ "$OUT" == *"stray-reviewer.md has no index entry"* ]]'
+check "notes a non-kebab name that still runs" '[[ "$OUT" == *"'"'"'my_pci_auditor'"'"' is not kebab-case"* ]]'
 check "flags the prose H2" '[[ "$OUT" == *"moved '"'"'## Retired reviewers'"'"' to README.md"* ]]'
 
 echo "=== --write converts ==="
@@ -112,6 +113,12 @@ check "same reviewers, same models (minus the prose H2, plus the stray file that
 check "the stray file runs after conversion" '[[ "$(jq -r ".agents[] | select(.name == \"stray-reviewer\") | .name" "$T/after.json")" == stray-reviewer ]]'
 check "spec text survives" '[[ "$(jq -r ".agents[] | select(.name==\"inline-reviewer\") | .instructions" "$T/after.json")" == *"Flags the inline things."*"Other things."* ]]'
 check "TODO headers are reported" 'grep -q "inline-reviewer.md has a TODO in its header" "$T/after.err"'
+
+echo "=== names that are not safe file names stay prose ==="
+printf '# Agents\n\n## ../../escape\n\nx\n\n## src/foo\n\ny\n\n## README\n\nz\n\n## .hidden\n\nw\n' > "$T/unsafe.md"
+rm -rf "$T/u"; mkdir -p "$T/u"; python3 "$CONVERT" template "$T/unsafe.md" --into "$T/u" >/dev/null 2>&1 || true
+check "nothing is written outside .reviewers/" '[[ -z "$(find "$T" -maxdepth 2 -name "escape.md" ; find "$T/u" -path "*src*")" ]]'
+check "only README.md is written, holding all four" '[[ "$(ls "$T/u/.reviewers")" == "README.md" && "$(grep -c "^## " "$T/u/.reviewers/README.md")" == 4 ]]'
 
 echo "=== conversion refuses a duplicate reviewer and keeps an existing config.json ==="
 printf '# Agents\n\n## dup-reviewer\n\none\n\n## dup-reviewer\n\ntwo\n' > "$T/dup.md"

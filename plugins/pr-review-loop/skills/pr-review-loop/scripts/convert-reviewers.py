@@ -27,7 +27,9 @@ from pathlib import Path
 HEADER_LINES = 12
 PLUGIN = Path(__file__).resolve().parents[3]
 STARTERS = PLUGIN / "agents"
-NAME_RE = re.compile(r"^\S+$")  # prose headings have spaces; names don't
+# Any name that's a safe file name: no spaces (prose), no slashes, no leading
+# dot, and not README (that file is the orchestrator's context).
+NAME_RE = re.compile(r"^(?!README$)[A-Za-z0-9_-][A-Za-z0-9_.-]*$")
 KEBAB_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 MODEL_RE = re.compile(r"^\s*model:\s*\"?([A-Za-z0-9._:-]+)\"?\s*$")
 VERIFY_RE = re.compile(r"^\s*verification:")
