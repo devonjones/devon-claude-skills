@@ -68,9 +68,10 @@ pushed head, so an uncommitted change is invisible to them.
 
 The merged default + user agent set comes from pre-loop setup:
 
-- Spawn non-retired agents as parallel Tasks (defaults always spawn unless overridden or disabled per C+E), using the spawning template from `SKILL.md` VERBATIM on the posting steps — each agent POSTS its own findings as line comments via `post-line-comment.sh` and returns a posting manifest (`severity | file:line | title` per finding). Do NOT rewrite the template into "return findings, don't post" (⛔ rule 3: the PR is the system of record; unposted findings break the audit trail AND next round's `get-agent-comments.sh` dedup).
-- Agents with `engine: "pi"` run as parallel **background Bash** jobs instead, one per agent: `scripts/pi-review.sh <PR> <agent-name> <SHA recorded above>` (see "Pi Engine" in `SKILL.md`). Its stdout is the same posting manifest; only exit 0 counts as reported.
+- Spawn the chosen roster (see "Choosing the Roster" in `SKILL.md`) as parallel Tasks, using the spawning template from `SKILL.md` VERBATIM on the recording steps. Each agent RECORDS its findings via `record-finding.sh` and returns a manifest (`severity | file:line | title` per finding). Do NOT rewrite the template into "return findings, don't record" (⛔ rule 3: the PR is the system of record; unrecorded findings never get posted, which breaks the audit trail AND next round's `get-agent-comments.sh` dedup).
+- Agents with `engine: "pi"` run as parallel **background Bash** jobs instead, one per agent: `scripts/pi-review.sh <PR> <agent-name> <SHA recorded above>` (see "Pi Engine" in `SKILL.md`). It still posts its own findings directly (not merged by `post-findings.sh`); its stdout is a posting manifest, and only exit 0 counts as reported.
 - Wait for all agents to return their manifests
+- **Post once:** `scripts/post-findings.sh <PR>`. Same-line findings become one thread, all P3s become one roll-up thread, and everything goes out as a single review. Keep the printed comment ids for F3
 - **For each POSTED finding, run the independent validator** against the posted comment (per "Independent Validator Pipeline" in `SKILL.md`). VALID findings flow to the BATCH POINT below; INVALID are withdrawn ON-THREAD (`reply-to-comment.sh <PR> <id> "Withdrawn — validator refuted: <reason>"`) and excluded from the batch; UNCERTAIN handled per `independent_validator.uncertain_action` (default: annotate the thread). Skip validation for any flagger named in `independent_validator.skip_for`. Skip validation entirely unless `independent_validator.enabled` is explicitly true (validation is OPT-IN; the default is off). Validation never deletes or delays posting — refutations are part of the audit trail.
 
 ## BATCH POINT (required before FIX Phase)
@@ -115,13 +116,19 @@ gh pr comment <PR> --body "## Response to Claude Review
 
 ### F3. Apply + reply to agent comments
 
-- Same fix/wontfix/out-of-scope flow as Gemini (use `reply-to-comment.sh` with the Node ID) — EVERY surviving agent thread gets a reply, exactly like Gemini threads
+- Same fix/wontfix/out-of-scope flow as Gemini (use `reply-to-comment.sh` with the Node ID) — EVERY surviving agent thread gets a reply, exactly like Gemini threads. One reply per merged thread, and one for the P3 roll-up that gives each item's number and disposition
 - If a finding you're fixing has no posted thread (an agent failed to post), post it yourself via `post-line-comment.sh` with that agent's name BEFORE committing — no fix lands without a thread
 - Track per-agent diminishing returns; see "Agent Reviewers" section in `SKILL.md` for retirement logic
 
 ### F4. Commit and push
 
 **Gate**: every finding in this round's fix set corresponds to a posted PR thread (Gemini, bot, or agent) with a reply **that actually landed**. If any fix has no thread, go back to F3 — a commit message is not an audit trail.
+
+First, nothing recorded may be left unposted:
+
+```bash
+scripts/post-findings.sh <PR> --check
+```
 
 Verify each thread rather than trusting the sends, and do it per thread — a count tells you how many replies are missing, never which. A thread is settled only when **you** spoke last and did not sign it: this skill signs every finding and every reopen it posts, and `<you>` is the login your token authenticates as:
 
@@ -231,7 +238,7 @@ gh pr comment <PR> --body "$(cat <<'EOF'
 Round N: posted X findings across Y agents (A withdrawn by validator);
 replied to Z threads (F fixed / W won't-fix / O out-of-scope).
 Reported: <reviewer>=ok(mutation|evidence-query|judgement|mixed|undeclared)|failed(<reason>), per dispatched reviewer. D dispatched / R reported.
-Roster: disabled=<...|none> retired=<...|none> overridden=<...|none>.
+Roster: disabled=<...|none> retired=<...|none> overridden=<...|none> skipped=<name (reason)...|none>.
 Dispatched against <head SHA at dispatch>.
 EOF
 )" || { echo "round report did not post - retry before starting the next round" >&2; exit 2; }

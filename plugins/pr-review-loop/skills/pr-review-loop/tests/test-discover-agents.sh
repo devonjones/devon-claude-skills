@@ -1056,6 +1056,72 @@ assert_jq "a user override of a default keeps its declared model" "$tm" '[.agent
 assert_jq "every remaining shipped default is on sonnet" "$tm" '[.agents[] | select(.kind == "default") | .model] | length > 0 and all(. == "sonnet")'
 rm -rf "$repo"
 
+echo
+echo "=== Test G1: generated files leave review scope ==="
+repo="$(make_temp_repo)"
+run_discover "$repo" $'src/a.py\nuv.lock\nweb/package-lock.json\n.beads/issues.jsonl\ndist/app.min.js' tg1
+assert_exit "exit 0" "$tg1_exit" "0"
+assert_jq "only the hand-written file is in scope" "$tg1" '[.agents[].changed_files[]] | unique == ["src/a.py"]'
+assert_jq "excluded files reported" "$tg1" '.configuration.excluded_files | length == 4'
+assert_jq "dispatched reviewers are not listed as skipped" "$tg1" '.configuration.not_dispatched_no_files == []'
+rm -rf "$repo"
+
+echo
+echo "=== Test G1b: each generated-file pattern, and only at a path boundary ==="
+repo="$(make_temp_repo)"
+run_discover "$repo" $'uv.lock\npoetry.lock\nPipfile.lock\nweb/package-lock.json\nweb/yarn.lock\npnpm-lock.yaml\nbun.lockb\nCargo.lock\ngo.sum\nGemfile.lock\ncomposer.lock\nflake.lock\ninfra/.terraform.lock.hcl\napp.min.css\napp.js.map\nsub/.beads/x.jsonl\nnotuv.lock\nsrc/go.sumx\nnotes.beads/x.md\nfoomap\nappxmin.js\nkeep.py' tg1b
+assert_jq "all 16 generated paths excluded" "$tg1b" '.configuration.excluded_files | length == 16'
+assert_jq "a name that only ends like one is kept" "$tg1b" '[.agents[0].changed_files[]] | sort == ["appxmin.js", "foomap", "keep.py", "notes.beads/x.md", "notuv.lock", "src/go.sumx"]'
+rm -rf "$repo"
+
+echo
+echo "=== Test G2: a diff of only generated files spawns nobody ==="
+repo="$(make_temp_repo)"
+run_discover "$repo" $'uv.lock\n.beads/issues.jsonl' tg2
+assert_exit "exit 0" "$tg2_exit" "0"
+assert_jq "no agents" "$tg2" '.agents == []'
+assert_jq "every default named as not dispatched" "$tg2" '.configuration.not_dispatched_no_files | length == 6'
+rm -rf "$repo"
+
+echo
+echo "=== Test G2b: a Pi-routed reviewer with nothing to read is skipped, not unknown ==="
+repo="$(make_temp_repo)"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+```json
+{"pi": {"model": "deepseek/deepseek-chat", "agents": {"code-reviewer": true}}}
+```
+EOF
+run_discover "$repo" $'uv.lock' tg2b
+assert_exit "exit 0" "$tg2b_exit" "0"
+assert_jq "not reported as an unknown Pi route" "$tg2b" '.configuration.pi_agents_unknown == []'
+assert_jq "reported as not dispatched" "$tg2b" '.configuration.not_dispatched_no_files | index("code-reviewer") != null'
+rm -rf "$repo"
+
+echo
+echo "=== Test G3: a truly empty diff still spawns defaults (bfd) ==="
+repo="$(make_temp_repo)"
+run_discover "$repo" "" tg3
+assert_jq "defaults spawn" "$tg3" '.agents | length == 6'
+rm -rf "$repo"
+
+echo
+echo "=== Test G4: --base diffs <ref>...HEAD with no PR ==="
+repo="$(make_temp_repo)"
+(
+  cd "$repo"
+  git -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+  git branch -q base-ref
+  mkdir -p src; echo x > src/a.py; echo y > uv.lock
+  git add -A; git -c user.email=t@t -c user.name=t commit -q -m change
+)
+tg4=$(cd "$repo" && "$DISCOVER" --base base-ref 2>/dev/null); tg4_exit=$?
+assert_exit "exit 0" "$tg4_exit" "0"
+assert_jq "scope comes from the local diff" "$tg4" '[.agents[].changed_files[]] | unique == ["src/a.py"]'
+assert_jq "lockfile excluded" "$tg4" '.configuration.excluded_files == ["uv.lock"]'
+rm -rf "$repo"
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

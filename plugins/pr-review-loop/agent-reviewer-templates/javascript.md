@@ -426,7 +426,7 @@ Migration-pushing language to scan for:
 - "add types" *in the context of a .js file*
 - "rename .js to .ts"
 
-When such a suggestion is found, **emit the policy comment as a standard agent-reviewer finding** (e.g., via `post-line-comment.sh` against the file/line the original suggestion targeted). The orchestrator's main loop handles linking back to the source thread and dispositioning it as P3 / out-of-scope. This reviewer does not directly reply to or resolve other reviewers' comments.
+When such a suggestion is found, **emit the policy comment as a standard agent-reviewer finding** (via `record-finding.sh` against the file/line the original suggestion targeted). The orchestrator's main loop handles linking back to the source thread and dispositioning it as P3 / out-of-scope. This reviewer does not directly reply to or resolve other reviewers' comments.
 
 **Does NOT flag:**
 

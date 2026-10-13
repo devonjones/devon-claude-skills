@@ -44,17 +44,20 @@ This gives you the full absolute path to the scripts directory.
 
 **If you use `git commit` or `git push` directly, it will be BLOCKED.**
 
-### 3. The PR is the system of record — agents POST their findings
+### 3. The PR is the system of record — agents RECORD, one script POSTS
 
-Every agent finding MUST exist as a line comment on the PR (posted by the
-agent itself via `post-line-comment.sh`) before its fix is committed. A
-finding that lives only in an agent's return text, the orchestrator's
-context, or a commit message does NOT count as reviewed.
+Every agent finding MUST exist on the PR before its fix is committed. Each
+agent records its findings with `record-finding.sh`. The orchestrator then runs
+`post-findings.sh <PR>` once, which merges same-line findings into one thread,
+rolls every P3 into a single thread, and posts the lot as **one review**. A
+finding that lives only in an agent's return text, the orchestrator's context,
+or a commit message does NOT count as reviewed.
 
 | ❌ FORBIDDEN | ✅ USE INSTEAD |
 |--------------|----------------|
-| Instructing agents to "return findings, do not post" | Agents post via `post-line-comment.sh`, then return a manifest of what they posted |
-| Fixing a finding that has no posted comment thread | Post first (the agent's job), then fix, then `reply-to-comment.sh` |
+| Instructing agents to "return findings, do not record" | Agents record via `record-finding.sh`, then return a manifest of what they recorded |
+| Agents posting their own comments with `post-line-comment.sh` | Record, then `post-findings.sh <PR>` posts every finding in one write |
+| Fixing a finding before `post-findings.sh` ran | Post first, then fix, then `reply-to-comment.sh`. F4 checks with `post-findings.sh <PR> --check` |
 | Silently dropping a validator-refuted finding | Reply + resolve its thread as withdrawn (`reply-to-comment.sh <PR> <id> "Withdrawn — validator refuted: <reason>"`) |
 | Substituting a consolidated "review record" PR comment for line comments | Line comments at the flagged lines; consolidated comments are a supplement, never the record |
 
@@ -62,7 +65,8 @@ Why this is load-bearing, not ceremony:
 - **The threads ARE the user's review.** The operator reviews the PR primarily by reading the problems the reviewers surfaced, in situ on the diff. When findings are absorbed into fixes without comments, the operator is left blind — they see a diff churning across rounds with no visible record of what was wrong, what was contested, or what was withdrawn.
 - **Audit trail**: findings, dispositions, and withdrawals stay attached to the lines they're about, with reopen rights on every thread.
 - **Round-to-round dedup**: each agent's step 1 (`get-agent-comments.sh`) checks its own prior comments — if nothing was posted, every later round re-litigates from scratch and reopen/retirement logic silently breaks.
-- **Cost routing**: the posting legwork (file/line anchoring, comment bodies) belongs on the cheap per-agent model, not the expensive main-loop model.
+- **Cost routing**: the legwork (file/line anchoring, finding bodies) belongs on the cheap per-agent model, not the expensive main-loop model. Merging and posting is a script, so it costs the orchestrator nothing.
+- **One write per round**: GitHub's secondary rate limit is per account. Agents posting one comment each put 40 comments into one minute and blocked the whole account. Parallel reviewers also landed four threads on one line.
 - **Merge-readiness integrity**: the end-of-loop summary counts threads; zero posted threads with nonzero findings is a protocol violation that must be reported, not papered over.
 
 A repo's `AGENT-REVIEWERS.md` may define an "Output format" / severity
@@ -124,6 +128,8 @@ The convergence rule (see Convergence) depends on classifying findings as P1/P2 
 The (iii) escape valve exists so the model isn't forced to relabel a genuine "won't fix" as a reclassification: surface the finding to the user, they sign off, it's recorded in the merge-readiness summary.
 
 **Comment, docstring and PR-body findings are P3 by default.** They are P2 only if the text is wrong in a way that would lead a reader to write a bug. Fix them by shortening or deleting, never by adding. A comment says what the code does and why, tersely. It does not tell the story of how the code got this way: no history, past bugs, round numbers or rejected alternatives. That belongs in the commit message, if anywhere. A reasoned decline on wording or style grounds is final, and reviewers don't reopen it.
+
+**A comment earns its place by documenting something surprising or hard-won.** If a flagged comment doesn't, delete it. Don't reword it, defend it, or argue about it on the thread. Rewording invites the next round's finding; deletion ends the churn.
 
 **Classifying `![medium]` (Gemini's most-used label) — use these heuristics:**
 
@@ -296,7 +302,7 @@ that distinction — they are not a flat list of equal-force bullets.
 | Rule | Why |
 |---|---|
 | **A P1 or P2 fix means the round was NOT clean.** | The next round reviews *different code*. A review that passed did not pass on what would actually ship. Push the fix, run another round. (A P3-only fix is the agent's call — see below.) |
-| **Every configured reviewer must have reported.** | A reviewer that never reported looks identical to a reviewer with nothing to say. Never infer it from an empty comment list or a zero exit status — see [`references/reviewer-reported.md`](references/reviewer-reported.md). Consequence is the **A reviewer that will not report** row below. |
+| **Every dispatched reviewer must have reported.** | A reviewer you chose to skip is named in the round report, not counted (see Choosing the Roster). A reviewer that never reported looks identical to a reviewer with nothing to say. Never infer it from an empty comment list or a zero exit status — see [`references/reviewer-reported.md`](references/reviewer-reported.md). Consequence is the **A reviewer that will not report** row below. |
 | **Every disposition must have reached its thread.** | A reply you sent is not a reply that landed; a failed POST can leave a resolved thread carrying a finding and no disposition. F4's gate is what checks this — the query is in [`references/round-workflow.md`](references/round-workflow.md). |
 | **At least one reviewer must have run.** | An empty roster — every bot disabled, every default disabled, every agent retired — produces a vacuously clean round. Zero reviewers is not convergence; it is a configuration problem. Stop and ask. |
 | **A P1/P2 disposed of by anything other than a fix blocks convergence.** | Four reply words decline a finding, and **each one needs a path** — a word with no path is a P1/P2 that leaves by a door nobody is watching. **Out of scope** and **Deferred** are resolved by a ticket that carries the finding: file it with the reviewer's own text and the comment id, reply with the ticket id, and confirm the ticket exists **and is open** (`bd show` exits 0 on a closed ticket, so existence alone lets a shut ticket carry a live P1 — the open-ness check is in [`references/round-workflow.md`](references/round-workflow.md)). Out of scope means the fix lives outside this PR's diff, not that you would rather not do it now. **Won't fix** and **Acknowledged** take the other route: (i) reclassified to P3 with explicit justification per the Priority Mapping rule, (ii) fixed in a later round, or (iii) signed off by the user as an acknowledged carry-forward, recorded in the merge-readiness summary. An in-scope P1/P2 always needs (i), (ii) or (iii). Found by the thread's last reply text, never by its resolve state. Query in [`references/round-workflow.md`](references/round-workflow.md). |
@@ -388,6 +394,56 @@ Per Merge Authority above:
 
 The review loop should **not** override branch protections or bypass repo-defined merge requirements. Repo policy can withhold a merge that convergence would otherwise authorize; it cannot authorize one on its own.
 
+## Choosing the Roster
+
+Reviewers are where this skill finds real bugs. They are also where its cost
+lives, because finding count tracks reviewer count almost linearly. One PR ran
+16 reviewers on a 7-file, 630-line diff and drew 176 comments, so be picky.
+
+- **Generated files are out.** `discover-agents.sh` drops lockfiles, minified
+  bundles, source maps and `.beads/` exports from every reviewer's scope, and
+  does not spawn a reviewer left with nothing to read
+  (`configuration.not_dispatched_no_files`). A diff that is *only* generated
+  output, such as a dependency bump or a `bd init` migration, needs no review
+  loop. Say so and stop.
+- **Spawn a reviewer only when the diff touches its focus.** A concurrency
+  reviewer on a diff with no threads, pools, async or locks costs a full
+  read and finds nothing, or invents something. A test-coverage reviewer on a
+  docs-only change is the same. Read each reviewer's focus against the
+  diff and skip the ones that don't apply.
+- **Name every reviewer you skipped, with a reason,** in the spawning summary
+  and the round report's `Roster:` line. A skipped reviewer is not counted in
+  `D dispatched / R reported`, so naming it is the only record that it was a
+  choice.
+- **Fixes don't re-earn the whole roster.** A later round dispatches the
+  reviewers whose findings drove the fixes, plus any whose focus the fix
+  commit touched.
+- **Never skip a reviewer the repo marks as mandatory**, or one whose
+  focus the diff plainly touches, just to save cost. Picky means relevant, not
+  minimal.
+
+## Local Mode — one review before you push
+
+Run the roster once against your local branch and post nothing to GitHub. Use
+it before opening a PR, or before pushing a large change to one. It is one pass,
+not a loop: review, fix, push.
+
+1. Commit your work. Reviewers read committed code, so an uncommitted change
+   is invisible to them.
+2. `scripts/discover-agents.sh --base <ref>` (usually `main` or
+   `origin/main`). It diffs `<ref>...HEAD`. Choose the roster as above.
+3. Spawn the reviewers with the normal template, with three substitutions:
+   `local` in place of the PR number, skip step 1 (there are no prior
+   comments), and for step 3 read `git diff <ref>...HEAD -- <files>`.
+4. `scripts/post-findings.sh local --local` prints the merged report (same-line
+   findings together, P3s rolled up) and posts nothing.
+5. Apply the fixes using the same judgement as the BATCH POINT: be sceptical,
+   and delete comments rather than reword them. Commit, then push.
+
+There are no threads, so there are no replies, no reopen rights and no
+convergence. A PR review loop afterwards, if you run one, starts from the
+pushed code as usual.
+
 ## Autonomous Loop Workflow
 
 **CRITICAL RULES - NEVER VIOLATE THESE:**
@@ -410,7 +466,7 @@ The review loop should **not** override branch protections or bypass repo-define
    - Emit the stale-pin message (see "Stale Pin Detection" above) with current and pinned versions
    - **Exit non-zero.** Do NOT proceed to round 1.
    - Note: when step 2 just installed a template, `install-template.sh` pinned `defaults_version_checked` to the current plugin version, so the stale-pin check passes by construction.
-4. **Emit the spawning summary.** Once cleared to proceed, log a one-line summary of which agents will run (see "Spawning Summary" above).
+4. **Choose the roster** (see "Choosing the Roster" below), then **emit the spawning summary**: a one-line summary of which agents will run and which you skipped (see "Spawning Summary" above).
 5. **Track --skip-stale-check usage.** If the bypass flag was used, remember to include the bypass note in the final merge-readiness summary.
 
 After setup, proceed to The Loop.
@@ -431,9 +487,10 @@ EACH ROUND — three phases, in order:
   │ C1. Get Gemini comments (--wait only on first check)        │
   │ C2. Check for other bot PR comments (Claude, Cursor, etc.)  │
   │ C3. Run agent reviewers (defaults + AGENT-REVIEWERS.md);    │
-  │     agents POST findings as line comments + return their    │
-  │     manifests; then validate each POSTED finding (refuted   │
-  │     → withdrawn on-thread)                                  │
+  │     agents RECORD findings + return manifests; then         │
+  │     post-findings.sh posts them as ONE review (same-line    │
+  │     merged, P3s rolled up); then validate each posted       │
+  │     finding (refuted → withdrawn on-thread)                 │
   └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -1005,6 +1062,7 @@ Once the stale check passes (or `--skip-stale-check` is set), the loop emits a o
 ```
 Spawning 6 reviewers: 4 defaults + 1 user override (code-reviewer) + 1 user agent (pci-auditor).
 Disabled defaults: pr-test-analyzer.
+Skipped: concurrency-reviewer (no async/threads in diff). Not dispatched (no files in scope): none.
 Validation: enabled (sonnet validators across all flaggers).
 ```
 
@@ -1023,13 +1081,13 @@ Validation: enabled (skip_for: code-simplifier).
 
 **Opt-in (default off).** Enable via `# Configuration .independent_validator.enabled: true`. Field experience showed a low refutable-finding rate (~1 in 30) that the orchestrator catches anyway at the BATCH POINT — it must read every finding to plan fixes, with more context than a blind validator gets — and the false-positive-fix risk is already double-guarded by tests/CI and next-round review of the fix commit. Per-flagger noise telemetry now comes free from thread dispositions (won't-fix / withdrawn rates), since posting is mandatory. Opt in when an agent pack is noisy/unproven, or when you want an independence check on the orchestrator judging criticism of code it authored itself.
 
-When enabled: after every agent reviewer has POSTED its findings as line comments (and returned its posting manifest), the loop runs an independent validator subagent per POSTED finding to verify the issue against the diff context alone, BEFORE any FIX-phase edit. Validation runs against the posted comment — posting is never delayed or gated on validation, because the posted thread IS the audit trail (see ⛔ rule 3).
+When enabled: after every agent reviewer has recorded its findings and returned its manifest, and `post-findings.sh` has posted them, the loop runs an independent validator subagent per POSTED finding to verify the issue against the diff context alone, BEFORE any FIX-phase edit. Validation runs against the posted comment — posting is never delayed or gated on validation, because the posted thread IS the audit trail (see ⛔ rule 3).
 
 This catches the asymmetric-cost failure mode: a false-positive that gets *applied as a fix* introduces a real regression in once-correct code. Validate-after-post preserves that protection — refuted findings are withdrawn before the BATCH POINT, so they never reach a fix — while keeping every finding (including refuted ones) visible on the PR.
 
 > **History note**: an earlier revision of this pipeline ran validation between agent return and posting ("validated BEFORE posted"). That inverted the original agents-post-directly design and, in practice, licensed orchestrators to skip posting entirely — findings got absorbed into fixes with no PR trail. Do not reintroduce validate-before-post.
 
-**When the validator runs.** After C3's agents return their posting manifests, before the BATCH POINT. Per-finding, in parallel via the Task tool.
+**When the validator runs.** After C3's `post-findings.sh`, before the BATCH POINT. Per-finding, in parallel via the Task tool.
 
 **What the validator receives.**
 - The posted finding (severity, location, issue body — as posted on the thread)
@@ -1431,6 +1489,18 @@ Task tool:
     — a control that has not been shown to work proves nothing by staying
     silent.
 
+    **Generated files are not yours to review.** Lockfiles, minified
+    bundles, source maps and `.beads/` exports are already dropped from
+    your file list; don't go looking at them.
+
+    **Code comments:** a comment earns its place by documenting something
+    surprising or hard-won. Flag a comment that doesn't for deletion, never
+    for rewording, and always as P3. Flag comments that tell the story of how
+    the code got here (history, past bugs, rejected alternatives) the same way.
+
+    **Keep your finding terse:** the defect, the proof, the fix. No
+    preamble, no restating the code.
+
     **Never modify the working tree.** You review; you do not revert, stage, or
     fix. If you find the tree dirty or otherwise inconsistent, report it — do not
     correct it. Touching live state during a round is how a reviewer becomes a
@@ -1463,23 +1533,22 @@ Task tool:
        gh pr diff <PR> -- <file1> <file2> ...
        ```
 
-    4. **POST every new finding** as a line comment (only issues not already raised, only files in your scope):
+    4. **RECORD every new finding** (only issues not already raised, only files in your scope):
        ```bash
-       scripts/post-line-comment.sh <PR> <file> <line> <agent-name> "Issue description and suggestion"
+       scripts/record-finding.sh <PR> <file> <line> <agent-name> <P1|P2|P3> "Issue description and suggestion"
        ```
-       The script automatically adds `<!-- Agent: <agent-name> -->` signature.
+       Do not post to GitHub yourself. The orchestrator posts every
+       reviewer's findings in one review, merging findings on the same line
+       and rolling P3s into one thread. Your `<!-- Agent: <agent-name> -->`
+       signature is added for you, and is what your step 1 finds next round.
 
-       POSTING IS MANDATORY, NOT OPTIONAL. A finding you only describe in
-       your return text does not exist: the PR thread is the audit trail,
-       the user's reopen surface, and what your own step 1 checks next
-       round. Do NOT hold findings back for the orchestrator to post,
-       validate, or triage — an independent validator audits your POSTED
-       comments afterward, and a refuted finding is withdrawn on-thread
-       (that's expected and fine; an unposted finding is a protocol
-       violation).
+       RECORDING IS MANDATORY, NOT OPTIONAL. A finding you only describe in
+       your return text does not exist: it never reaches the PR thread, which
+       is the audit trail, the user's reopen surface, and what your own step 1
+       checks next round.
 
-    5. **Return a posting manifest** - Do NOT fix anything. Your job is review only.
-       Your final message is a manifest of what you posted, one line per finding:
+    5. **Return a manifest** - Do NOT fix anything. Your job is review only.
+       Your final message is a manifest of what you recorded, one line per finding:
        `<severity> | <file>:<line> | <one-line title>` — nothing else. The
        orchestrator uses it to dispatch validators and track your round.
 
@@ -1491,7 +1560,15 @@ Task tool:
     Available scripts: See pr-review-loop skill documentation for full script reference.
 ```
 
-**The orchestrator must never rewrite step 4/5 into "return your findings to me".** Batching, validation, and dedup all happen AFTER posting (see ⛔ rule 3 and the Independent Validator Pipeline). If you catch yourself about to spawn an agent with "do not post — return findings", stop: that variant destroys the audit trail and breaks every later round's `get-agent-comments.sh` dedup.
+**The orchestrator must never rewrite step 4/5 into "return your findings to me".** Findings go through `record-finding.sh` so that `post-findings.sh` posts every one of them; merging is the script's job, not the orchestrator's judgement (see ⛔ rule 3). If you catch yourself about to spawn an agent with "do not record — return findings", stop: that variant destroys the audit trail and breaks every later round's `get-agent-comments.sh` dedup.
+
+**After the last manifest, post once:**
+
+```bash
+scripts/post-findings.sh <PR>
+```
+
+It prints one `<comment-id> <file>:<line> <header>` line per thread. Those ids are what F3 replies to. If GitHub rejects the review, the script posts thread by thread, and any thread that still fails goes back into the store. In that case, fix the anchor (usually a line outside the diff) and re-run until `post-findings.sh <PR> --check` is clean.
 
 **Spawn all agents in parallel** - use multiple Task tool calls in a single message.
 
@@ -1547,18 +1624,21 @@ the same as for any agent.
 
 Agent reviewers run as C3 — the last step of the COLLECT phase, after C1 (Gemini) and C2 (other bots). Within C3, the individual agent reviewers spawn in parallel. All COLLECT-phase findings — Gemini + other bots + agents — flow into the BATCH POINT before any FIX-phase action.
 
-1. **After agent Tasks return their posting manifests** (in C3), run the validator pass against the POSTED threads (withdrawing refuted ones on-thread), then the surviving findings join the C1 + C2 findings at the BATCH POINT. Identify cross-source patterns and plan sweeps before staging any edit.
+1. **After agent Tasks return their manifests** (in C3), run `post-findings.sh <PR>`, then the validator pass against the POSTED threads (withdrawing refuted ones on-thread), then the surviving findings join the C1 + C2 findings at the BATCH POINT. Identify cross-source patterns and plan sweeps before staging any edit.
 
 2. **In F3, address agent comment THREADS** using the same flow as Gemini:
    - Fix → reply "Fixed - ..."
    - Won't fix (bad) → reply "Won't fix - ..."
    - Out of scope (good) → create beads ticket if available, reply "Out of scope - tracked in BD-XXX"
 
-   Every thread gets a reply — same discipline as Gemini comments. If an
-   agent finding you're fixing has no thread (the agent failed to post),
-   that's a protocol break: post it yourself via `post-line-comment.sh`
-   with that agent's name BEFORE committing the fix, and tighten the
-   agent's prompt next round.
+   Every thread gets a reply — same discipline as Gemini comments. A
+   merged thread gets one reply covering every flagger on it. The **P3
+   roll-up** also gets one reply: lead with the disposition that covers most
+   items, then give each item's number and its disposition (`Fixed - 1, 3
+   deleted. Won't fix - 2: <reason>.`). If an agent finding you're fixing has
+   no thread (the agent failed to record it), that's a protocol break: post it
+   yourself via `post-line-comment.sh` with that agent's name BEFORE
+   committing the fix, and tighten the agent's prompt next round.
 
    **Emit a dream marker for each finding+disposition** (see "Dream Markers"
    below) — this is the durable, unbiased telemetry that survives even when a
@@ -1701,12 +1781,14 @@ When detected, the script suggests:
 | `check-gemini-quota.sh <PR>` | Check if Gemini is rate-limited |
 | `bot-enabled.sh <gemini\|cursor>` | Is this bot on for the repo? Exit 0 = enabled, 1 = explicitly disabled, 2 = undetermined (warns on stderr; callers must treat as enabled, never as the user's choice) |
 | `resolve-comment.sh <node-id> [reason]` | Manually resolve a thread |
-| `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post line comment with agent signature |
+| `record-finding.sh <PR\|local> <file> <line> <agent> <P1\|P2\|P3> "msg"` | Agents: record a finding for this round (no GitHub write) |
+| `post-findings.sh <PR> [--local\|--check]` | Post the round's findings as one review (same-line merged, P3s rolled up); `--local` prints instead; `--check` fails while any are unposted |
+| `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post one line comment with agent signature (orchestrator fallback only) |
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |
 | `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |
 | `pi-review.sh <PR> <agent> <dispatch-sha>` | Run a `pi`-engine agent once in Docker and post its findings. Prints the manifest; only exit 0 is reported. See "Pi Engine" |
 | `emit-dream-marker.sh <kind> key=value ...` | Emit a dream marker (reviewer telemetry) — best-effort, never blocks. See "Dream Markers" |
-| `discover-agents.sh <PR>` | Discover + merge agent reviewers (defaults + user agents per C+E); emits `configuration` block with `stale_pin` and (when no AGENT-REVIEWERS.md exists) the `language_detection` block driving the Language Template Offer |
+| `discover-agents.sh <PR> \| --base <ref>` | Discover + merge agent reviewers; drops generated files from scope and skips reviewers left with nothing (`configuration.excluded_files`, `not_dispatched_no_files`); `--base` diffs `<ref>...HEAD` for local mode. (defaults + user agents per C+E); emits `configuration` block with `stale_pin` and (when no AGENT-REVIEWERS.md exists) the `language_detection` block driving the Language Template Offer |
 | `detect-language.sh [--repo-root <path>]` | Scan repo for language manifests (go.mod, pyproject.toml, etc.); emits `[{language, subtree, manifest}, ...]`. Deterministic; called by discover-agents.sh |
 | `install-template.sh [--repo-root <path>] <lang>:<subtree> [...]` | Install language template(s) at the given subtrees + merged # Configuration at root. Transactional; refuses existing AGENT-REVIEWERS.md. Bumps `defaults_version_checked` to current plugin version |
 | `_load_defaults.sh` | Internal helper: load native default subagents from `plugins/pr-review-loop/agents/` |
@@ -1721,6 +1803,8 @@ Bash(scripts/reply-to-comment.sh:*)
 Bash(scripts/trigger-review.sh:*)
 Bash(scripts/check-ci.sh:*)
 Bash(scripts/post-line-comment.sh:*)
+Bash(scripts/record-finding.sh:*)
+Bash(scripts/post-findings.sh:*)
 Bash(scripts/get-agent-comments.sh:*)
 Bash(scripts/reopen-comment.sh:*)
 Bash(scripts/discover-agents.sh:*)

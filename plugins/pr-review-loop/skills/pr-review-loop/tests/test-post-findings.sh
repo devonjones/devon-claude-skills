@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# record-finding.sh + post-findings.sh against a fake `gh` that records what is sent.
+#
+# Usage: tests/test-post-findings.sh
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RECORD="$SCRIPT_DIR/../scripts/record-finding.sh"
+POST="$SCRIPT_DIR/../scripts/post-findings.sh"
+T="$(mktemp -d)"; trap 'rm -rf -- "$T"' EXIT
+PASSED=0; FAILED=0
+ok(){ PASSED=$((PASSED+1)); echo "  PASS: $1"; }
+bad(){ FAILED=$((FAILED+1)); echo "  FAIL: $1"; }
+check(){ if eval "$2"; then ok "$1"; else bad "$1"; fi; }
+
+mkdir -p "$T/bin"
+cat > "$T/bin/gh" <<'GH'
+#!/usr/bin/env bash
+case "$*" in
+  "repo view"*) echo "o/r" ;;
+  "pr view"*)   echo "abc123" ;;
+  *"--method POST"*/reviews*)
+      cat > "$T/review.json"
+      [[ -n "${FAKE_REVIEW_FAIL:-}" ]] && { echo '{"message":"Unprocessable Entity"}'; exit 1; }
+      [[ -n "${FAKE_STDERR:-}" ]] && echo "A new release of gh is available" >&2
+      echo '{"id":7}' ;;
+  *"--method POST"*/comments*)
+      body=$(cat); jq -c . <<< "$body" >> "$T/comments.jsonl"
+      [[ -n "${FAKE_FAIL_PATH:-}" && "$(jq -r .path <<< "$body")" == "$FAKE_FAIL_PATH" ]] && { echo '{"message":"line not in diff"}'; exit 1; }
+      echo '{"id":9}' ;;
+  *pulls/42/comments*--jq*)
+      [[ -n "${FAKE_LIST_FAIL:-}" ]] && { echo "HTTP 502" >&2; exit 1; }
+      # Run the caller's real --jq over a listing that mixes reviews and line fields.
+      while [[ $# -gt 0 && "$1" != --jq ]]; do shift; done
+      jq -r "$2" <<'JSON'
+[{"id": 101, "pull_request_review_id": 7, "path": "a.py", "line": 10, "original_line": 10, "body": "header one\nbody"},
+ {"id": 102, "pull_request_review_id": 7, "path": "b.py", "line": null, "original_line": 5, "body": "header two"},
+ {"id": 900, "pull_request_review_id": 6, "path": "z.py", "line": 1, "original_line": 1, "body": "another review"}]
+JSON
+      ;;
+  *) echo '{}' ;;
+esac
+GH
+chmod +x "$T/bin/gh"
+
+repo(){ rm -rf "$T/r" "$T"/review.json "$T"/comments.jsonl; git init -q "$T/r"; }
+rec(){ (cd "$T/r" && bash "$RECORD" "$@" >/dev/null); }
+seed(){ local pr="${1:-42}"
+  rec $pr a.py 10 error-handling-reviewer P2 "swallows the exit code"
+  rec $pr a.py 10 concurrency-reviewer P1 "races the writer"
+  rec $pr b.py 5 test-coverage-reviewer P1 "no test pins this"
+  rec $pr c.py 1 clarity-reviewer P3 "comment narrates history; delete it"
+  rec $pr d.py 2 dead-code-reviewer P3 "unused import"
+}
+run(){ set +e; OUT=$(cd "$T/r" && PATH="$T/bin:$PATH" T="$T" PR_REVIEW_LOOP_PACE_S=0 \
+        PR_REVIEW_LOOP_PACE_DIR="$T/pace" bash "$POST" "$@" 2>&1); RC=$?; set -e; }
+
+echo "=== bad severity is refused ==="
+repo; set +e; (cd "$T/r" && bash "$RECORD" 42 a.py 1 x HIGH "y" >/dev/null 2>&1); rc=$?; set -e
+check "non-P severity exits non-zero" '[[ $rc -ne 0 ]]'
+
+echo "=== a mistyped mode is an error, not a clean gate ==="
+repo; set +e; (cd "$T/r" && PATH="$T/bin:$PATH" bash "$POST" 42 --chek >/dev/null 2>&1); rc=$?; set -e
+check "unknown mode exits non-zero even with an empty store" '[[ $rc -ne 0 ]]'
+
+echo "=== bad line and no repo are refused ==="
+set +e; (cd "$T/r" && bash "$RECORD" 42 a.py abc x P1 "y" >/dev/null 2>&1); rc=$?; set -e
+check "non-numeric line exits non-zero" '[[ $rc -ne 0 ]]'
+mkdir -p "$T/norepo"; set +e; (cd "$T/norepo" && GIT_CEILING_DIRECTORIES="$T" bash "$RECORD" 42 a.py 1 x P1 "y" >/dev/null 2>&1); rc=$?; set -e
+check "outside a git repo exits non-zero" '[[ $rc -ne 0 ]]'
+check "and writes nothing" '[[ ! -e "$T/norepo/pr-review-loop" ]]'
+
+echo "=== local mode merges and posts nothing ==="
+repo; seed local; run local --local
+check "5 findings collapse to 3 threads" '[[ "$OUT" == *"5 finding(s) in 3 thread(s)"* ]]'
+check "same-line findings share a thread, P1 first" \
+  '[[ "$(grep -A3 "=== a.py:10 ===" <<< "$OUT" | sed -n 2p)" == *"concurrency-reviewer"*"P1"* ]]'
+check "signatures are stripped from the local report" '[[ "$OUT" != *"<!-- Agent:"* ]]'
+check "no GitHub write" '[[ ! -e "$T/review.json" && ! -e "$T/comments.jsonl" ]]'
+run local --check; check "store consumed" '[[ $RC -eq 0 ]]'
+
+echo "=== one review carries every thread ==="
+repo; seed; run 42 --check; check "--check fails while findings are unposted" '[[ $RC -eq 1 ]]'
+run 42
+check "posts exit 0" '[[ $RC -eq 0 ]]'
+check "the manifest gives each thread its line" '[[ "$OUT" == *"101 a.py:10 header one"* ]]'
+check "an outdated thread falls back to its original line" '[[ "$OUT" == *"102 b.py:5 header two"* ]]'
+check "only this review's comments are listed" '[[ "$OUT" != *"900"* ]]'
+repo; seed; FAKE_LIST_FAIL=1 run 42
+check "a failed listing after a successful post still exits 0" '[[ $RC -eq 0 ]]'
+check "and says the review is posted" '[[ "$OUT" == *"review 7 is posted"* ]]'
+run 42 --check; check "the posted findings stay archived" '[[ $RC -eq 0 ]]'
+check "one review with 3 comments" '[[ "$(jq ".comments | length" "$T/review.json")" == 3 ]]'
+check "merged thread is signed by both flaggers" \
+  '[[ "$(jq -r ".comments[] | select(.path==\"a.py\") | .body" "$T/review.json" | grep -c "<!-- Agent: ")" == 2 ]]'
+check "merged thread starts with the skill header (F4 gate)" \
+  '[[ "$(jq -r ".comments[0].body" "$T/review.json")" == "🤖 **Claude Code** ("* ]]'
+check "P3 roll-up names both P3 flaggers" \
+  '[[ "$(jq -r ".comments[] | select(.body | contains(\"P3 roll-up\")) | .body" "$T/review.json" | grep -c "<!-- Agent: ")" == 2 ]]'
+check "review is pinned to the PR head" '[[ "$(jq -r .commit_id "$T/review.json")" == abc123 ]]'
+check "no per-comment POSTs when the review lands" '[[ ! -e "$T/comments.jsonl" ]]'
+run 42 --check; check "store consumed after posting" '[[ $RC -eq 0 ]]'
+
+echo "=== previewing a real PR keeps its findings ==="
+repo; seed; run 42 --local
+run 42 --check; check "--check still fails after a preview" '[[ $RC -eq 1 ]]'
+
+echo "=== a posted review with gh noise on stderr is still posted ==="
+repo; seed; FAKE_STDERR=1 run 42
+check "exits 0" '[[ $RC -eq 0 ]]'
+run 42 --check; check "store consumed (no double post on rerun)" '[[ $RC -eq 0 ]]'
+
+echo "=== a rejected review whose threads all post clears the store ==="
+repo; seed; FAKE_REVIEW_FAIL=1 run 42
+check "exits 0" '[[ $RC -eq 0 ]]'
+run 42 --check; check "store consumed" '[[ $RC -eq 0 ]]'
+
+echo "=== a failed P3 roll-up puts every P3 back ==="
+repo; seed; FAKE_REVIEW_FAIL=1 FAKE_FAIL_PATH=c.py run 42
+check "exits non-zero" '[[ $RC -ne 0 ]]'
+check "both P3 findings are back in the store" \
+  '[[ "$(jq -r .severity "$T/r/.git/pr-review-loop/findings-42.jsonl" | sort | uniq -c | tr -s " ")" == " 2 P3" ]]'
+
+echo "=== a rejected review falls back, and failures stay recorded ==="
+repo; seed; FAKE_REVIEW_FAIL=1 FAKE_FAIL_PATH=b.py run 42
+check "exits non-zero when a thread fails" '[[ $RC -ne 0 ]]'
+check "every thread was attempted on its own" '[[ "$(wc -l < "$T/comments.jsonl")" == 3 ]]'
+run 42 --check; check "--check still fails" '[[ $RC -eq 1 ]]'
+check "only the failed finding is back in the store" \
+  '[[ "$(cat "$T/r/.git/pr-review-loop/findings-42.jsonl" | jq -r .file)" == b.py ]]'
+
+echo ""; echo "Passed: $PASSED  Failed: $FAILED"; [[ "$FAILED" -eq 0 ]]
