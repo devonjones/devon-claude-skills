@@ -1501,7 +1501,7 @@ Turn it on in `# Configuration`:
 - **`all`** (default `false`): route every agent to Pi on `model`.
 - **`model`**: the default chain. Required when `all` or any `true` entry routes an agent to Pi.
 - **`agents`**: per agent. `true` uses `model`, a chain routes the agent on that chain, and `false` keeps it on Claude even under `all`. Default agents can be routed this way too, without overriding their prompts.
-- **A chain** is a model (`provider/id`) or an ordered list of them. The script moves to the next model only when the provider fails: quota or credits used up, rate limit, auth or access denied, unreachable. A model that ran and gave no valid report is a strike, not a reason to try another. `"claude"` in a chain means "from here, use the normal Claude Task", and `"claude:sonnet"`, `"claude:haiku"` or `"claude:opus"` names the Task's model. A chain that starts with a Claude entry is just a Claude agent, so `"code-simplifier": "claude:haiku"` downshifts that agent to Haiku. A provider that reports exhausted quota is skipped by every run for 10 minutes (`PI_REVIEW_EXHAUSTED_TTL`, marker in `~/.cache/pr-review-loop/exhausted/<provider>`). Z.ai plan pacing reorders and skips too: a chain tries its `zai/*` models first while the weekly window has more quota left than time left, and skips them once any window reaches `PI_REVIEW_PLAN_CAP` percent (default 90).
+- **A chain** is a model (`provider/id`) or an ordered list of them. The script moves to the next model only when the provider fails: quota or credits used up, rate limit, auth or access denied, unreachable. A model that ran and gave no valid report is a strike, not a reason to try another. `"claude"` in a chain means "from here, use the normal Claude Task", and `"claude:sonnet"`, `"claude:haiku"` or `"claude:opus"` names the Task's model. A chain that starts with a Claude entry is just a Claude agent, so `"code-simplifier": "claude:haiku"` downshifts that agent to Haiku. A provider that reports exhausted quota is skipped by every run for 10 minutes (`PI_REVIEW_EXHAUSTED_TTL`, marker in `~/.cache/pr-review-loop/exhausted/<provider>`). Z.ai plan pacing reorders and skips too: a chain tries its `zai/*` models first while the weekly window has more quota left than time left, and skips them once any window reaches `PI_REVIEW_PLAN_CAP` percent (default 90). Pacing reads the Z.ai quota API with `curl` and `ZAI_API_KEY` from your environment; without a reading it is off, and the script says so.
 
 `configuration.pi_agents_unknown` lists `agents` entries that name nothing on the
 roster. Treat it like `disabled_defaults_unknown`.
@@ -1600,7 +1600,7 @@ scripts/eval-reviewer.sh assign                                 # all evaluated 
 - **Judge**: Claude Sonnet (headless `claude -p`, on your subscription, not the API key) matches each model's findings to the originals and calls unmatched ones plausible or not.
 - **Pass**: a failed replay is retried once; the model then fails at most 10% of runs, its severity-weighted catch rate is within 0.10 of the baseline, and its junk rate (declined or implausible findings) is at most 0.10 above the baseline. Without a baseline: catches at least 0.5, junk at most 0.3. Below 8 real findings the result is **inconclusive** and nothing is recommended.
 - **Cost**: measured tokens x price, from `~/.config/pr-review-loop/pi-prices.json` (start from `pi/prices.example.json`). Plan models are priced the same way, at the provider's pay-per-token list price, which is what their quota draw is worth. With no entry, the price the run reported is used (Pi's list price; a Claude replay's API-equivalent cost). Unpriced models rank last.
-- **Ranking**: passing plan models come first, cheapest draw first, then pay-per-token models by cost. Plan quota unused at the end of its period is wasted, so plans rank first and are used up before pay-per-token models.
+- **Ranking**: passing plan models come first, cheapest draw first, then pay-per-token models by cost. Unused plan quota is wasted, so plans rank first.
 - **assign** puts each agent on a passing model whose subscription has the least projected load, follows it with passing models on other subscriptions, and ends with `claude`. Winning Anthropic models become `claude:sonnet` / `claude:haiku`. It prints a block for `# Configuration`; nothing is written until you approve it.
 
 Replays and judgements are cached under `~/.cache/pr-review-loop/eval/`, so an
@@ -1813,11 +1813,11 @@ Bash(scripts/pi-watch.sh:*)
 - `gh` CLI authenticated
 - `jq` - JSON processor for parsing GitHub API responses
   Install with: `apt install jq` (Ubuntu/Debian) or `brew install jq` (macOS)
-- `python3` - `convert-reviewers.py` and `install-template.sh` (standard library only)
+- `python3` - `convert-reviewers.py`, `install-template.sh` and `eval-reviewer.sh` (standard library only)
 - `pre-commit` (optional) - its hooks run on `git commit` once installed with `pre-commit install`
 - Docker and a model provider API key (optional) - only for agents routed to the Pi engine (`# Configuration .pi`).
   `PI_REVIEW_SANDBOX=host` runs your own `pi` instead: `npm install -g @mariozechner/pi-coding-agent` (the image pins the version in `pi/Dockerfile`).
-- `claude` CLI and `python3` (optional) - `eval-reviewer.sh` (judge and grader) and `--replay` with a `claude` entry.
+- `claude` CLI (optional) - `eval-reviewer.sh` (judge and grader) and `--replay` with a `claude` entry.
 - `bd` (beads) (optional) - Issue tracker for capturing out-of-scope suggestions as tickets.
   If not installed, out-of-scope suggestions are handled with "Out of scope for this PR" replies.
   See: https://github.com/steveyegge/beads

@@ -288,7 +288,7 @@ claude_replay() {
     local why
     why="$(jq -r 'select(.is_error == true) | [.api_error_status, .terminal_reason, .result] | map(select(. != null) | tostring) | join(" | ")' \
         "$T/claude.out" 2>/dev/null || true)"
-    if [[ -n "$why" ]] && grep -qiE 'limit|quota|429|5[0-9][0-9]|overloaded|rate|credit|auth|401|403' <<<"$why"; then
+    if [[ -n "$why" ]] && grep -qiE '\b(429|5[0-9]{2}|401|403)\b|rate.?limit|usage limit|quota|overloaded|credit|authenticat' <<<"$why"; then
         echo "Provider failure on $MODEL: $why" >&2
         TRIED+=("$MODEL:provider-error"); return 2
     fi
@@ -405,7 +405,8 @@ for MODEL in "${CHAIN[@]}"; do
     SECS=$((SECONDS - START))
 
     # Pi reports a provider error as stopReason "error" and still exits 0.
-    LAST="$(jq -c 'select(.type == "agent_end") | [.messages[] | select(.role == "assistant")] | last' "$PIOUT" 2>/dev/null | tail -n 1)"
+    # Line by line: a run stopped mid-write leaves a truncated last event.
+    LAST="$(jq -cR 'fromjson? | select(.type == "agent_end") | [.messages[] | select(.role == "assistant")] | last' "$PIOUT" | tail -n 1)"
     ERR="$(jq -r 'select(.stopReason == "error") | .errorMessage // "unknown provider error"' <<<"${LAST:-null}" 2>/dev/null || true)"
     if [[ -n "$ERR" || ( "$PI_RC" -ne 0 && "$PI_RC" -ne 124 && -z "$LAST" ) ]]; then
         ERR="${ERR:-pi exit $PI_RC: $(tail -n 1 "$T/pi.err")}"
@@ -433,10 +434,10 @@ for MODEL in "${CHAIN[@]}"; do
         echo "--- final reply (tail) ---" >&2; tail -n 40 <<<"$TEXT" >&2
         exit 3
     fi
-    USAGE_JSON="$(jq -sc '[.[] | select(.type == "agent_end") | .messages[] | select(.role == "assistant") | .usage]
+    USAGE_JSON="$(jq -cR 'fromjson?' "$PIOUT" | jq -sc '[.[] | select(.type == "agent_end") | .messages[] | select(.role == "assistant") | .usage]
         | {input: (map(.input // 0) | add // 0), output: (map(.output // 0) | add // 0),
            cacheRead: (map(.cacheRead // 0) | add // 0), cacheWrite: (map(.cacheWrite // 0) | add // 0),
-           usd: (map(.cost.total // 0) | add // 0)}' "$PIOUT")"
+           usd: (map(.cost.total // 0) | add // 0)}')"
     break
 done
 if [[ -z "$REPORT" ]]; then

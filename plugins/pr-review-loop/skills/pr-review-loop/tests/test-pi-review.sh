@@ -288,6 +288,24 @@ FAKE_DOCKER_RM_FAIL=1 run pi-agent
 [[ "$RC" -eq 0 ]] && jq -e 'select(.status == "reported")' "$T/dream/markers/pr-review-loop.jsonl" >/dev/null \
     && ok "a failing docker rm in cleanup: still exit 0, marker written" || bad "rc=$RC marker=$(cat "$T/dream/markers/pr-review-loop.jsonl")"
 
+echo "=== a truncated last event is not a setup failure ==="
+rm -rf "$T/cache/exhausted" "$T/cache/quota"
+says zai/glm-5.1 "$(report "$EMPTY")"; printf '{"type":"message_upd' >> "$T/pi/zai_glm-5.1"
+run pi-agent --model zai/glm-5.1
+[[ "$RC" -eq 0 ]] && ok "a closed report is still read past a truncated last line" || bad "rc=$RC err=$(tail -2 "$T/err")"
+says zai/glm-5.1 "no report, just prose"; printf '{"type":"message_upd' >> "$T/pi/zai_glm-5.1"
+run pi-agent --model zai/glm-5.1
+[[ "$RC" -eq 3 ]] && ok "no report plus a truncated line -> exit 3, not 1" || bad "rc=$RC err=$(tail -2 "$T/err")"
+
+echo "=== which provider errors mark quota exhausted ==="
+for e in "429 Too Many Requests" "rate limit reached for requests" "Insufficient balance" "billing hard limit reached" "out of credits"; do
+    rm -rf "$T/cache/exhausted"; fails zai/glm-5.1 "$e"; run pi-agent --model zai/glm-5.1
+    [[ -e "$T/cache/exhausted/zai" ]] && ok "marks exhausted: $e" || bad "not marked: $e"
+done
+rm -rf "$T/cache/exhausted"; fails zai/glm-5.1 "400 bad request: invalid tool schema"; run pi-agent --model zai/glm-5.1
+[[ ! -e "$T/cache/exhausted/zai" ]] && ok "a bad request does not" || bad "bad request marked exhausted"
+rm -rf "$T/cache/exhausted"
+
 echo "=== --replay reviews a historical commit with the given model ==="
 says zai/glm-5.1 "$(report "$EMPTY")"
 : > "$T/dream/markers/pr-review-loop.jsonl"
@@ -387,5 +405,10 @@ ROUTE="$(cd "$REPO" && mkdir -p .reviewers \
 rm -rf "$REPO/.reviewers"
 [[ "$ROUTE" == '[{"name":"claude-agent","engine":"pi","pi_models":["qwen-token-plan/qwen3.8-max","claude"]},{"name":"fallback-agent","engine":"claude","pi_models":null},{"name":"pi-agent","engine":"claude","pi_models":null}]' ]] \
     && ok ".pi read from .reviewers/config.json" || bad "routing: $ROUTE"
+ROUTE="$(cd "$REPO" && mkdir -p .reviewers && printf '%s\n' '{"disabled": ["code-reviewer", "silent-failure-hunter", "pr-test-analyzer", "comment-analyzer", "type-design-analyzer", "code-simplifier"], "pi": {"agents": {"claude-agent": "claude-proxy/opus"}}}' > .reviewers/config.json \
+    && PR_REVIEW_LOOP_TEST_CHANGED_FILES=src/a.py bash "$SCRIPT_DIR/../scripts/discover-agents.sh" 0 2>/dev/null \
+    | jq -c '.agents[] | select(.name == "claude-agent") | {engine, pi_models}')"
+[[ "$ROUTE" == '{"engine":"pi","pi_models":["claude-proxy/opus"]}' ]] && ok "a provider named claude-* is Pi, not Claude" || bad "routing: $ROUTE"
+rm -rf "$REPO/.reviewers"
 
 echo ""; echo "Passed: $PASSED  Failed: $FAILED"; [[ "$FAILED" -eq 0 ]]

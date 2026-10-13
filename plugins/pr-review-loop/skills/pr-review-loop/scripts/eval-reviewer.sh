@@ -239,7 +239,7 @@ score() {   # <agent> <models...>: per-model metrics over the replayed commits
             novel_plausible: ([$cands[] | select(.match == null and .plausible)] | length),
             tokens: $tok, usd_per_review: $cost,
             subscription: ($pm.plan // (if ($m | startswith("anthropic/")) then "claude" else ($m | split("/")[0]) end)),
-            billing: (if $pm.plan or ($m | startswith("claude")) then "plan"
+            billing: (if $pm.plan or ($m | test("^claude(:|$)")) then "plan"
                       elif $cost != null then "paid" else "unknown" end)}]' <<<"$rows")"
     done
     printf '%s\n' "$all"

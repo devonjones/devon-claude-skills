@@ -619,7 +619,7 @@ echo "$JQ_INPUT" | jq '
              elif $pi.all == true then $pi.model
              else null end | if type == "string" then [.] else . end) as $pm |
             if $pm == null then . + {engine: "claude"}
-            elif ($pm[0] | startswith("claude")) | not then . + {engine: "pi", pi_models: $pm}
+            elif ($pm[0] | test("^claude(:|$)")) | not then . + {engine: "pi", pi_models: $pm}
             # "claude:haiku" first: a Claude agent, on that model.
             elif $pm[0] | startswith("claude:") then . + {engine: "claude", model: ($pm[0] | ltrimstr("claude:"))}
             else . + {engine: "claude"} end
