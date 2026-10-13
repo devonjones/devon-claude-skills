@@ -1,10 +1,10 @@
 ---
 name: dream-reviewers
 description: |
-  Validate the agent reviewers that gate a project's quality (the pr-review-loop
-  roster). Mine every PR's review threads + the dream-marker stream into
+  Validates the agent reviewers that gate a project's quality (the pr-review-loop
+  roster). Mines every PR's review threads and the dream-marker stream into
   per-reviewer scorecards (acceptance rate, false-positive/won't-fix/reopen
-  rates, taste overrides), then propose roster changes (keep / refine / retire).
+  rates, taste overrides), then proposes roster changes (keep / refine / retire).
 
   Use when: (1) the user asks to validate/audit/tune their PR reviewers or
   AGENT-REVIEWERS.md, (2) deciding whether a reviewer earns its keep or should be
@@ -15,9 +15,8 @@ argument-hint: "(optional) project dir"
 
 # Dream — reviewer validation
 
-The PR review loop is the project's main quality gate. This scores each reviewer
-from real history and proposes roster tuning. Propose-only — never auto-edit the
-quality gate.
+Scores each pr-review-loop reviewer from real history and proposes roster
+tuning. Propose-only — never auto-edit the quality gate.
 
 Read [`references/MARKER-CONTRACT.md`](../../references/MARKER-CONTRACT.md): the
 **marker stream is the authoritative source**. pr-review-loop emits one marker per
@@ -29,7 +28,9 @@ the log harvest are backfill for un-instrumented history.
 ```
 Glob: **/plugins/dream/scripts/dream    OR   **/dream/*/scripts/dream
 ```
-Run from the project dir (or set `DREAM_PROJECT_DIR`). Needs `gh` authed for the
+
+Run from the project dir (or set `DREAM_PROJECT_DIR` to the optional project-dir
+argument). Needs `gh` authed for the
 GitHub backfill.
 
 ## 1. Build the finding sources
@@ -48,8 +49,8 @@ GitHub backfill.
 **Mind the bias.** GitHub holds only *posted* findings (the loop historically
 skipped posting), so `--source github` UNDER-counts. `reviews-coverage` (every
 Agent spawn) is the complete, unbiased firing record — use it to contextualize
-acceptance rates ("fired 353× but only N findings posted"). Outputs land in
-`~/.dream/<slug>/reviews/` (`SCORECARDS-<source>.md`, `COVERAGE.md`).
+acceptance rates. Outputs land in `~/.dream/<slug>/reviews/`
+(`SCORECARDS-<source>.md`, `scorecards-<source>.json`, `COVERAGE.md`, `coverage.json`).
 
 Metrics per reviewer: `acceptance_value` (was it RIGHT — valid/total resolved),
 `acceptance_fixstrict` (did it drive a CHANGE), `false_positive_rate`,
@@ -75,9 +76,7 @@ contradicts a current decision, that is `DECISIONS.md` drift worth flagging
   `disabled` (config) or narrowed scope. Be cautious below ~5 findings (low signal).
 
 Weight `taste(user)` heavily — an operator overruling a reviewer is the strongest
-signal. Keep the detailed scorecards/coverage artifacts in `~/.dream/<slug>/reviews/`
-(`SCORECARDS-<source>.md`, `COVERAGE.md`, `scorecards-<source>.json`) as backing data.
-A bare `scorecards.json` is not written by synth and goes stale — ignore it.
+signal. A bare `scorecards.json` is not written by synth and goes stale — ignore it.
 
 ## 3. Promote
 
@@ -87,7 +86,6 @@ if a run already wrote it today — do NOT append). This shares the `review/pend
 queue the SessionStart hook watches and the `dream` skill writes to; the user
 dismisses a run by moving its file into `review/reviewed/` (or deleting it).
 
-AGENT-REVIEWERS.md edits and `# Configuration` `disabled` changes are
-**propose-only** — this is the quality gate; the user approves every change. Any
-`DECISIONS.md` drift you spot is propose-only too. Product-only observations →
+The user approves every `AGENT-REVIEWERS.md` edit, `# Configuration` `disabled`
+change and `DECISIONS.md` drift fix. Product-only observations →
 the issue tracker, not the roster.
