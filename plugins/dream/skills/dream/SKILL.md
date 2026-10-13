@@ -1,16 +1,14 @@
 ---
 name: dream
 description: |
-  Mine this project's Claude Code session logs into durable improvements —
-  proposed memories, CLAUDE.md rules, docs, skills, and decision-log
-  (DECISIONS.md) entries. Async "AI dreaming": distill raw sessions into
-  friction-focused digests, then consolidate across sessions (dedup vs what's
-  already captured, including any project DECISIONS.md, frequency-gated promotion).
-
-  Use when: (1) the user asks to mine/learn-from past sessions, "dream over my
-  logs", or improve project memory/docs from experience; (2) a nightly/periodic
-  self-improvement pass; (3) after a stretch of work, to capture recurring
-  lessons. NOT for reviewer-roster tuning — that's the `dream-reviewers` skill.
+  Mines a project's Claude Code session logs into proposed memories, CLAUDE.md
+  rules, docs, skills, and DECISIONS.md entries ("AI dreaming"): distills
+  sessions into friction digests, then consolidates across sessions with dedup
+  against existing memory/docs and frequency-gated promotion.
+  Use when the user asks to mine or learn from past sessions, "dream over my
+  logs", improve project memory/docs from experience, or run a nightly or
+  post-work self-improvement pass. Not for reviewer-roster tuning; use
+  `dream-reviewers`.
 argument-hint: "(optional) project dir, or session id to focus on"
 ---
 
@@ -19,8 +17,7 @@ argument-hint: "(optional) project dir, or session id to focus on"
 Turn accumulated session traces into durable project improvements. Two stages:
 cheap deterministic distillation, then an Opus consolidation pass that you run.
 
-Read [`references/DESIGN.md`](../../references/DESIGN.md) for the why; read
-[`references/MARKER-CONTRACT.md`](../../references/MARKER-CONTRACT.md) to also
+Read [`references/MARKER-CONTRACT.md`](../../references/MARKER-CONTRACT.md) to also
 fold in any structured markers producers left for you.
 
 ## 0. Locate the scripts
@@ -62,10 +59,7 @@ consolidation next.
 ## 3. Consolidate (stage 2b — YOU, or a spawned Opus Task)
 
 Local embeddings/lexical clustering are too weak for semantic dedup, so the
-judgment is yours. Read `review/queue.json` + the known corpus
-(`<scripts>/dream` derives it; it's the project's `memory/`, CLAUDE.md/AGENTS.md
-up to the git root, every auto-discovered `DECISIONS.md`, and any
-`$DREAM_EXTRA_CORPUS` path).
+judgment is yours. Read `review/queue.json` + the known corpus (defined in step 0).
 
 **If the project has `DECISIONS.md` file(s), read each one IN FULL before
 consolidating** — start to finish, do NOT skim or sample despite their length.
@@ -99,7 +93,7 @@ the whole log. Then:
    accrete). This is the human review unit: everything from this run in one file
    the user can read in a sitting, then archive whole.
 
-For a large backlog, spawn this as a Task to keep main context lean.
+For a large backlog, spawn this step as a Task to keep main context lean.
 
 ## 4. Promote (copy-on-write gate)
 
@@ -116,20 +110,12 @@ its file into `review/reviewed/` (or deleting it) once actioned — so keep each
 run's proposals in its own file and never write into `review/reviewed/` yourself.
 
 Report what you auto-wrote and what you propose (with a per-bucket count, including
-a `decisions-log` count even when it is 0). Done.
+a `decisions-log` count even when it is 0).
 
 ## Running on a schedule (nightly, unattended)
 
-Run this skill headlessly on a timer: `claude -p "<the dream prompt>"
---permission-mode auto`, fired by your OS scheduler. `--permission-mode auto`
-lets the classifier gate each tool call and fail closed when unattended (the
-pipeline shells out, so stricter modes stall). Because the skill needs local
-session logs + `~/.dream/` state + a reachable ollama (install from
-<https://ollama.com>; see stage 1 for the env vars), it must run on your
-machine, not a cloud scheduler.
-
-See [`references/SCHEDULING.md`](../../references/SCHEDULING.md) for copy-paste
-setups: **Linux** (systemd user timer — survives logout via `loginctl
-enable-linger`, catches missed runs), **macOS** (launchd LaunchAgent), and a
-portable **cron** fallback. Stagger `dream` and `dream-reviewers` a few minutes
-apart; both land per-run files in `review/pending/` for the SessionStart hook.
+Run headlessly on the local machine (it needs local session logs, `~/.dream/`
+state and a reachable ollama, so not a cloud scheduler). See
+[`references/SCHEDULING.md`](../../references/SCHEDULING.md) for the headless
+command (`claude -p ... --permission-mode auto`) and systemd, launchd and cron
+setups.
