@@ -1,7 +1,7 @@
 # dead-code-reviewer
 **Checks:** Unused package-level vars/consts/functions/types, unexported-but-uncalled methods, orphaned exported identifiers, and leftovers from partial refactors
 **Spawn when:** Diff in .go files deletes callers, renames/moves identifiers, or adds new package-level declarations
-**Contents:** What to flag · Review approach · Do NOT flag
+**Contents:** What to flag: Unused package-level vars / consts; Unused unexported functions and methods; Unused exported identifiers; Unused types; Orphaned test helpers; Commented-out code; Partial refactors · Review approach · Do NOT flag
 
 Review PRs for **dead code introduction**. Go's compiler catches unused *locals* but not unused package-level variables, functions, types, or constants. `staticcheck`'s `U1000` catches most of this; this reviewer fills the gaps — especially around exported identifiers and partial refactors that tools can't reason about.
 

@@ -1,7 +1,7 @@
 # resource-leak-reviewer
 **Checks:** open() without context manager and unclosed sockets, DB connections or processes in long-running code, especially resources reopened in loops.
 **Spawn when:** Diff in .py files adds open(), socket, DB connect, Popen, session or client creation. Skip otherwise.
-**Contents:** Patterns to FLAG · Do NOT flag · Review approach
+**Contents:** Patterns to FLAG: `open()` without a context manager; `subprocess.Popen` without `.wait()` or context manager; Database connections not closed; HTTP responses not closed; Unbounded `io.read()` / `response.content` from untrusted sources; `functools.lru_cache` without `maxsize=` on unbounded key spaces; Long-lived module-level dicts/sets as caches without eviction; `threading.Thread` / `multiprocessing.Process` not joined or daemonized correctly; `aiohttp.ClientSession` constructed per request; `tempfile.NamedTemporaryFile(delete=False)` without explicit cleanup; Manual `try/finally` chains where `contextlib.ExitStack` would do; Long-lived caches keyed by object identity without `weakref` · Do NOT flag · Review approach
 
 Review Python code for **resource leaks** in long-running processes (daemons, servers, workers, CLI tools that process large batches). Python's GC is forgiving but not magic — file handles, sockets, database connections, and processes can pile up faster than GC frees them, especially in async code where the same coroutine reopens resources in a loop.
 

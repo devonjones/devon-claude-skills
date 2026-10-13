@@ -1,7 +1,7 @@
 # concurrency-reviewer
 **Checks:** New sync.Mutex/RWMutex, goroutine leaks, channel close/ownership errors, select without ctx.Done, WaitGroup misuse, time.After in loops, missing -race in CI
 **Spawn when:** Diff adds or edits Go code using go statements, chan, select, sync.*, sync/atomic or context; skip otherwise
-**Contents:** Top-priority pattern to FLAG — any new `sync.Mutex` / `sync.RWMutex` · Other patterns to FLAG · Do NOT flag · Required tooling · Review approach
+**Contents:** Top-priority pattern to FLAG — any new `sync.Mutex` / `sync.RWMutex` · Other patterns to FLAG: Goroutine leaks; Missing `context.Context` propagation; Ignoring `ctx.Err()` in long loops; Channel ownership; Channel direction at function boundaries; Buffered channels as a deadlock band-aid; `select` missing `<-ctx.Done()`; `select` with `default` that turns blocking into busy-loop; Shared state without synchronization; `sync.WaitGroup` misuse; Goroutines without panic recovery; `time.After` in a loop; Loop variable capture in goroutines · Tolerated uses of `sync.*` primitives · Do NOT flag · Required tooling · Review approach
 
 Review Go code for **concurrency correctness**: goroutines, channels, `context.Context`, and shared state. Concurrency bugs are the highest-impact class of Go defects — they pass tests, survive code review, and surface in production as hangs, leaks, and data corruption. This reviewer is non-negotiable on any PR that touches `go`, `chan`, `select`, `sync.*`, or `context`.
 

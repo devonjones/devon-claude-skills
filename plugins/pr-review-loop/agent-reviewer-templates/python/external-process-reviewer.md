@@ -1,7 +1,7 @@
 # external-process-reviewer
 **Checks:** subprocess calls missing timeout=, check handling or output validation, unsafe shell=True, and unhandled missing-binary or malformed-output failures.
 **Spawn when:** Diff in .py files imports or calls subprocess, os.system, or os.popen. Skip otherwise.
-**Contents:** Patterns to FLAG · Do NOT flag · Review approach
+**Contents:** Patterns to FLAG: Missing `timeout=`; `shell=True` with any non-literal input; `subprocess.Popen` without context manager; No stderr capture on failure; Missing `cwd=`; No differentiation between failure modes; Unbounded output capture; Binary presence assumed, never checked; Output parsing without validation · Do NOT flag · Review approach
 
 Review Python code that shells out via `subprocess`. CLI failures (timeout, malformed output, missing binary) are routine, and Python's defaults are dangerous.
 

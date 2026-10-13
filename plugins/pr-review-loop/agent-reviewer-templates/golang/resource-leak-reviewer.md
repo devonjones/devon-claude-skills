@@ -1,7 +1,7 @@
 # resource-leak-reviewer
 **Checks:** Leaks in long-running Go services: exec.Command without Wait, unclosed files/bodies/conns, unstopped tickers/timers, unbounded maps/slices and goroutines
 **Spawn when:** Diff changes .go code opening files, HTTP bodies, conns, exec processes, tickers or growing caches; skip short-lived CLI-only code
-**Contents:** Patterns to FLAG · Do NOT flag · Review approach
+**Contents:** Patterns to FLAG: `exec.Command` without `Wait()`; HTTP response bodies not closed; File descriptors not closed; Unbounded memory from untrusted input; `bufio.Scanner` with the default buffer; Slice growth without capacity hints; Long-lived caches without eviction · Do NOT flag · Review approach
 
 Review Go code for **resource leaks** in long-running services (daemons, servers, workers). Leaks are silent and cumulative — a slow fd leak or unbounded memory leak won't crash for days, then kills the process under load. Short-lived CLIs are mostly exempt; this reviewer's primary scope is processes that run for hours or longer.
 

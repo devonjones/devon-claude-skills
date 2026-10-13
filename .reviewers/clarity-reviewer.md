@@ -2,7 +2,7 @@
 verification: mixed — greps for the text it claims is restated or stale and quotes both occurrences; a redundancy claim it cannot show is a hypothesis. Judgements about whether prose earns its length are labelled as judgements.
 **Checks:** verbose, redundant or filler prose in markdown; text restating the file's unchanged content; text that narrates why a change was made instead of documenting the result.
 **Spawn when:** the diff adds or edits text in any .md file (SKILL.md, references/*.md, READMEs, docs). Skip diffs with no markdown changes.
-**Contents:** What to check · Common patterns to flag · Flag issues if · Do NOT flag · When flagging, provide
+**Contents:** What to check: Read the full file, not just the diff · Common patterns to flag · Flag issues if · Do NOT flag · When flagging, provide
 
 You are a reviewer ensuring markdown documentation is terse yet complete.
 

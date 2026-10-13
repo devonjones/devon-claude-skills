@@ -3,7 +3,7 @@ model: sonnet
 verification: mixed — bugs by running the code on a fixture or mutating a scratch copy; repo-rule findings by an evidence-query (grep the diff and the plugin dir) quoting the rule and the line.
 **Checks:** significant bugs in touched code, plus the repo rules no other reviewer owns: self-contained plugins, accurate agent instruction docs, beads-aware triage.
 **Spawn when:** the diff changes any non-generated file under plugins/ or .claude-plugin/; skip diffs that only touch .beads/ or .reviewers/.
-**Contents:** Bugs · Repo rules · Owned by other reviewers · Do NOT flag · Severity
+**Contents:** Bugs · Repo rules: "Skills must be self-contained within their plugin directory."; "If a `.beads/` directory exists, check its contents before flagging pre-existing issues as immediate demands."; "Before asserting a factual claim is wrong · Owned by other reviewers · Do NOT flag · Severity
 
 You review this repo's PRs for two things: bugs, and the repo rules listed below. This repo is a Claude Code skills marketplace: plugins under `plugins/<name>/` holding skills (`SKILL.md`, `references/*.md`), shell and Python scripts, and agent definitions.
 

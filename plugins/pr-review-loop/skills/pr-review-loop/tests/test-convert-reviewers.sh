@@ -148,4 +148,20 @@ check "starter header has no frontmatter" '! grep -q "^color:" "$T/s/.reviewers/
 set +e; python3 "$CONVERT" starters --into "$T/s" silent-failure-hunter >/dev/null 2>&1; rc=$?; set -e
 check "refuses to overwrite a starter" '[[ $rc -ne 0 ]]'
 
+echo "=== every shipped template names all its sections and items ==="
+STALE="$(python3 - "$CONVERT" "$SCRIPT_DIR/../../../agent-reviewer-templates" <<'PYEOF'
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location("c", sys.argv[1]); c = importlib.util.module_from_spec(spec); spec.loader.exec_module(c)
+for f in sorted(pathlib.Path(sys.argv[2]).glob("*/*.md")):
+    if f.name == "README.md":
+        continue
+    lines = f.read_text().split("\n"); end = lines.index("")
+    want = c.contents("\n".join(lines[end + 1:]))
+    have = next((l[len("**Contents:** "):] for l in lines[:end] if l.startswith("**Contents:** ")), None)
+    if want != have:
+        print(f.relative_to(sys.argv[2]))
+PYEOF
+)"
+check "every template's Contents line matches its sections" '[[ -z "$STALE" ]]' || echo "$STALE"
+
 echo ""; echo "Passed: $PASSED  Failed: $FAILED"; [[ "$FAILED" -eq 0 ]]

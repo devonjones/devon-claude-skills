@@ -1,7 +1,7 @@
 # external-process-reviewer
 **Checks:** os/exec calls missing timeout/context, unchecked exit status or stderr, unvalidated output parsing, missing-binary handling, and shell-injection risk
 **Spawn when:** Diff adds or edits .go code importing os/exec or calling exec.Command(Context); skip otherwise
-**Contents:** Patterns to FLAG · Do NOT flag · Review approach
+**Contents:** Patterns to FLAG: Missing timeout / context; Unbounded output capture; Missing `cmd.Dir`; No differentiation between failure modes; Output parsing without validation; No stderr capture on failure; `exec.LookPath` skipped or done at wrong time · Do NOT flag · Review approach
 
 Review Go code that shells out to **external CLIs** (`git`, `gh`, `docker`, `kubectl`, custom binaries). These are routine failure points — network timeouts, malformed output, version skew, missing binaries.
 

@@ -1,7 +1,7 @@
 # concurrency-reviewer
 **Checks:** New threading locks/shared mutable state, races, deadlocks, blocking calls in async code, and process/asyncio misuse; prefers processes and queues over locks.
 **Spawn when:** Diff in .py files imports or uses threading, multiprocessing, asyncio, concurrent.futures, async def, or module-level mutable globals.
-**Contents:** Top-priority pattern to FLAG — any new `threading.Lock` / `threading.RLock` · Other patterns to FLAG · Do NOT flag · Required tooling · Review approach
+**Contents:** Top-priority pattern to FLAG — any new `threading.Lock` / `threading.RLock` · Other patterns to FLAG: CPU-bound work in `ThreadPoolExecutor`; Fire-and-forget `asyncio.create_task` without a reference; `asyncio.gather` swallowing exception context; Blocking `subprocess` calls in `async def`; Missing `asyncio.timeout` / `asyncio.wait_for` on async I/O; Mutable shared global written from multiple threads; Daemon threads that write data; `multiprocessing.Pool` constructed at module level; `queue.Queue.get()` without `timeout=`; Non-pickleable objects passed to `multiprocessing`; Mixing `asyncio` and `threading` without `run_in_executor`; `nest_asyncio`; `asyncio.run()` called from anywhere except the entry point · Tolerated uses of `threading` / sync primitives · Do NOT flag · Required tooling · Review approach
 
 Review Python code for **concurrency correctness**: threads, processes, asyncio, and shared state. Python's concurrency model is messy (GIL, threading-vs-multiprocessing trade-offs, async/await coloring), and the dominant failure mode is silent data corruption from shared mutable state.
 

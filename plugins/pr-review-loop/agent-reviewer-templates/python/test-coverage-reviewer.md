@@ -1,7 +1,7 @@
 # test-coverage-reviewer
 **Checks:** Code touched by the PR lacking test coverage; weak mocking, missing assertions, skips without reason, and tests with no real check.
 **Spawn when:** Diff changes .py production code or test files. Skip docs-only or non-Python diffs.
-**Contents:** Core rule: Code touched by a PR must be covered by tests. Either the coverage already exists, or this PR adds it. · Rules to enforce · Integration tests as coverage — acceptable boundary · Test quality patterns to flag (P2) · Review approach · What to flag · Do NOT allow · Acceptable exceptions (each requires a beads ticket created before merge)
+**Contents:** Core rule: Code touched by a PR must be covered by tests. Either the coverage already exists, or this PR adds it. · Rules to enforce: Coverage required for all touched code; Refactors preserve coverage, not duplicate it; New behavior needs new assertions; Test file naming and structure; Bug fix documentation · Integration tests as coverage — acceptable boundary · Test quality patterns to flag (P2): `mock.patch` at point-of-definition instead of point-of-use; Mocking what you don't own; Over-mocking; `@pytest.mark.skip` without `reason=`; Tests that don't assert anything · Review approach · What to flag · Do NOT allow · Acceptable exceptions (each requires a beads ticket created before merge)
 
 Review code changes to **ensure the code touched by the PR has test coverage**. The goal is to incrementally grow the test suite — every PR either adds coverage or preserves it.
 

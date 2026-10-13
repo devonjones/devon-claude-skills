@@ -1,7 +1,7 @@
 # import-reviewer
 **Checks:** Function-level imports, import-order violations when CI lacks ruff, and other PEP 8 import placement rules ruff does not enforce.
 **Spawn when:** Diff in .py files adds or changes import or from-import lines, including imports inside functions.
-**Contents:** Patterns to FLAG · Review approach
+**Contents:** Patterns to FLAG: Function-level imports; Import order violations; Relative imports past package boundaries · Acceptable function-level imports · Review approach
 
 Review Python imports for **PEP 8 compliance and placement discipline**. Most import-ordering issues are caught by `ruff check --select I`; this reviewer focuses on the structural rules ruff doesn't enforce.
 

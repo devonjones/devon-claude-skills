@@ -1,7 +1,7 @@
 # clarity-reviewer
 **Checks:** Wordy, padded or mis-structured markdown docs, and Python docstrings/comments that are verbose or contradict what the code does.
 **Spawn when:** Diff touches any .md file or adds/changes a docstring or comment in a .py file. Skip diffs with neither.
-**Contents:** Markdown — what to check · Word-level patterns to flag · Structural patterns to flag · Python docstrings — what to flag · Flag content issues if · Do NOT flag · Review approach · When flagging, provide
+**Contents:** Markdown — what to check: Read the full file, not just the diff · Word-level patterns to flag · Structural patterns to flag · Python docstrings — what to flag: Restate-the-signature docstrings; Doc style for public APIs; No docstrings on trivial private functions; WHY vs WHAT in inline comments; Stale comments; Docstring grep-verify — claims must match the code · Flag content issues if · Do NOT flag · Review approach · When flagging, provide
 
 Review markdown documentation AND Python docstrings/comments for terseness, structure, and factual accuracy. Every token costs money and attention — cut the fat, fix the layout, and don't let docstrings lie about what the code does.
 

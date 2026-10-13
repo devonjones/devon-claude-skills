@@ -38,7 +38,10 @@ VERIFY_RE = re.compile(r"^\s*verification:")
 CHECKS_RE = re.compile(r"^\*\*(?:What it checks|Checks):?\*\*:?\s*(.*)$")
 SPAWN_RE = re.compile(r"^\*\*(?:When to spawn|Spawn when):?\*\*:?\s*(.*)$")
 POINTER_RE = re.compile(r"\.reviewers/[\w-]+\.md")
-SECTION_RE = re.compile(r"^(?:#{2,4}\s+(.+?)|\*\*([^*]+?):?\*\*:?)\s*$")
+# A section is a heading, a line that is only bold text, or a bold lead-in
+# whose line ends in a colon. A numbered bold item is an entry under it.
+SECTION_RE = re.compile(r"^(?:#{2,4}\s+(.+?)|\*\*([^*]+?):?\*\*:?|\*\*(.+?):?\*\*.*:)\s*$")
+ITEM_RE = re.compile(r"^\d+\.\s+\*\*([^*]+?)\*\*")
 
 
 def sections(text):
@@ -73,17 +76,26 @@ def take(lines, pattern, limit=5):
 
 
 def contents(body):
-    names, fence = [], False
+    """Sections, each followed by its numbered items: 'A · B: x; y · C'."""
+    secs, fence = [], False
     for line in body.splitlines():
         if line.startswith("```") or line.startswith("~~~"):
             fence = not fence
             continue
-        m = None if fence else SECTION_RE.match(line)
+        if fence:
+            continue
+        m = SECTION_RE.match(line)
         if m:
-            name = (m.group(1) or m.group(2)).strip()
-            if name not in names:
-                names.append(name)
-    return " · ".join(names) if len(names) >= 2 else None
+            name = next(g for g in m.groups() if g).strip().rstrip(":")
+            if name not in [s for s, _ in secs]:
+                secs.append((name, []))
+            continue
+        m = ITEM_RE.match(line)
+        if m and secs:
+            secs[-1][1].append(re.split(r":|\s\(", m.group(1))[0].strip().rstrip("."))
+    if len(secs) + sum(len(i) for _, i in secs) < 2:
+        return None
+    return " · ".join(s + (": " + "; ".join(i) if i else "") for s, i in secs)
 
 
 def render(name, body, summary="", checks=None, spawn=None, model=None):

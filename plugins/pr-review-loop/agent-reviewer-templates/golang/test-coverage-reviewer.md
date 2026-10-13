@@ -1,7 +1,7 @@
 # test-coverage-reviewer
 **Checks:** Touched Go code lacking test coverage: uncovered new/modified functions and branches, tests that cannot fail, and coverage deferred without a beads ticket
 **Spawn when:** Diff modifies or adds non-trivial .go code (functions, branches) or tests; skip pure renames, docs and generated files
-**Contents:** Core rule: Code touched by a PR must be covered by tests. Either the coverage already exists, or this PR adds it. · Rules to enforce · Integration tests as coverage — acceptable boundary · Review approach · What to flag · Do NOT allow · Acceptable exceptions (each requires a beads ticket created before merge)
+**Contents:** Core rule: Code touched by a PR must be covered by tests. Either the coverage already exists, or this PR adds it. · Rules to enforce: Coverage required for all touched code; Refactors preserve coverage, not duplicate it; New behavior needs new assertions; Test file naming and structure; Bug fix documentation · Integration tests as coverage — acceptable boundary · Review approach · What to flag · Do NOT allow · Acceptable exceptions (each requires a beads ticket created before merge)
 
 Review code changes to **ensure the code touched by the PR has test coverage**. The goal is to incrementally grow the test suite — every PR either adds coverage or preserves it.
 

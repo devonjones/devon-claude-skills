@@ -1,7 +1,7 @@
 # logging-reviewer
 **Checks:** Logging discipline: f-string log calls, secrets in logs, wrong levels, CLI noise versus library/service logging rules, print used as logging.
 **Spawn when:** Diff in .py files adds or changes logging calls, print(), logger setup, or CLI entry points.
-**Contents:** Patterns to FLAG — universal (apply in any context) · Patterns to FLAG — CLI entry points only · Patterns to FLAG — library / service only · Do NOT flag · Review approach
+**Contents:** Patterns to FLAG — universal (apply in any context): Sensitive data in log messages; `logger.error(...)` inside an `except` block without `exc_info=True`; `logging.basicConfig()` called from library code; Eager formatting in hot debug paths · Patterns to FLAG — CLI entry points only: Default log level too verbose; No verbosity flag; Verbosity flag that doesn't stack; `print()` for diagnostic output in CLI tools · Patterns to FLAG — library / service only: `print()` in library or service code; Log-level discipline · Do NOT flag · Review approach
 
 Review Python code for **logging discipline**. Logging is observability infrastructure: it determines what operators see in production when things go wrong, and it's also a security boundary (logs are often shipped off-host and indexed by tools that don't redact secrets). The reviewer covers two contexts with different rules:
 

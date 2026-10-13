@@ -1,7 +1,7 @@
 # dead-code-reviewer
 **Checks:** Unused functions, classes, constants, exports, fixtures and params; commented-out code; stale __all__; if False branches; orphaned old names after partial refactors.
 **Spawn when:** Diff in .py files removes call sites, renames or moves symbols, deletes features, or adds module-level definitions or __init__ exports.
-**Contents:** What to flag · Review approach · Do NOT flag
+**Contents:** What to flag: Unused module-level functions, classes, constants; Unused exported names; Unused fixtures in `conftest.py`; Commented-out code; Partial refactors; Stale `__all__` entries; Unused parameters with default values; `if False; `def f() · Review approach · Do NOT flag
 
 Review PRs for **dead code introduction**. Python's runtime has no compile-time check for unused symbols. `vulture` and `ruff` (`F401` unused imports, `F841` unused variables) catch most cases; this reviewer fills the gaps — especially around public APIs, reflection-driven code, and partial refactors.
 
