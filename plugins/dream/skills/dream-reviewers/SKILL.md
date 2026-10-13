@@ -6,8 +6,8 @@ description: |
   per-reviewer scorecards (acceptance rate, false-positive/won't-fix/reopen
   rates, taste overrides), then propose roster changes (keep / refine / retire).
 
-  Use when: (1) the user asks to validate/audit/tune their PR reviewers or
-  AGENT-REVIEWERS.md, (2) deciding whether a reviewer earns its keep or should be
+  Use when: (1) the user asks to validate/audit/tune their PR reviewers
+  (.reviewers/ files or AGENT-REVIEWERS.md), (2) deciding whether a reviewer earns its keep or should be
   retired/refined, (3) a periodic reviewer-health pass. For mining general
   session lessons, use the `dream` skill instead.
 argument-hint: "(optional) project dir"
@@ -59,8 +59,10 @@ the OPERATOR made — only markers carry this).
 ## 2. Propose roster changes (YOU, or a spawned Opus Task)
 
 Read `reviews/scorecards-all.json` + `coverage.json` + the reviewer definitions
-(`AGENT-REVIEWERS.md` at root and in subtrees; the 6 pr-review-loop plugin
-defaults are config-only, not file-editable). If the project has `DECISIONS.md`
+(each `.reviewers/<name>.md`, root and subtrees, judged by its 12-line header
+and spec; in a legacy repo, `AGENT-REVIEWERS.md`, where the 6 pr-review-loop
+defaults are config-only, not file-editable). To score a reviewer's definition
+itself, use pr-review-loop's `references/assessing-a-reviewer.md`. If the project has `DECISIONS.md`
 file(s), read them too: a low-fix reviewer that enforces a *documented invariant*
 (cite the decision) is a **guardian KEEP**, not noise — and if a reviewer's rule
 contradicts a current decision, that is `DECISIONS.md` drift worth flagging
@@ -87,7 +89,8 @@ if a run already wrote it today — do NOT append). This shares the `review/pend
 queue the SessionStart hook watches and the `dream` skill writes to; the user
 dismisses a run by moving its file into `review/reviewed/` (or deleting it).
 
-AGENT-REVIEWERS.md edits and `# Configuration` `disabled` changes are
+Reviewer file edits, deletions (retiring a reviewer), and in a legacy repo
+`AGENT-REVIEWERS.md` edits and `# Configuration` `disabled` changes, are
 **propose-only** — this is the quality gate; the user approves every change. Any
 `DECISIONS.md` drift you spot is propose-only too. Product-only observations →
 the issue tracker, not the roster.
