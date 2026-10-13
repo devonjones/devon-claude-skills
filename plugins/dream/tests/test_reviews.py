@@ -247,6 +247,18 @@ def test_roster_reviewers_reads_headings(tmp_path, monkeypatch):
     assert "Not A Name" not in names  # prose heading, not a reviewer slug
 
 
+def test_roster_reviewers_reads_reviewer_files(tmp_path, monkeypatch):
+    for d in (tmp_path / ".reviewers", tmp_path / "svc" / ".reviewers"):
+        d.mkdir(parents=True)
+    (tmp_path / ".reviewers" / "store-reviewer.md").write_text("# store-reviewer\n", encoding="utf-8")
+    (tmp_path / ".reviewers" / "README.md").write_text("notes\n", encoding="utf-8")
+    (tmp_path / "svc" / ".reviewers" / "svc-reviewer.md").write_text("# svc-reviewer\n", encoding="utf-8")
+    monkeypatch.setattr(reviews.config, "git_root", lambda cwd=None: str(tmp_path))
+    names = reviews.roster_reviewers()
+    assert {"store-reviewer", "svc-reviewer"} <= names
+    assert "README" not in names
+
+
 # --- _canonical_reviewers reads what synth writes ---------------------------
 # synth writes scorecards-<source>.json. A bare scorecards.json is never
 # refreshed, so reading it would silently return stale names.
