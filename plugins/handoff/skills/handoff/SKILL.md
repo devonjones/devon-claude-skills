@@ -16,7 +16,7 @@ argument-hint: "What will the next session focus on? (optional)"
 
 # Handoff
 
-Write a handoff document that captures the **live, transient state** of the current conversation so a fresh agent can resume without re-deriving it. Save the doc to a per-run path under the user's OS temp directory; output the path so the user can hand it to the next agent.
+Write a handoff document that captures the **live, transient state** of the current conversation so a fresh agent can resume without re-deriving it. Save it under the output location below.
 
 ## Output location
 
@@ -24,9 +24,7 @@ Write a handoff document that captures the **live, transient state** of the curr
 $TMPDIR/claude-handoffs/<UTC-timestamp>-<short-topic-slug>.md
 ```
 
-Falls back to `/tmp/claude-handoffs/` if `$TMPDIR` is unset. Create the directory if missing. The timestamp + slug names are collision-free and sort newest-last.
-
-Print the absolute path to the user (the last line of your response). They will paste it into the next session's first message.
+Falls back to `/tmp/claude-handoffs/` if `$TMPDIR` is unset. Create the directory if missing. Use a colon-free UTC timestamp such as `2026-05-21T14-30Z`; names sort newest-last.
 
 ## What goes in the doc
 
@@ -77,7 +75,7 @@ For each artifact the next agent should read:
 - Skill or plugin paths: `~/.claude/plugins/cache/<...>/SKILL.md`
 - External docs: full URLs (don't paraphrase what's at the link)
 
-**Do NOT duplicate content already in any of these.** Quote a line only if the next agent absolutely needs that exact wording to make a decision.
+Quote a line only if the next agent needs that exact wording to make a decision.
 
 ### 5. Suggested skills for the next agent
 
