@@ -2,6 +2,7 @@
 name: code-reviewer
 description: Reviewer that audits PR diffs for CLAUDE.md compliance and significant bugs. Quotes the exact CLAUDE.md rule when flagging violations; uses confidence ≥80 threshold and the touch-it-you-own-it scope rule.
 model: sonnet
+spawn_when: always (any non-generated source change); skip only for docs-only or comment-only diffs.
 color: green
 ---
 

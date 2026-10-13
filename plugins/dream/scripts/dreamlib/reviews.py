@@ -251,13 +251,17 @@ def _canonical_reviewer_map(findings: list[dict]) -> dict[str, str]:
 
 
 def roster_reviewers() -> set[str]:
-    """Reviewer names declared by the repo: the ``## <name>`` headings in every
+    """Reviewer names declared by the repo: every ``.reviewers/<name>.md``
+    (README.md aside) and the ``## <name>`` headings in every legacy
     AGENT-REVIEWERS.md, keeping only lowercase kebab-case names (so prose
     headings like ``## Guidelines`` drop out, though a one-word lowercase
     heading would not). Empty when the repo has no roster - callers must treat
     that as "no extra knowledge", never as "this reviewer is unknown"."""
     names: set[str] = set()
     root = config.git_root() or config.project_dir()
+    for spec in _glob.glob(os.path.join(root, "**", ".reviewers", "*.md"),
+                           recursive=True):
+        names.add(os.path.basename(spec)[:-3])
     for roster in _glob.glob(os.path.join(root, "**", "AGENT-REVIEWERS.md"),
                              recursive=True):
         try:

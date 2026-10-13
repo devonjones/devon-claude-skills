@@ -2,6 +2,7 @@
 name: comment-analyzer
 description: Reviewer that audits code comments for factual accuracy, comment rot, and long-term maintenance value. Use when reviewing PRs that add or modify comments, docstrings, or inline documentation.
 model: sonnet
+spawn_when: diff adds or changes comment/docstring lines (`+` lines starting `//`, `#`, `/*`, `*`, `--`, `"""`, `///`) or removes code that had a nearby comment.
 color: blue
 ---
 

@@ -17,11 +17,15 @@
 #
 # Output JSON shape:
 # {
-#   "agents": [{name, scope, source, instructions, description?, model?, color?, kind, changed_files, engine, pi_model?}, ...],
+#   "agents": [{name, scope, source, instructions, summary?, spec?, bin?, description?, model?, color?, kind, changed_files, engine, pi_model?}, ...],
+#     # A user agent whose spec lives in .reviewers/<name>.md next to the
+#     #   AGENT-REVIEWERS.md that names it: instructions = that file, summary =
+#     #   its H2 body (what it checks, when to spawn it), spec = the file's
+#     #   repo-relative path, bin = .reviewers/bin when that directory exists.
 #     # kind: "default" | "user" | "user-override"
 #     # engine: "claude" | "pi" (from # Configuration .pi); pi_model set only for "pi"
 #     # model: every agent has one - frontmatter for defaults, a `model:` line in
-#     #   the first lines of a user agent's section, else "sonnet". Never absent:
+#     #   the first lines of a user agent's summary or spec, else "sonnet". Never absent:
 #     #   an absent model made the orchestrator spawn on its own (session) model.
 #     # description, color carried only on `default` entries (from frontmatter)
 #   "context": [{section, scope, source, content}, ...],
@@ -142,6 +146,17 @@ SEEN_AGENT_FILES="|"
 _seen() { [[ "$SEEN_AGENT_FILES" == *"|$1|"* ]]; }
 _mark() { SEEN_AGENT_FILES="${SEEN_AGENT_FILES}$1|"; }
 
+# A converted repo (a root .reviewers/ holding at least one reviewer file, and no
+# root AGENT-REVIEWERS.md) runs exactly the reviewer files it has.
+REVIEWERS_LAYOUT=false
+if [[ ! -f "$REPO_ROOT/AGENT-REVIEWERS.md" ]] \
+    && find "$REPO_ROOT/.reviewers" -maxdepth 1 -name '*.md' ! -name README.md 2>/dev/null | grep -q .; then
+    REVIEWERS_LAYOUT=true
+fi
+
+# The root .reviewers/ applies to every diff, empty or all-generated included.
+REVIEWER_DIRS=()
+[[ -d "$REPO_ROOT/.reviewers" ]] && { REVIEWER_DIRS+=("$REPO_ROOT/./.reviewers"); _mark "$REPO_ROOT/./.reviewers"; }
 for dir in "${UNIQUE_DIRS[@]}"; do
     current="$dir"
     while true; do
@@ -149,6 +164,11 @@ for dir in "${UNIQUE_DIRS[@]}"; do
         if [[ -f "$agent_file" ]] && ! _seen "$agent_file"; then
             AGENT_FILES+=("$agent_file")
             _mark "$agent_file"
+        fi
+        reviewer_dir="$REPO_ROOT/$current/.reviewers"
+        if [[ -d "$reviewer_dir" ]] && ! _seen "$reviewer_dir"; then
+            REVIEWER_DIRS+=("$reviewer_dir")
+            _mark "$reviewer_dir"
         fi
 
         # Move up one directory
@@ -272,24 +292,112 @@ if [[ ${#AGENT_FILES[@]} -gt 0 ]]; then
     )
 fi
 
+# A reviewer with a .reviewers/<name>.md beside the index that names it takes
+# that file as its full spec; the H2 body becomes its summary.
+if [[ -n "$ALL_SECTIONS" ]]; then
+    ALL_SECTIONS=$(
+        while IFS= read -r section; do
+            if [[ "$(jq -r .type <<< "$section")" == agent ]]; then
+                name=$(jq -r .name <<< "$section")
+                [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] || echo "Warning: '## $name' under # Agents in $(jq -r .source <<< "$section") is not a reviewer name, but every H2 there is spawned as one; move notes out of # Agents" >&2
+                dir=$(dirname "$(jq -r .source <<< "$section")")
+                [[ "$dir" == "." ]] && dir="" || dir="$dir/"
+                spec="${dir}.reviewers/$name.md"
+                if [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ && -f "$REPO_ROOT/$spec" ]]; then
+                    bin="${dir}.reviewers/bin"
+                    [[ -d "$REPO_ROOT/$bin" ]] || bin=""
+                    section=$(jq -c --rawfile body "$REPO_ROOT/$spec" --arg spec "$spec" --arg bin "$bin" \
+                        '. + {summary: .instructions, instructions: $body, spec: $spec}
+                           + (if $bin == "" then {} else {bin: $bin} end)' <<< "$section")
+                fi
+            fi
+            printf '%s\n' "$section"
+        done <<< "$ALL_SECTIONS"
+    )
+fi
+
+# Every other .reviewers/<name>.md is a reviewer in its own right: the whole
+# file is its spec and its first REVIEWER_HEADER_LINES lines are its summary,
+# which is all the orchestrator reads to decide whether to spawn it.
+# .reviewers/README.md is context for the orchestrator, like a # Guidelines H1.
+REVIEWER_HEADER_LINES=12
+for rdir in "${REVIEWER_DIRS[@]}"; do
+    rel_dir="${rdir#$REPO_ROOT/}"; rel_dir="${rel_dir#./}"
+    base="$(dirname "$rel_dir")"
+    [[ "$base" == "." ]] && scope="/" || scope="/$base/"
+    for spec in "$rdir"/*.md; do
+        [[ -f "$spec" ]] || continue
+        name="$(basename "$spec" .md)"
+        rel_spec="$rel_dir/$name.md"
+        if [[ "$name" == README ]]; then
+            section=$(jq -nc --rawfile body "$spec" --arg scope "$scope" --arg source "$rel_spec" \
+                '{type: "context", section: ("Reviewers README " + $scope), scope: $scope, source: $source, content: $body}')
+            ALL_SECTIONS+=$'\n'"$section"
+            continue
+        fi
+        # Indexed by an H2 beside it: already attached above as that H2's spec.
+        if [[ -n "$ALL_SECTIONS" ]] && jq -e --arg spec "$rel_spec" 'select(.spec == $spec)' <<< "$ALL_SECTIONS" >/dev/null 2>&1; then
+            continue
+        fi
+        # Until the repo converts, only AGENT-REVIEWERS.md decides what runs.
+        if [[ "$REVIEWERS_LAYOUT" == false ]]; then
+            echo "Warning: $rel_spec has no '## $name' entry in an AGENT-REVIEWERS.md, so it does not run (it would after converting to .reviewers/)" >&2
+            continue
+        fi
+        [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+            || echo "Warning: $rel_spec: '$name' is not a reviewer name (kebab-case), but it is spawned as one" >&2
+        header="$(head -n "$REVIEWER_HEADER_LINES" "$spec")"
+        grep -qE '^\**(Spawn when|When to spawn):?\**' <<< "$header" \
+            || echo "Warning: $rel_spec has no 'Spawn when:' line in its first $REVIEWER_HEADER_LINES lines, so the orchestrator cannot tell when it applies" >&2
+        ! grep -qE '^\**(Checks|Spawn when):?\**:? *TODO' <<< "$header" \
+            || echo "Warning: $rel_spec has a TODO in its header; fill in what it checks and when to spawn it" >&2
+        if [[ "$(wc -l < "$spec")" -gt 100 ]] && ! grep -qE '^\**Contents:?\**' <<< "$header"; then
+            echo "Warning: $rel_spec is over 100 lines with no 'Contents:' line in its header; Claude reads files with head -n 100, so name its sections" >&2
+        fi
+        bin="$rel_dir/bin"
+        [[ -d "$rdir/bin" ]] || bin=""
+        section=$(jq -nc --rawfile body "$spec" --arg name "$name" --arg scope "$scope" --arg source "$rel_spec" \
+            --arg summary "$(head -n "$REVIEWER_HEADER_LINES" "$spec")" --arg bin "$bin" \
+            '{type: "agent", name: $name, scope: $scope, source: $source, instructions: $body,
+              summary: $summary, spec: $source} + (if $bin == "" then {} else {bin: $bin} end)')
+        ALL_SECTIONS+=$'\n'"$section"
+    done
+done
+ALL_SECTIONS="${ALL_SECTIONS#$'\n'}"
+
 # Build JSON array of changed files for scoping
 CHANGED_FILES_JSON=$(jq -n --arg files "$CHANGED_FILES" '$files | split("\n") | map(select(. != ""))')
 EXCLUDED_FILES_JSON=$(jq -n --arg files "$EXCLUDED_FILES" '$files | split("\n") | map(select(. != ""))')
 
 # Load defaults from plugins/pr-review-loop/agents/*.md.
-DEFAULTS_JSON=$("$SCRIPT_DIR/_load_defaults.sh")
+# A converted repo (root .reviewers/, no root AGENT-REVIEWERS.md) runs exactly
+# the reviewers it has: the shipped defaults are starter files it copied in or
+# chose not to, so none is added here and there is no defaults pin to go stale.
+if [[ "$REVIEWERS_LAYOUT" == true ]]; then
+    DEFAULTS_JSON='[]'
+else
+    DEFAULTS_JSON=$("$SCRIPT_DIR/_load_defaults.sh")
+fi
 DEFAULTS_COUNT=$(echo "$DEFAULTS_JSON" | jq 'length')
-if [[ "$DEFAULTS_COUNT" -eq 0 ]]; then
+if [[ "$DEFAULTS_COUNT" -eq 0 && "$REVIEWERS_LAYOUT" == false ]]; then
     echo "Warning: zero default specialist reviewers loaded — plugin install may be incomplete" >&2
 fi
 
 # Parse # Configuration from the ROOT AGENT-REVIEWERS.md only (project-level state).
 # Subdirectory AGENT-REVIEWERS.md files may exist but their configuration is ignored.
+# .reviewers/config.json, when present, replaces it.
 ROOT_AGENT_REVIEWERS="$REPO_ROOT/AGENT-REVIEWERS.md"
-if [[ -f "$ROOT_AGENT_REVIEWERS" ]]; then
-    if ! CONFIGURATION_JSON=$("$SCRIPT_DIR/_parse_configuration.sh" "$ROOT_AGENT_REVIEWERS"); then
+ROOT_CONFIG="$ROOT_AGENT_REVIEWERS"
+if [[ -f "$REPO_ROOT/.reviewers/config.json" ]]; then
+    ROOT_CONFIG="$REPO_ROOT/.reviewers/config.json"
+    if [[ -f "$ROOT_AGENT_REVIEWERS" ]] && grep -qE '^#[[:space:]]+Configuration[[:space:]]*$' "$ROOT_AGENT_REVIEWERS"; then
+        echo "Warning: both .reviewers/config.json and a # Configuration in AGENT-REVIEWERS.md exist; only config.json is read" >&2
+    fi
+fi
+if [[ -f "$ROOT_CONFIG" ]]; then
+    if ! CONFIGURATION_JSON=$("$SCRIPT_DIR/_parse_configuration.sh" "$ROOT_CONFIG"); then
         # Parser exited non-zero (e.g., missing required `reason` field)
-        echo "Error: invalid # Configuration in $ROOT_AGENT_REVIEWERS — see message above" >&2
+        echo "Error: invalid configuration in $ROOT_CONFIG — see message above" >&2
         exit 1
     fi
 else
@@ -305,7 +413,7 @@ fi
 # the explicit root-file check to avoid a false trigger when root config
 # exists but PR has no files.
 LANGUAGE_DETECTION_JSON='null'
-if [[ ${#AGENT_FILES[@]} -eq 0 ]] && [[ ! -f "$ROOT_AGENT_REVIEWERS" ]]; then
+if [[ ${#AGENT_FILES[@]} -eq 0 && ${#REVIEWER_DIRS[@]} -eq 0 ]] && [[ ! -f "$ROOT_AGENT_REVIEWERS" && ! -d "$REPO_ROOT/.reviewers" ]]; then
     if [[ -x "$SCRIPT_DIR/detect-language.sh" ]]; then
         # Capture stdout; let stderr flow through so the user sees any errors.
         # Detect script is deterministic and shouldn't fail on a readable repo,
@@ -317,7 +425,7 @@ if [[ ${#AGENT_FILES[@]} -eq 0 ]] && [[ ! -f "$ROOT_AGENT_REVIEWERS" ]]; then
             LANGUAGE_DETECTION_JSON=$(RAW_DETECT="$RAW_DETECT" jq -n '
                 (env.RAW_DETECT | fromjson) as $matches
                 | {
-                    matched: ($matches | map(. + {template: (.language + ".md")})),
+                    matched: ($matches | map(. + {template: .language})),
                     same_directory_polyglot: (
                         # True iff two matches share a subtree with different languages
                         ($matches
@@ -364,7 +472,9 @@ UNKNOWN_DISABLED=$(
         | (($config.disabled // []) - $known)
         | join(", ")
     ')
-if [[ -n "$UNKNOWN_DISABLED" ]]; then
+if [[ "$REVIEWERS_LAYOUT" == true ]]; then
+    [[ -n "$UNKNOWN_DISABLED" ]] && echo "Warning: 'disabled' has no effect in the .reviewers/ layout (no reviewer runs unless its file is there): $UNKNOWN_DISABLED" >&2
+elif [[ -n "$UNKNOWN_DISABLED" ]]; then
     echo "Warning: # Configuration disabled list names that don't match any default reviewer: $UNKNOWN_DISABLED" >&2
     echo "Warning:   Available defaults: $(echo "$DEFAULTS_JSON" | jq -r 'map(.name) | join(", ")')" >&2
 fi
@@ -372,26 +482,28 @@ fi
 # Prepare input for jq:
 #   {sections: [...], defaults: [...], configuration: {...}, current_version: "...",
 #    language_detection: null | {...}}
-# Pass JSON via env (not --argjson) to avoid MAX_ARG_STRLEN (~128KB on
-# Linux). ALL_SECTIONS and DEFAULTS_JSON are the most likely to grow:
-# many user agents in AGENT-REVIEWERS.md, or many shipped defaults.
+# Neither argv nor one env var may exceed MAX_ARG_STRLEN (128KB on Linux).
+# The sections carry every reviewer's full spec, so they go in on stdin; the
+# rest is small enough for env.
 SECTIONS_JSON="$([[ -z "$ALL_SECTIONS" ]] && echo "[]" || (printf '%s\n' "$ALL_SECTIONS" | jq -s '.'))"
 JQ_INPUT=$(
-    SECTIONS_JSON="$SECTIONS_JSON" \
+    printf '%s' "$SECTIONS_JSON" |
     DEFAULTS_JSON="$DEFAULTS_JSON" \
     CONFIGURATION_JSON="$CONFIGURATION_JSON" \
     FILES_JSON="$CHANGED_FILES_JSON" \
     EXCLUDED_JSON="$EXCLUDED_FILES_JSON" \
     LANGUAGE_DETECTION_JSON="$LANGUAGE_DETECTION_JSON" \
-    jq -n --arg current_version "$CURRENT_PLUGIN_VERSION" --arg defaults_version "$DEFAULTS_VERSION" '
+    jq --arg current_version "$CURRENT_PLUGIN_VERSION" --arg defaults_version "$DEFAULTS_VERSION" \
+       --argjson reviewers_layout "$REVIEWERS_LAYOUT" '
         {
-            sections: (env.SECTIONS_JSON | fromjson),
+            sections: .,
             defaults: (env.DEFAULTS_JSON | fromjson),
             configuration: (env.CONFIGURATION_JSON | fromjson),
             files: (env.FILES_JSON | fromjson),
             excluded: (env.EXCLUDED_JSON | fromjson),
             current_version: $current_version,
             defaults_version: $defaults_version,
+            reviewers_layout: $reviewers_layout,
             language_detection: (env.LANGUAGE_DETECTION_JSON | fromjson)
         }'
 )
@@ -408,6 +520,7 @@ echo "$JQ_INPUT" | jq '
     .excluded as $excluded |
     .current_version as $current_version |
     .defaults_version as $defaults_version |
+    .reviewers_layout as $reviewers_layout |
     .language_detection as $language_detection |
 
     # ---- 2. Resolve user agents from sections (existing hierarchical-scope logic) ----
@@ -454,9 +567,10 @@ echo "$JQ_INPUT" | jq '
     # {description, model, color} from their YAML frontmatter (see
     # _load_defaults.sh). User agents come from AGENT-REVIEWERS.md markdown
     # H2 sections which have no frontmatter; their `instructions` is the
-    # full body. A user agent names its model with a `model: <name>` line in
-    # the first five lines of its section; step 6 gives every agent without
-    # one "sonnet", so none inherits the orchestrator session model.
+    # full body, or the .reviewers/<name>.md spec when there is one. A user
+    # agent names its model with a `model: <name>` line in the first five
+    # lines of its summary or, failing that, its spec; step 6 gives every
+    # agent without one "sonnet", so none inherits the orchestrator session model.
     ($user_agents_raw
         | map(.name as $n | . + {kind: (if ($default_agent_names | index($n)) != null then "user-override" else "user" end)})
         | map(.scope as $s | . + {changed_files: (
@@ -464,9 +578,13 @@ echo "$JQ_INPUT" | jq '
             else [$files[] | select(startswith($s | ltrimstr("/")))]
             end
           )})
-        | map({name, scope, source, instructions, kind, changed_files,
-               model: ((.instructions | split("\n")[0:5]
-                        | map(capture("^\\s*model:\\s*[\"]?(?<m>[A-Za-z0-9._:-]+)[\"]?\\s*$").m) | first) // null)})
+        | map({name, scope, source, instructions, kind, changed_files}
+               + (if .summary then {summary, spec} else {} end)
+               + (if .bin then {bin} else {} end)
+               + {model: ([.summary // "", .instructions]
+                          | map(split("\n")[0:5]
+                                | map(capture("^\\s*model:\\s*[\"]?(?<m>[A-Za-z0-9._:-]+)[\"]?\\s*$").m) | first)
+                          | map(select(. != null)) | first // null)})
     ) as $user_agents |
 
     # ---- 6. Final merged agent list, each stamped with its engine ----
@@ -496,7 +614,7 @@ echo "$JQ_INPUT" | jq '
     # Stale only if the pin predates the last defaults change. Missing or
     # unparseable pin → stale.
     (($config.defaults_version_checked // null | if type == "string" then semver else null end) as $pin |
-        $pin == null or $pin < ($defaults_version | semver)) as $stale_pin |
+        ($reviewers_layout | not) and ($pin == null or $pin < ($defaults_version | semver))) as $stale_pin |
 
     # ---- 8. Compose output ----
     {
@@ -517,6 +635,7 @@ echo "$JQ_INPUT" | jq '
             current_plugin_version: $current_version,
             defaults_version: $defaults_version,
             stale_pin: $stale_pin,
+            layout: (if $reviewers_layout then "reviewers" else "agent-reviewers" end),
             disabled_defaults: $disabled_defaults,
             disabled_defaults_unknown: ($disabled_defaults - $default_agent_names),
             overlaps_acknowledged: ($config.overlap_acknowledged // {}),

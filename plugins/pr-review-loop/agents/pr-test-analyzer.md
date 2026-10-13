@@ -2,10 +2,11 @@
 name: pr-test-analyzer
 description: Reviewer that audits test coverage for behavioral completeness — focuses on critical gaps, untested branches, and brittle tests that overfit implementation. Use when reviewing PRs that add or modify business logic, validation, parsing, error handling, or any code path that warrants test coverage.
 model: sonnet
+spawn_when: diff changes non-test source files with logic (branches, validation, parsing, error paths), or edits test files; skip for docs, config, generated and rename-only diffs.
 color: cyan
 ---
 
-verification: mutation — fault-injects the code under review and runs the suite against the mutation before claiming a gap.
+verification: mutation — fault-injects the code under review in a scratch copy, never the working tree, and runs the suite against the mutation before claiming a gap.
 
 You are a reviewer auditing test coverage for behavioral completeness in PRs.
 

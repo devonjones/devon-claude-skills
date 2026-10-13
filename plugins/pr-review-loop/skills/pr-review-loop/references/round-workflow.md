@@ -1,5 +1,7 @@
 # Round Workflow — Step-by-Step
 
+**Contents:** COLLECT Phase · C1. Check for unresolved Gemini line comments · C2. Check for other bot PR comments · C3. Run agent reviewers · BATCH POINT · FIX Phase · F1. Apply + reply to Gemini line comments · F2. Apply + reply to other bot comments · F3. Apply + reply to agent comments · F4. Commit and push · F5. Wait for CI checks and fix failures · F6. Trigger next review and wait for response · F7. Count reporters, then apply the convergence rule · End-of-round report · Was the round valid?
+
 This file is the operational companion to the round-structure diagram in `SKILL.md`'s "The Loop" section. The diagram is the source-of-truth for phase order; this file gives the per-step bash commands and example outputs.
 
 ---
@@ -196,19 +198,21 @@ Break the template convention and the gate goes blind again.
 
 **Delete this once `devon-claude-skills-cq0` lands** — the fix is `reply-to-comment.sh` adopting the `|| { ...; exit 1; }` that `post-line-comment.sh:49-53` already has, after which the exit status is trustworthy.
 
-ALWAYS use the script, NEVER raw git — ONCE per round, if any fixes were made:
+Commit ONCE per round, if any fixes were made, staging the round's files by name (⛔ rule 2):
 
 ```bash
-scripts/commit-and-push.sh "$(cat <<'EOF'
+git add <the files this round's fixes changed>
+git commit -m "$(cat <<'EOF'
 fix: address review comments
 
 Trade-offs from BATCH POINT:
 - [reasoning for choice X — pre-empts re-flag from agent Y]
 EOF
 )"
+git push
 ```
 
-This script runs pre-commit, commits with proper footer, and pushes. Include deliberate trade-offs in the commit body so reviewers see reasoning rather than re-flagging the concern.
+Put deliberate trade-offs in the commit body so reviewers see the reasoning instead of re-flagging it.
 
 ### F5. Wait for CI checks and fix failures (if any)
 
@@ -330,8 +334,8 @@ it is not a substitute for recording the SHA at C3.
 remedy: a reviewer reads the pushed head, so an uncommitted change is invisible
 both to it and to `git diff main...HEAD` and cannot be reviewed at all. It
 **does not invalidate the round** — nobody read it either way — but it must not
-land in the round's F4 commit as though it had. `commit-and-push.sh` runs
-`git add -A`, so clearing the tree is something you do before calling it:
+land in the round's F4 commit as though it had. Staging by name keeps it out;
+this check shows what is left over before you commit:
 
 ```bash
 ( set -o pipefail

@@ -348,31 +348,6 @@ repo="$(make_repo '{"bots": {"gemini": true}}')"
 run_stubbed "$repo" "$TRIGGER_REVIEW" 42 --gemini
 check_gh_posted "enabled gemini: /gemini review IS posted" "yes"
 
-# The second call site. commit-and-push.sh carries its own copy of the guard, so
-# it needs its own coverage — it pushes first, hence the local bare origin.
-COMMIT_PUSH="$SCRIPT_DIR/../scripts/commit-and-push.sh"
-BARE="$TMP_ROOT/origin.git"
-git init -q --bare "$BARE"
-repo="$(make_repo '{"bots": {"gemini": false}}')"
-git -C "$repo" config user.email test@example.com
-git -C "$repo" config user.name test
-git -C "$repo" remote add origin "$BARE"
-git -C "$repo" push -q -u origin HEAD
-echo "change" > "$repo/file.txt"
-run_stubbed "$repo" "$COMMIT_PUSH" "test commit" --trigger-review
-check "disabled gemini: commit-and-push exits 0" "0" "$RUN_RC"
-check_gh_posted "disabled gemini: commit-and-push posts no /gemini review" "no"
-
-repo="$(make_repo '{"bots": {"gemini": true}}')"
-git -C "$repo" config user.email test@example.com
-git -C "$repo" config user.name test
-git -C "$repo" remote add origin "$TMP_ROOT/origin2.git"
-git init -q --bare "$TMP_ROOT/origin2.git"
-git -C "$repo" push -q -u origin HEAD
-echo "change" > "$repo/file.txt"
-run_stubbed "$repo" "$COMMIT_PUSH" "test commit" --trigger-review
-check_gh_posted "enabled gemini: commit-and-push DOES post /gemini review" "yes"
-
 # --- exit 2 at the call sites -----------------------------------------------
 #
 # Undetermined must behave as ENABLED and must not be announced as the user's
@@ -400,16 +375,6 @@ else
     echo "PASS: undetermined: trigger-review does not claim the user disabled it"
     PASSED=$((PASSED + 1))
 fi
-
-git -C "$repo" config user.email test@example.com
-git -C "$repo" config user.name test
-git init -q --bare "$TMP_ROOT/origin3.git"
-git -C "$repo" remote add origin "$TMP_ROOT/origin3.git"
-git -C "$repo" push -q -u origin HEAD
-echo "change" > "$repo/file.txt"
-run_stubbed "$repo" "$COMMIT_PUSH" "test commit" --trigger-review
-check_gh_posted "undetermined: commit-and-push still triggers" "yes"
-check_contains "undetermined: commit-and-push surfaces the warning" "could not read the .bots block" "$RUN_OUT"
 
 # --- the third call site ----------------------------------------------------
 #
@@ -478,6 +443,14 @@ repo="$(make_repo '{"bots": {"gemini": true}}')"
 GH_LAST_COMMENT="You have reached your daily quota limit" run_stubbed "$repo" "$GET_COMMENTS" 42
 unset GH_LAST_COMMENT
 check_contains "enabled gemini: rate limit still reported" "rate-limited" "$RUN_OUT"
+
+# .reviewers/config.json is read in place of AGENT-REVIEWERS.md's block.
+repo="$(make_repo '{"bots": {"gemini": true}}')"
+mkdir -p "$repo/.reviewers"; printf '{"bots": {"gemini": false}}\n' > "$repo/.reviewers/config.json"
+check ".reviewers/config.json disables gemini -> exit 1" "1" "$(bot_status "$repo" gemini)"
+check ".reviewers/config.json leaves cursor on -> exit 0" "0" "$(bot_status "$repo" cursor)"
+: > "$repo/.reviewers/config.json"
+check "an empty .reviewers/config.json is undetermined, not 'enabled' -> exit 2" "2" "$(bot_status "$repo" gemini)"
 
 echo "---"
 echo "Passed: $PASSED, Failed: $FAILED"

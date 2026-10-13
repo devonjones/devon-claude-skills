@@ -1,0 +1,6 @@
+{
+  "bots": {
+    "gemini": false,
+    "cursor": false
+  }
+}

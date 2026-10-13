@@ -73,6 +73,14 @@ fi
 #   - On any other `# ` (outside fences), leave configuration section.
 #   - Inside configuration section, when we see ```json, capture lines
 #     until the next ``` (which is the closing of the json fence).
+if [[ "$FILE" == *.json ]]; then
+    # .reviewers/config.json: the file is the JSON, no section to find.
+    RAW_JSON="$(sed '1s/^\xEF\xBB\xBF//' "$FILE")"
+    if [[ -z "${RAW_JSON//[[:space:]]/}" ]]; then
+        echo "Warning: $FILE is empty, so none of its settings apply" >&2
+        [[ "$BOTS_ONLY" == "true" ]] && exit 1
+    fi
+else
 RAW_JSON="$(awk '
     BEGIN { in_config = 0; in_fence = 0; in_json = 0 }
     # A UTF-8 BOM ahead of the first `#` would defeat every heading rule below
@@ -128,8 +136,9 @@ RAW_JSON="$(awk '
         }
     }
 ' "$FILE")"
+fi
 
-if [[ -z "$RAW_JSON" ]]; then
+if [[ -z "$RAW_JSON" && "$FILE" != *.json ]]; then
     # "No # Configuration section at all" is a legitimate empty config. "The
     # user clearly meant to write one and it didn't parse" is not — under
     # --bots-only that would silently report a disabled bot as enabled.
@@ -164,7 +173,8 @@ fi
 # usually parses fine, so under --bots-only a correctly-read `"gemini": false`
 # would turn into exit 1 -> exit 2 -> treated as enabled, switching the bot back
 # on to punish a duplicate heading.
-CONFIG_HEADINGS="$(grep -cE '^[[:space:]]*#[[:space:]]+Configuration[[:space:]]*$' "$FILE" || true)"
+CONFIG_HEADINGS=0
+[[ "$FILE" == *.json ]] || CONFIG_HEADINGS="$(grep -cE '^[[:space:]]*#[[:space:]]+Configuration[[:space:]]*$' "$FILE" || true)"
 if [[ "${CONFIG_HEADINGS:-0}" -gt 1 ]]; then
     echo "Warning: $FILE has $CONFIG_HEADINGS '# Configuration' sections; only the first is read." >&2
     echo "Warning:   Merge them into one section — settings in the later ones are ignored." >&2
@@ -191,6 +201,12 @@ if ! JQ_PARSE_ERR="$(printf '%s\n' "$RAW_JSON" | jq -se '
     elif length != 1 then error("expected one top-level JSON object, got \(length)")
     else error("top-level value must be an object, got \(.[0] | type)") end
 ' 2>&1 > /dev/null)"; then
+    # A dedicated config file that doesn't parse would silently drop pi
+    # routing and the validator; there is no section around it to fall back to.
+    if [[ "$FILE" == *.json ]]; then
+        echo "Error: $FILE is not valid JSON: $JQ_PARSE_ERR" >&2
+        exit 1
+    fi
     echo "Warning: # Configuration section in $FILE contains invalid JSON: $JQ_PARSE_ERR" >&2
     if [[ "$BOTS_ONLY" == "true" ]]; then
         exit 1

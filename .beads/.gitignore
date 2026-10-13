@@ -71,3 +71,17 @@ bd.db
 # They would override fork protection in .git/info/exclude.
 # Config files (metadata.json, config.yaml) are tracked by git by default
 # since no pattern above ignores them.
+
+# Added by bd (missing required patterns)
+*.gate.lock*
+last_pull
+proxieddb/
+dolt-server-config.yaml
+proxied_server_client_info.json
+
+# Local copy of the pre-remote Dolt DB, kept from adopting the Dolt remote (#55).
+dolt.pre-remote/
+
+# Issues live in the Dolt remote (refs/dolt/data on origin); a JSONL export
+# here goes stale and invites hand-merges. Use bd export for a snapshot.
+issues.jsonl

@@ -692,7 +692,7 @@ repo="$(make_temp_repo)"
 touch "$repo/go.mod"
 run_discover "$repo" "main.go" t24
 assert_jq "one match" "$t24" '.language_detection.matched | length == 1'
-assert_jq "golang detected at root" "$t24" '.language_detection.matched[0] | (.language == "golang" and .subtree == "." and .template == "golang.md")'
+assert_jq "golang detected at root" "$t24" '.language_detection.matched[0] | (.language == "golang" and .subtree == "." and .template == "golang")'
 rm -rf "$repo"
 
 echo
@@ -702,7 +702,7 @@ mkdir -p "$repo/backend" "$repo/frontend"
 touch "$repo/backend/go.mod" "$repo/frontend/pyproject.toml"
 run_discover "$repo" "backend/main.go" t25
 assert_jq "two matches" "$t25" '.language_detection.matched | length == 2'
-assert_jq "templates include both" "$t25" '[.language_detection.matched[].template] | sort == ["golang.md","python.md"]'
+assert_jq "templates include both" "$t25" '[.language_detection.matched[].template] | sort == ["golang","python"]'
 assert_jq "same_directory_polyglot false" "$t25" '.language_detection.same_directory_polyglot == false'
 rm -rf "$repo"
 
@@ -1120,6 +1120,193 @@ tg4=$(cd "$repo" && "$DISCOVER" --base base-ref 2>/dev/null); tg4_exit=$?
 assert_exit "exit 0" "$tg4_exit" "0"
 assert_jq "scope comes from the local diff" "$tg4" '[.agents[].changed_files[]] | unique == ["src/a.py"]'
 assert_jq "lockfile excluded" "$tg4" '.configuration.excluded_files == ["uv.lock"]'
+rm -rf "$repo"
+
+echo
+echo "=== Test R1: .reviewers/<name>.md is the spec, the H2 is the summary ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/.reviewers/bin" "$repo/svc/.reviewers"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+- [store-reviewer](#store-reviewer) - store invariants
+
+# Agents
+
+## store-reviewer
+
+**Checks:** store invariants. **Spawn when:** the diff writes to the store.
+
+## inline-reviewer
+
+Reviews inline, the old way.
+
+## spec-model-reviewer
+
+**Checks:** a thing.
+
+## Retired reviewers
+
+These used to run.
+
+## summary-model-reviewer
+
+model: haiku
+**Checks:** a thing.
+EOF
+printf 'verification: mutation\nFull store spec.\n' > "$repo/.reviewers/store-reviewer.md"
+printf 'model: opus\nSpec body.\n' > "$repo/.reviewers/spec-model-reviewer.md"
+printf 'model: opus\nSpec body.\n' > "$repo/.reviewers/summary-model-reviewer.md"
+printf 'Nobody indexes me.\n' > "$repo/.reviewers/orphan-reviewer.md"
+printf 'About this dir.\n' > "$repo/.reviewers/README.md"
+cat > "$repo/svc/AGENT-REVIEWERS.md" <<'EOF'
+# Agents
+
+## svc-reviewer
+
+**Checks:** the service.
+EOF
+printf 'Service spec.\n' > "$repo/svc/.reviewers/svc-reviewer.md"
+run_discover "$repo" $'src/a.py\nsvc/b.py' tr1
+assert_exit "exit 0" "$tr1_exit" "0"
+assert_jq "spec file becomes instructions" "$tr1" '[.agents[] | select(.name=="store-reviewer") | .instructions] == ["verification: mutation\nFull store spec.\n"]'
+assert_jq "H2 body becomes summary" "$tr1" '[.agents[] | select(.name=="store-reviewer") | .summary | contains("Spawn when")] == [true]'
+assert_jq "spec path reported" "$tr1" '[.agents[] | select(.name=="store-reviewer") | .spec] == [".reviewers/store-reviewer.md"]'
+assert_jq "bin reported when it exists" "$tr1" '[.agents[] | select(.name=="store-reviewer") | .bin] == [".reviewers/bin"]'
+assert_jq "inline reviewer unchanged, no summary" "$tr1" '[.agents[] | select(.name=="inline-reviewer") | (.summary == null) and (.instructions | contains("the old way"))] == [true]'
+assert_jq "model read from the spec when the summary has none" "$tr1" '[.agents[] | select(.name=="spec-model-reviewer") | .model] == ["opus"]'
+assert_jq "the summary's model wins over the spec's" "$tr1" '[.agents[] | select(.name=="summary-model-reviewer") | .model] == ["haiku"]'
+assert_jq "a subdirectory index reads its own .reviewers/" "$tr1" '[.agents[] | select(.name=="svc-reviewer") | {spec, instructions}] == [{"spec": "svc/.reviewers/svc-reviewer.md", "instructions": "Service spec.\n"}]'
+assert_jq "no bin when the directory is absent" "$tr1" '[.agents[] | select(.name=="svc-reviewer") | has("bin")] == [false]'
+assert_stderr_contains "a prose H2 under # Agents warns" "$tr1_err" "'## Retired reviewers' under # Agents"
+assert_jq "until conversion, a file with no H2 does not run" "$tr1" '[.agents[] | select(.name=="orphan-reviewer")] == []'
+assert_stderr_contains "and discovery says so" "$tr1_err" ".reviewers/orphan-reviewer.md has no '## orphan-reviewer' entry in an AGENT-REVIEWERS.md, so it does not run"
+if [[ "$tr1_err" == *README* ]] || jq -e '.agents[] | select(.name=="README")' <<< "$tr1" >/dev/null; then
+    echo "  FAIL  README.md is not a reviewer"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("README.md is not a reviewer")
+else
+    echo "  PASS  README.md is not a reviewer"; TESTS_PASSED=$((TESTS_PASSED + 1))
+fi
+assert_jq "a table of contents above the first H1 is not a section" "$tr1" '[.context[] | select(.content | contains("store invariants"))] == []'
+rm -rf "$repo"
+
+echo
+echo "=== Test R2: a .reviewers/ directory with no AGENT-REVIEWERS.md ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/.reviewers" "$repo/svc/.reviewers"
+cat > "$repo/.reviewers/store-reviewer.md" <<'EOF'
+# store-reviewer
+model: haiku
+verification: mutation
+**Checks:** store invariants.
+**Spawn when:** the diff writes under `store/`.
+**Contents:** [What to flag](#what-to-flag)
+
+## What to flag
+
+Partial writes.
+EOF
+printf '# svc-reviewer\n**Spawn when:** svc changes.\n' > "$repo/svc/.reviewers/svc-reviewer.md"
+printf 'Roster notes for the orchestrator.\n' > "$repo/.reviewers/README.md"
+printf '{"bots": {"gemini": false}}\n' > "$repo/.reviewers/config.json"
+run_discover "$repo" $'src/a.py\nsvc/b.py' tr2
+assert_exit "exit 0" "$tr2_exit" "0"
+assert_jq "the file is the spec" "$tr2" '[.agents[] | select(.name=="store-reviewer") | .instructions | contains("Partial writes")] == [true]'
+assert_jq "the summary is the first 12 lines" "$tr2" '[.agents[] | select(.name=="store-reviewer") | .summary | split("\n") | length] == [10]'
+assert_jq "model: from the header" "$tr2" '[.agents[] | select(.name=="store-reviewer") | .model] == ["haiku"]'
+assert_jq "kind user, root scope" "$tr2" '[.agents[] | select(.name=="store-reviewer") | {kind, scope}] == [{"kind": "user", "scope": "/"}]'
+assert_jq "a subtree .reviewers/ scopes to its subtree" "$tr2" '[.agents[] | select(.name=="svc-reviewer") | {scope, changed_files}] == [{"scope": "/svc/", "changed_files": ["svc/b.py"]}]'
+assert_jq "README.md is orchestrator context" "$tr2" '[.context[] | select(.source==".reviewers/README.md") | .content] == ["Roster notes for the orchestrator.\n"]'
+assert_jq "the layout is reported" "$tr2" '.configuration.layout == "reviewers"'
+assert_jq "no shipped default spawns: the roster is the files" "$tr2" '[.agents[].kind] | all(. == "user")'
+assert_jq "no defaults pin to go stale" "$tr2" '.configuration.stale_pin == false'
+assert_jq "no language-template offer when .reviewers/ exists" "$tr2" '.language_detection == null'
+if [[ -n "$tr2_err" ]]; then
+    echo "  FAIL  a well-formed roster warns about nothing: $tr2_err"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("well-formed roster is quiet")
+else
+    echo "  PASS  a well-formed roster warns about nothing"; TESTS_PASSED=$((TESTS_PASSED + 1))
+fi
+rm -rf "$repo"
+
+echo
+echo "=== Test R2b: 'disabled' in the .reviewers/ layout warns that it does nothing ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/.reviewers"
+printf '# a-reviewer\n**Spawn when:** always.\n' > "$repo/.reviewers/a-reviewer.md"
+printf '{"disabled": ["code-simplifier"]}\n' > "$repo/.reviewers/config.json"
+run_discover "$repo" "src/a.py" tr2b
+assert_stderr_contains "disabled is a no-op warning" "$tr2b_err" "'disabled' has no effect in the .reviewers/ layout"
+rm -rf "$repo"
+
+echo
+echo "=== Test R3: config.json wins over a # Configuration block, with a warning ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/.reviewers"
+printf '{"disabled": ["code-simplifier"]}\n' > "$repo/.reviewers/config.json"
+cat > "$repo/AGENT-REVIEWERS.md" <<'EOF'
+# Configuration
+
+```json
+{"disabled": ["pr-test-analyzer"]}
+```
+EOF
+run_discover "$repo" "src/a.py" tr3
+assert_jq "config.json read" "$tr3" '.configuration.disabled_defaults == ["code-simplifier"]'
+assert_jq "a root AGENT-REVIEWERS.md keeps the legacy layout, defaults included" "$tr3" '.configuration.layout == "agent-reviewers" and ([.agents[] | select(.kind == "default")] | length > 0)'
+assert_stderr_contains "both present warns" "$tr3_err" "only config.json is read"
+printf '{"disabled": "nope"' > "$repo/.reviewers/config.json"
+run_discover "$repo" "src/a.py" tr3b
+assert_exit "a broken config.json stops discovery" "$tr3b_exit" "1"
+assert_stderr_contains "and names the file" "$tr3b_err" ".reviewers/config.json is not valid JSON"
+: > "$repo/.reviewers/config.json"
+run_discover "$repo" "src/a.py" tr3c
+assert_stderr_contains "an empty config.json warns" "$tr3c_err" "config.json is empty, so none of its settings apply"
+rm -rf "$repo"
+
+echo
+echo "=== Test R4: a converted repo's root reviewers apply to every diff ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/.reviewers" "$repo/svc/.reviewers"
+printf '# root-reviewer\n**Spawn when:** always.\n' > "$repo/.reviewers/root-reviewer.md"
+printf 'root notes\n' > "$repo/.reviewers/README.md"
+printf '# svc-reviewer\n**Spawn when:** svc.\n' > "$repo/svc/.reviewers/svc-reviewer.md"
+printf 'svc notes\n' > "$repo/svc/.reviewers/README.md"
+run_discover "$repo" "" tr4
+assert_jq "an empty diff still finds the root reviewers" "$tr4" '[.agents[].name] == ["root-reviewer"]'
+run_discover "$repo" $'uv.lock' tr4b
+assert_jq "an all-generated diff spawns nobody" "$tr4b" '.agents == []'
+assert_jq "and names the root reviewer as not dispatched" "$tr4b" '.configuration.not_dispatched_no_files == ["root-reviewer"]'
+run_discover "$repo" $'a.py\nsvc/b.py' tr4c
+assert_jq "every README is context, the nested one does not replace the root one" "$tr4c" '[.context[].content] | sort == ["root notes\n", "svc notes\n"]'
+rm -rf "$repo"
+
+echo
+echo "=== Test R5: a root .reviewers/ with no reviewer files is not a converted repo ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/.reviewers"
+printf 'notes\n' > "$repo/.reviewers/README.md"
+run_discover "$repo" "a.py" tr5r
+assert_jq "README.md alone is not a converted repo" "$tr5r" '.configuration.layout == "agent-reviewers"'
+rm -rf "$repo"
+
+repo="$(make_temp_repo)"
+mkdir -p "$repo/.reviewers"
+printf '{"bots": {"gemini": false}}\n' > "$repo/.reviewers/config.json"
+run_discover "$repo" "a.py" tr5
+assert_jq "legacy layout" "$tr5" '.configuration.layout == "agent-reviewers"'
+assert_jq "so the shipped defaults still run" "$tr5" '[.agents[] | select(.kind == "default")] | length == 6'
+rm -rf "$repo"
+
+echo
+echo "=== Test R6: a reviewer file over 100 lines needs a Contents line ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/.reviewers"
+{ printf '# long-reviewer\n**Checks:** x.\n**Spawn when:** always.\n\n'; for i in $(seq 1 110); do echo "line $i"; done; } > "$repo/.reviewers/long-reviewer.md"
+{ printf '# toc-reviewer\n**Checks:** x.\n**Spawn when:** always.\n**Contents:** A · B\n\n'; for i in $(seq 1 110); do echo "line $i"; done; } > "$repo/.reviewers/toc-reviewer.md"
+run_discover "$repo" "a.py" tr6
+assert_stderr_contains "a long file without Contents warns" "$tr6_err" ".reviewers/long-reviewer.md is over 100 lines with no 'Contents:' line"
+if [[ "$tr6_err" == *toc-reviewer* ]]; then
+    echo "  FAIL  a long file with Contents is quiet"; TESTS_FAILED=$((TESTS_FAILED + 1)); FAILED+=("long file with Contents quiet")
+else
+    echo "  PASS  a long file with Contents is quiet"; TESTS_PASSED=$((TESTS_PASSED + 1))
+fi
 rm -rf "$repo"
 
 # ---------------------------------------------------------------------------
