@@ -515,7 +515,9 @@ CI FIX SUB-LOOP (max 3 attempts per round):
 
 4. **Max 3 attempts** — If CI still fails after 3 fix-push cycles, stop and escalate to the user.
 
-5. **Timeout (exit code 2)** — If `check-ci.sh` times out waiting for checks to complete, ask the user whether to wait longer.
+5. **Exit code 2** — `check-ci.sh` timed out, or could not read the head SHA or its check runs. On a timeout, ask the user whether to wait longer; otherwise re-run it.
+
+6. **Exit code 3** — the PR head moved while `check-ci.sh` waited. Its verdict was for an old commit; re-run it against the new head.
 
 ### Example CI Fix Flow
 

@@ -1,15 +1,7 @@
 #!/usr/bin/env bash
-# Test harness for the three scripts that mutate state or report a verdict.
-#
-# One question: what does this return when it CANNOT TELL? Each of these
-# answered "success" to that, in a different way:
-#   - reply-to-comment.sh exited 0 AND resolved the thread on a failed POST
-#   - reopen-comment.sh exited 0 and reported a different call's error
-#   - check-ci.sh resolved the verdict from the PR, so it could answer for a
-#     commit that is no longer the head
-#
-# Every case below is paired: the failure must be distinguishable from the
-# success, or the check proves nothing.
+# What do reply-to-comment.sh, reopen-comment.sh and check-ci.sh return when
+# they CANNOT TELL whether they worked? Each case runs the real script against a
+# stub `gh` on PATH and checks its exit status and the calls it made.
 #
 # Usage: tests/test-failure-reporting.sh
 # Exit code: 0 if all pass, 1 if any fail.
@@ -26,54 +18,107 @@ ok()   { PASSED=$((PASSED+1)); echo "  PASS: $1"; }
 bad()  { FAILED=$((FAILED+1)); echo "  FAIL: $1"; }
 check(){ if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1 (expected '$3', got '$2')"; fi; }
 
-echo "=== reply-to-comment.sh: rate limiting is retryable, other failures are not ==="
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+mkdir -p "$T/bin"
+SHA_A=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+SHA_B=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
-retryable() {
-    grep -qE '"code": *"abuse"|secondary rate limit|was submitted too quickly|temporarily blocked from content creation' <<<"$1" \
-        && echo "retryable" || echo "hard"
+# Stub gh. Every call is logged to $T/log; behaviour comes from STUB_* vars.
+cat > "$T/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$STUB_DIR/log"
+args="$*"
+case "$args" in
+    "repo view"*) echo "o/r" ;;
+    "pr view"*headRefOid*)
+        n=$(( $(cat "$STUB_DIR/views" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STUB_DIR/views"
+        [[ -n "${STUB_HEAD_FAIL:-}" ]] && { echo "HTTP 502" >&2; exit 1; }
+        if [[ "$n" -gt 1 && -n "${STUB_HEAD_LATER:-}" ]]; then echo "$STUB_HEAD_LATER"; else echo "$STUB_HEAD"; fi ;;
+    "pr checks"*) echo "[]" ;;
+    *"--method POST"*replies*)
+        [[ -n "${STUB_POST_FAIL:-}" ]] && { echo "$STUB_POST_FAIL" >&2; exit 1; }
+        echo '{"id":1}' ;;
+    *check-runs*)
+        [[ -n "${STUB_RUNS_FAIL:-}" ]] && { echo "$STUB_RUNS_FAIL" >&2; exit 1; }
+        echo "${STUB_RUNS:-{\"check_runs\":[]\}}" ;;
+    *check-suites*) echo '{"check_suites":[]}' ;;
+    *addPullRequestReviewComment*)
+        [[ -n "${STUB_GQL_REPLY_FAIL:-}" ]] && { echo "$STUB_GQL_REPLY_FAIL" >&2; exit 1; }
+        echo '{}' ;;
+    *ReviewThread*) echo '{}' ;;   # resolve / unresolve mutations
+    *reviewThreads*)
+        echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"T1","isResolved":true,"comments":{"nodes":[{"id":"PRRC_1","databaseId":111}]}}]}}}}}' ;;
+    *) echo "stub gh: unhandled: $args" >&2; exit 99 ;;
+esac
+STUB
+printf '#!/bin/sh\nexit 0\n' > "$T/bin/sleep"
+chmod +x "$T/bin/gh" "$T/bin/sleep"
+
+# run <script> <args...>: sets RC, OUT, ERR; fresh log per run.
+run() {
+    local script=$1; shift
+    rm -f "$T/log" "$T/views"
+    set +e
+    PATH="$T/bin:$PATH" STUB_DIR="$T" PR_REVIEW_LOOP_PACE_S=0 \
+        bash "$SCRIPTS/$script" "$@" >"$T/out" 2>"$T/err"
+    RC=$?
+    set -e
+    OUT=$(cat "$T/out"); ERR=$(cat "$T/err")
 }
-check "422 abuse is retryable"            "$(retryable '{"errors":[{"code":"abuse"}]}')"        "retryable"
-check "secondary rate limit is retryable" "$(retryable 'exceeded a secondary rate limit')"      "retryable"
-check "403 content-creation block is retryable" "$(retryable 'temporarily blocked from content creation')" "retryable"
-check "Not Found is NOT retryable"        "$(retryable '{"message":"Not Found"}')"              "hard"
-check "Forbidden is NOT retryable"        "$(retryable '{"message":"Forbidden"}')"              "hard"
+resolved() { grep -q 'resolveReviewThread' "$T/log" 2>/dev/null && echo yes || echo no; }
 
-echo "=== reply-to-comment.sh: a failed post must never reach the resolve ==="
-# Structural: the failure branch exits before the resolve block. If someone
-# reintroduces a fall-through, the resolve moves above an exit and this trips.
-fail_exit_line=$(grep -n 'Thread left UNRESOLVED' "$SCRIPTS/reply-to-comment.sh" | cut -d: -f1)
-resolve_line=$(grep -n 'Resolving thread' "$SCRIPTS/reply-to-comment.sh" | head -1 | cut -d: -f1)
-if [[ -n "$fail_exit_line" && -n "$resolve_line" && "$fail_exit_line" -lt "$resolve_line" ]]; then
-    ok "failure path exits before the resolve block"
-else
-    bad "failure path does not clearly precede the resolve block"
-fi
-if grep -q 'Will still attempt to resolve' "$SCRIPTS/reply-to-comment.sh"; then
-    bad "the resolve-anyway fall-through is back"
-else
-    ok "no resolve-anyway fall-through"
-fi
+echo "=== reply-to-comment.sh ==="
+run reply-to-comment.sh 1 111 "Fixed - x"
+check "posted reply exits 0" "$RC" 0
+check "posted reply resolves the thread" "$(resolved)" yes
 
-echo "=== reopen-comment.sh: report THIS call's error, not the previous one's ==="
-if grep -q 'REST_RESULT=\$(gh api' "$SCRIPTS/reopen-comment.sh"; then
-    ok "REST call's own output is captured"
-else
-    bad "REST call's output is not captured (a wrong-but-plausible error will be reported)"
-fi
+for body in '{"errors":[{"code":"abuse"}]}' 'You have exceeded a secondary rate limit' \
+            'was submitted too quickly' 'temporarily blocked from content creation'; do
+    STUB_POST_FAIL="$body" run reply-to-comment.sh 1 111 "Fixed - x"
+    check "rate limit ($body) exits 3" "$RC" 3
+    check "rate limit ($body) leaves thread unresolved" "$(resolved)" no
+done
 
-echo "=== check-ci.sh: no SHA is not 'passing' ==="
-# Source the function in isolation; with no SHA it must refuse to answer.
-status=$(bash -c '
-    REPO=o/r
-    '"$(sed -n "/^get_check_status() {/,/^}/p" "$SCRIPTS/check-ci.sh")"'
-    get_check_status ""
-')
-check "get_check_status with no SHA returns unknown_sha" "$status" "unknown_sha"
-if grep -q 'repos/\${REPO}/commits/\${sha}/check-runs' "$SCRIPTS/check-ci.sh"; then
-    ok "verdict is resolved from a commit, not from the PR"
-else
-    bad "verdict is not resolved from a commit SHA"
-fi
+STUB_POST_FAIL='{"message":"Not Found"}' run reply-to-comment.sh 1 111 "Fixed - x"
+check "failed post exits 1" "$RC" 1
+check "failed post leaves thread unresolved" "$(resolved)" no
+
+echo "=== reopen-comment.sh ==="
+STUB_GQL_REPLY_FAIL="GQL-ERR" run reopen-comment.sh 1 111 agent "why"
+check "GraphQL fails, REST posts: exits 0" "$RC" 0
+
+STUB_GQL_REPLY_FAIL="GQL-ERR" STUB_POST_FAIL="REST-ERR" run reopen-comment.sh 1 111 agent "why"
+check "both posts fail: exits 1" "$RC" 1
+check "REST failure reports the REST call's own error" \
+    "$(grep -c '^REST response: REST-ERR' <<<"$ERR" || true)" 1
+
+echo "=== check-ci.sh ==="
+RUNS_OK='{"check_runs":[{"name":"t","status":"completed","conclusion":"success"}]}'
+RUNS_BAD='{"check_runs":[{"name":"t","status":"completed","conclusion":"failure"}]}'
+
+STUB_HEAD="$SHA_A" STUB_RUNS="$RUNS_OK" run check-ci.sh 1
+check "passing checks exit 0" "$RC" 0
+check "verdict is read from the head commit" "$(grep -c "commits/$SHA_A/check-runs" "$T/log" || true)" 1
+
+STUB_HEAD="$SHA_A" STUB_RUNS="$RUNS_BAD" run check-ci.sh 1
+check "failing checks exit 1" "$RC" 1
+
+STUB_HEAD="$SHA_A" run check-ci.sh 1
+check "no check runs exits 0" "$RC" 0
+
+STUB_HEAD="$SHA_A" STUB_RUNS_FAIL="HTTP 401" run check-ci.sh 1
+check "unreadable check runs exit 2, not 'no CI'" "$RC" 2
+check "unreadable check runs surface gh's error" "$(grep -c 'HTTP 401' <<<"$ERR" || true)" 1
+
+STUB_HEAD="$SHA_A" STUB_RUNS_FAIL="HTTP 401" run check-ci.sh 1 --wait --timeout 30
+check "--wait: check runs unreadable until timeout exits 2" "$RC" 2
+
+STUB_HEAD_FAIL=1 run check-ci.sh 1
+check "unresolvable head SHA exits 2" "$RC" 2
+
+STUB_HEAD="$SHA_A" STUB_HEAD_LATER="$SHA_B" STUB_RUNS="$RUNS_OK" run check-ci.sh 1 --wait
+check "--wait: head moved exits 3" "$RC" 3
 
 echo ""
 echo "Passed: $PASSED  Failed: $FAILED"

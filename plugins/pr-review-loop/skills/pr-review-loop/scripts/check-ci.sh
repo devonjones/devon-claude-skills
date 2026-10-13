@@ -12,7 +12,8 @@
 # Exit codes:
 #   0 - All checks passed (or no checks found)
 #   1 - One or more checks failed (failure details on stdout)
-#   2 - Timeout waiting for checks to complete
+#   2 - Timeout, or the head SHA or its check runs could not be read
+#   3 - The PR head moved while waiting; re-run against the new head
 
 set -euo pipefail
 
@@ -72,9 +73,10 @@ get_check_status() {
         echo "unknown_sha"
         return
     fi
-    checks_json=$(gh api "repos/${REPO}/commits/${sha}/check-runs" --paginate 2>/dev/null \
+    # stderr is left alone so the reason for an api_error reaches the caller.
+    checks_json=$(gh api "repos/${REPO}/commits/${sha}/check-runs" --paginate \
         | jq -s '[.[].check_runs[]] | map({name, state: (if .status != "completed" then (.status|ascii_upcase) else (.conclusion|ascii_upcase) end)})') || {
-        echo "no_checks"
+        echo "api_error"
         return
     }
 
@@ -86,7 +88,7 @@ get_check_status() {
         return
     fi
 
-    pending=$(echo "$checks_json" | jq '[.[] | select(.state == "PENDING" or .state == "QUEUED" or .state == "IN_PROGRESS" or .state == "WAITING" or .state == "REQUESTED" or .state == "ACTION_REQUIRED" or .state == "null")] | length')
+    pending=$(echo "$checks_json" | jq '[.[] | select(.state == "PENDING" or .state == "QUEUED" or .state == "IN_PROGRESS" or .state == "WAITING" or .state == "REQUESTED" or .state == "ACTION_REQUIRED")] | length')
     fail=$(echo "$checks_json" | jq '[.[] | select(.state == "FAILURE" or .state == "ERROR" or .state == "TIMED_OUT" or .state == "CANCELLED" or .state == "STARTUP_FAILURE")] | length')
     pass=$(echo "$checks_json" | jq '[.[] | select(.state == "SUCCESS" or .state == "NEUTRAL" or .state == "SKIPPED")] | length')
 
@@ -168,6 +170,10 @@ if [[ "$WAIT_MODE" == "false" ]]; then
             echo "Error: no commit to attribute CI results to." >&2
             exit 2
             ;;
+        api_error)
+            echo "Error: could not read check runs for ${TARGET_SHA:0:7} - that is not 'no CI'." >&2
+            exit 2
+            ;;
         no_checks)
             echo "No CI checks found for ${TARGET_SHA:0:7}"
             exit 0
@@ -246,6 +252,9 @@ while [[ $ELAPSED -lt $TIMEOUT ]]; do
             fi
             echo "No CI checks found yet (${ELAPSED}s elapsed)"
             ;;
+        api_error)
+            echo "warning: could not read check runs (${ELAPSED}s elapsed); retrying" >&2
+            ;;
         passing:*)
             echo "✓ All CI checks passed (${status#passing:})"
             exit 0
@@ -281,6 +290,10 @@ case "$status" in
         ;;
     pending:*)
         echo "⏳ Checks still running after timeout"
+        exit 2
+        ;;
+    api_error)
+        echo "Error: could not read check runs for ${TARGET_SHA:0:7}." >&2
         exit 2
         ;;
     *)

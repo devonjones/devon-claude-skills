@@ -8,6 +8,11 @@
 #   - GraphQL Node ID for review comments (PRRC_...)
 #   - GraphQL Node ID for PR/issue comments (IC_...) - replies by quoting original
 # By default, resolves the conversation after replying. Use --no-resolve to skip.
+#
+# Exit codes:
+#   0 - Reply posted (and the thread resolved, unless --no-resolve)
+#   1 - Reply not posted; the thread is left unresolved
+#   3 - GitHub's secondary rate limit; retryable later, thread left unresolved
 
 set -euo pipefail
 
