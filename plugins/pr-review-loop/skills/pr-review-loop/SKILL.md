@@ -13,7 +13,7 @@ description: |
 
 # PR Review Loop
 
-**Contents:** [⛔ STOP - READ THIS FIRST ⛔](#-stop---read-this-first-) · [⚠️ Do NOT Run as a Background Task Agent](#-do-not-run-as-a-background-task-agent) · [Supported Review Bots](#supported-review-bots) · [Comment Formats: Line Comments vs PR Comments](#comment-formats-line-comments-vs-pr-comments) · [Critical: Be Skeptical of Reviews](#critical-be-skeptical-of-reviews) · [Pattern Analysis: Sweep Before Fixing](#pattern-analysis-sweep-before-fixing) · [Convergence](#convergence) · [Merge Readiness](#merge-readiness) · [Choosing the Roster](#choosing-the-roster) · [Local Mode — one review before you push](#local-mode--one-review-before-you-push) · [Autonomous Loop Workflow](#autonomous-loop-workflow) · [CI Failure Handling](#ci-failure-handling) · [Reply Templates](#reply-templates) · [Out of Scope Suggestions (Beads Integration)](#out-of-scope-suggestions-beads-integration) · [Triggering Reviews by Bot Type](#triggering-reviews-by-bot-type) · [Agent Reviewers](#agent-reviewers) · [Suggesting Reviewer Changes](#suggesting-reviewer-changes) · [Dream Markers (reviewer telemetry)](#dream-markers-reviewer-telemetry) · [Rate Limit Detection](#rate-limit-detection) · [Scripts](#scripts) · [Permission Setup](#permission-setup) · [Prerequisites](#prerequisites)
+**Contents:** STOP - READ THIS FIRST · Do NOT Run as a Background Task Agent · Supported Review Bots · Comment Formats: Line Comments vs PR Comments · Critical: Be Skeptical of Reviews · Pattern Analysis: Sweep Before Fixing · Convergence · Merge Readiness · Choosing the Roster · Local Mode · Autonomous Loop Workflow · CI Failure Handling · Reply Templates · Out of Scope Suggestions · Triggering Reviews by Bot Type · Agent Reviewers · Suggesting Reviewer Changes · Dream Markers · Rate Limit Detection · Scripts · Permission Setup · Prerequisites
 
 ## ⛔ STOP - READ THIS FIRST ⛔
 
@@ -33,17 +33,15 @@ as usual.
 
 ### 3. The PR is the system of record — agents RECORD, one script POSTS
 
-Every agent finding MUST exist on the PR before its fix is committed. Each
-agent records its findings with `record-finding.sh`. The orchestrator then runs
-`post-findings.sh <PR>` once, which merges same-line findings into one thread,
-rolls every P3 into a single thread, and posts the lot as **one review**. A
-finding that lives only in an agent's return text, the orchestrator's context,
-or a commit message does NOT count as reviewed.
+Every finding MUST exist on the PR before its fix is committed. Reviewers
+**record** findings with `record-finding.sh` (a local store); the orchestrator
+**posts** them once with `post-findings.sh <PR>`, which merges same-line
+findings, rolls P3s into one thread and sends a single review. A finding that
+lives only in return text, your context or a commit message does NOT count.
 
 | ❌ FORBIDDEN | ✅ USE INSTEAD |
 |--------------|----------------|
-| Instructing agents to "return findings, do not record" | Agents record via `record-finding.sh`, then return a manifest of what they recorded |
-| Agents posting their own comments with `post-line-comment.sh` | Record, then `post-findings.sh <PR>` posts every finding in one write |
+| Reviewers posting with `post-line-comment.sh`, or told "return findings, do not record" | Record, then `post-findings.sh <PR>` posts them in one write |
 | Fixing a finding before `post-findings.sh` ran | Post first, then fix, then `reply-to-comment.sh`. F4 checks with `post-findings.sh <PR> --check` |
 | Silently dropping a validator-refuted finding | Reply + resolve its thread as withdrawn (`reply-to-comment.sh <PR> <id> "Withdrawn — validator refuted: <reason>"`) |
 | Substituting a consolidated "review record" PR comment for line comments | Line comments at the flagged lines; consolidated comments are a supplement, never the record |
@@ -53,7 +51,7 @@ Why this is load-bearing, not ceremony:
 - **Audit trail**: findings, dispositions, and withdrawals stay attached to the lines they're about, with reopen rights on every thread.
 - **Round-to-round dedup**: each agent's step 1 (`get-agent-comments.sh`) checks its own prior comments — if nothing was posted, every later round re-litigates from scratch and reopen/retirement logic silently breaks.
 - **Cost routing**: the legwork (file/line anchoring, finding bodies) belongs on the cheap per-agent model, not the expensive main-loop model. Merging and posting is a script, so it costs the orchestrator nothing.
-- **One write per round**: GitHub's secondary rate limit is per account. Agents posting one comment each put 40 comments into one minute and blocked the whole account. Parallel reviewers also landed four threads on one line.
+- **One write per round**: GitHub's secondary rate limit is per account, and per-reviewer posting hit it.
 - **Merge-readiness integrity**: the end-of-loop summary counts threads; zero posted threads with nonzero findings is a protocol violation that must be reported, not papered over.
 
 A repo's reviewer files may define an "Output format" / severity
@@ -114,9 +112,7 @@ The convergence rule (see Convergence) depends on classifying findings as P1/P2 
 
 The (iii) escape valve exists so the model isn't forced to relabel a genuine "won't fix" as a reclassification: surface the finding to the user, they sign off, it's recorded in the merge-readiness summary.
 
-**Comment, docstring and PR-body findings are P3 by default.** They are P2 only if the text is wrong in a way that would lead a reader to write a bug. Fix them by shortening or deleting, never by adding. A comment says what the code does and why, tersely. It does not tell the story of how the code got this way: no history, past bugs, round numbers or rejected alternatives. That belongs in the commit message, if anywhere. A reasoned decline on wording or style grounds is final, and reviewers don't reopen it.
-
-**A comment earns its place by documenting something surprising or hard-won.** If a flagged comment doesn't, delete it. Don't reword it, defend it, or argue about it on the thread. Rewording invites the next round's finding; deletion ends the churn.
+**Comment, docstring and PR-body findings are P3 by default.** They are P2 only if the text is wrong in a way that would lead a reader to write a bug. Fix them by deleting or shortening, never by adding: a comment earns its place only by documenting something surprising or hard-won, so delete one that doesn't, without rewording or arguing on the thread. A comment says what the code does and why, tersely. It does not tell the story of how the code got this way: no history, past bugs, round numbers or rejected alternatives. That belongs in the commit message, if anywhere. A reasoned decline on wording or style grounds is final, and reviewers don't reopen it.
 
 **Classifying `![medium]` (Gemini's most-used label) — use these heuristics:**
 
@@ -383,56 +379,24 @@ The review loop should **not** override branch protections or bypass repo-define
 
 ## Choosing the Roster
 
-Reviewers are where this skill finds real bugs. They are also where its cost
-lives, because finding count tracks reviewer count almost linearly. One PR ran
-16 reviewers on a 7-file, 630-line diff and drew 176 comments, so be picky.
+Finding count tracks reviewer count almost linearly, so spawn only what the
+diff touches.
 
-- **Generated files are out.** `discover-agents.sh` drops lockfiles, minified
-  bundles, source maps and `.beads/` exports from every reviewer's scope, and
-  does not spawn a reviewer left with nothing to read
-  (`configuration.not_dispatched_no_files`). A diff that is *only* generated
-  output, such as a dependency bump or a `bd init` migration, needs no review
-  loop. Say so and stop.
-- **Decide from the headers.** Each reviewer's `summary` is the first 12
-  lines of its `.reviewers/<name>.md` (`head -n 12`): what it checks, when to
-  spawn it, and what its spec covers. Read those, not the specs.
-- **Spawn a reviewer only when the diff touches its focus.** A concurrency
-  reviewer on a diff with no threads, pools, async or locks costs a full
-  read and finds nothing, or invents something. A test-coverage reviewer on a
-  docs-only change is the same. Read each reviewer's focus against the
-  diff and skip the ones that don't apply.
-- **Name every reviewer you skipped, with a reason,** in the spawning summary
-  and the round report's `Roster:` line. A skipped reviewer is not counted in
-  `D dispatched / R reported`, so naming it is the only record that it was a
-  choice.
-- **Fixes don't re-earn the whole roster.** A later round dispatches the
-  reviewers whose findings drove the fixes, plus any whose focus the fix
-  commit touched.
-- **Never skip a reviewer the repo marks as mandatory**, or one whose
-  focus the diff plainly touches, just to save cost. Picky means relevant, not
-  minimal.
+- `discover-agents.sh` drops generated files (lockfiles, bundles, source maps,
+  `.beads/` exports) and doesn't dispatch a reviewer left with no files. A diff
+  that is only generated output needs no loop: say so and stop.
+- Decide from each reviewer's `summary` (its header), not its spec. Skip a
+  reviewer whose `Spawn when` the diff doesn't meet.
+- Name every skipped reviewer and why in the spawning summary and the round
+  report's `Roster:` line. Skipped reviewers don't count in `D dispatched / R reported`.
+- Later rounds dispatch the reviewers whose findings drove the fixes, plus any
+  whose focus the fix commit touched.
+- Never skip a mandatory reviewer, or one whose focus the diff plainly touches.
 
-## Local Mode — one review before you push
+## Local Mode
 
-Run the roster once against your local branch and post nothing to GitHub. Use
-it before opening a PR, or before pushing a large change to one. It is one pass,
-not a loop: review, fix, push.
-
-1. Commit your work. Reviewers read committed code, so an uncommitted change
-   is invisible to them.
-2. `scripts/discover-agents.sh --base <ref>` (usually `main` or
-   `origin/main`). It diffs `<ref>...HEAD`. Choose the roster as above.
-3. Spawn the reviewers with the normal template, with three substitutions:
-   `local` in place of the PR number, skip step 1 (there are no prior
-   comments), and for step 3 read `git diff <ref>...HEAD -- <files>`.
-4. `scripts/post-findings.sh local --local` prints the merged report (same-line
-   findings together, P3s rolled up) and posts nothing.
-5. Apply the fixes using the same judgement as the BATCH POINT: be sceptical,
-   and delete comments rather than reword them. Commit, then push.
-
-There are no threads, so there are no replies, no reopen rights and no
-convergence. A PR review loop afterwards, if you run one, starts from the
-pushed code as usual.
+To review a local branch once before pushing, with nothing posted to GitHub,
+follow [`references/local-mode.md`](references/local-mode.md).
 
 ## Autonomous Loop Workflow
 
@@ -452,12 +416,9 @@ pushed code as usual.
    - The `configuration` block, including `layout`: `"reviewers"` (a root `.reviewers/` and no root `AGENT-REVIEWERS.md`) or `"agent-reviewers"` (legacy)
    - The `language_detection` block (`null` when the repo already has reviewers; otherwise `{matched: [...], same_directory_polyglot: bool}`)
 2. **Offer language templates** (only when `language_detection != null` AND `language_detection.matched` is non-empty). See "Language Template Offer" below for the full flow.
-3. **Offer conversion** when `configuration.layout` is `"agent-reviewers"` and the repo has an `AGENT-REVIEWERS.md`. Ask once per invocation: "This repo's reviewers are in AGENT-REVIEWERS.md. Convert them to .reviewers/ files first? [y/N]". On yes, follow [`references/reviewers-dir.md`](references/reviewers-dir.md) and commit before round 1. On no, run the loop as it is; both layouts work.
-4. **Check the stale pin** (legacy layout only; it is always `false` for `.reviewers/`). If `configuration.stale_pin` is `true` AND `--skip-stale-check` was not passed:
-   - Emit the stale-pin message (see "Stale Pin Detection" above) with current and pinned versions
-   - **Exit non-zero.** Do NOT proceed to round 1.
-5. **Choose the roster** (see "Choosing the Roster" below), then **emit the spawning summary**: a one-line summary of which agents will run and which you skipped (see "Spawning Summary" above).
-6. **Track --skip-stale-check usage.** If the bypass flag was used, remember to include the bypass note in the final merge-readiness summary.
+3. **If `configuration.layout` is `"agent-reviewers"`**, offer once to convert ([`references/reviewers-dir.md`](references/reviewers-dir.md)); on no, run as is. Then check the stale pin ([`references/legacy-layout.md`](references/legacy-layout.md)).
+4. **Choose the roster** (see "Choosing the Roster" below), then **emit the spawning summary**: a one-line summary of which agents will run and which you skipped (see "Spawning Summary" above).
+5. **Track --skip-stale-check usage** (legacy layout) for the merge-readiness summary.
 
 After setup, proceed to The Loop.
 
@@ -734,21 +695,10 @@ scripts/convert-reviewers.py starters --into . code-reviewer pr-test-analyzer
 Keep a starter's name when you copy it in: dream scorecards, eval history and
 `.pi.agents` entries are keyed on it. Once copied, it's the repo's file to edit.
 
-### Legacy layout: defaults and overrides
-
-A repo still on `AGENT-REVIEWERS.md` (no root `.reviewers/`, or a root
-`AGENT-REVIEWERS.md` beside it) keeps the old behaviour until it converts. The
-six starters spawn as built-in defaults:
-
-| Legacy repo state | What spawns |
-|-----------------|-------------|
-| No `AGENT-REVIEWERS.md` and no `.reviewers/` | All 6 defaults |
-| `AGENT-REVIEWERS.md` with custom agents under `# Agents` | All 6 defaults + the custom agents |
-| A custom agent with the **same name** as a default | The custom one replaces that default |
-| `# Configuration` with `disabled: ["pr-test-analyzer"]` | The other 5 defaults |
-
-In the `.reviewers/` layout, `disabled` does nothing (discovery warns if it is
-set): remove a reviewer by deleting its file.
+A repo still on `AGENT-REVIEWERS.md` (`configuration.layout` is
+`"agent-reviewers"`) runs the six starters as built-in defaults. Its
+`disabled`, override and stale-pin rules are in
+[`references/legacy-layout.md`](references/legacy-layout.md).
 
 ### Configuration
 
@@ -782,7 +732,6 @@ Fields:
 - **`independent_validator`** — controls the per-finding validation step (see "Independent Validator Pipeline" below). All three nested fields are optional; defaults are `enabled: false`, `skip_for: []`, `uncertain_action: "post_with_annotation"`.
 - **`bots`** — map of external review bot name (`gemini`, `cursor`) to boolean. Bots default to enabled; an explicit `false` turns one off for the repo. See "Disabling an External Review Bot" below.
 - **`pi`** — run reviewers on non-Claude models. See "Pi Engine" below.
-- **`disabled`**, **`defaults_version_checked`** — legacy layout only. `disabled` lists defaults not to spawn; `defaults_version_checked` is the pin "Stale Pin Detection" compares.
 
 ### Disabling an External Review Bot
 
@@ -1027,32 +976,6 @@ No re-run of `discover-agents.sh` needed — round 1 picks up the new files natu
 
 Just continue to the next pre-loop step. The template install stays in place; no further writes happen. Track the decline via `TaskCreate` so the prompt doesn't re-fire if the loop happens to revisit this code path within the same invocation.
 
-### Stale Pin Detection (at loop start)
-
-**Legacy layout only.** A `.reviewers/` repo has no built-in defaults to fall behind, so `stale_pin` is always `false` there.
-
-Before round 1, the loop checks `defaults_version_checked` against `DEFAULTS_VERSION` (plugin root): the plugin version in which the default reviewers last changed. A pin at or above it is current, so most version bumps don't trigger a re-audit. The check is a deterministic semver compare, no LLM inference.
-
-**When you change the default reviewers** (add, remove or rename an agent in `agents/`, or change what one checks enough that a user should rethink their overrides), set `DEFAULTS_VERSION` to the new plugin version. Otherwise leave it alone.
-
-If the pin is missing, unparseable, or older than `DEFAULTS_VERSION`:
-
-```
-⚠️  AGENT-REVIEWERS.md was last audited against pr-review-loop v1.2.5.
-    Installed version: v1.3.0
-    Run `/pr-review-loop:audit-agents` to review changes, or
-    pass `--skip-stale-check` to proceed with current configuration.
-```
-
-The loop **exits non-zero** on stale pin. The user must either run the audit tool (which bumps the pin) or re-invoke the loop with `--skip-stale-check`.
-
-When `--skip-stale-check` is used, the merge-readiness summary at end-of-loop includes a bypass note so it isn't silently forgotten:
-
-```
-Note: ran with stale defaults pin (config v1.2.5, plugin v1.3.0).
-Consider running `/pr-review-loop:audit-agents`.
-```
-
 ### Spawning Summary
 
 Once the stale check passes (or `--skip-stale-check` is set), the loop emits a one-line summary of which agents are running and why, before any agent spawns:
@@ -1178,65 +1101,34 @@ Each finding's validator outcome is logged to `.beads/pr-review-loop/findings/<p
 
 ### Reviewer Files
 
-Each reviewer is one file, `.reviewers/<name>.md`. Helper scripts reviewers run
-live in `.reviewers/bin/`; notes for the orchestrator (guidelines, context, why
-something was retired) in `.reviewers/README.md`; settings in
-`.reviewers/config.json` (see "Configuration").
-
-```
-.reviewers/
-  README.md                      # orchestrator context, not a reviewer
-  config.json
-  security-reviewer.md
-  store-integrity-reviewer.md
-  bin/
-    check-migrations.sh
-```
-
-A reviewer file starts with a **header in its first 12 lines**. It is all the
-orchestrator reads to decide whether to spawn the reviewer (`summary` in
-`discover-agents.sh` output):
+One file per reviewer: `.reviewers/<name>.md`. Helper scripts go in
+`.reviewers/bin/`, orchestrator-only notes in `.reviewers/README.md`, settings
+in `.reviewers/config.json`. The first 12 lines are a header, and it is all the
+orchestrator reads (`summary` in `discover-agents.sh` output):
 
 ```markdown
 # store-integrity-reviewer
 model: haiku
-verification: mutation — breaks the write path in a scratch copy and shows the test that catches it
-**Checks:** writes keep the store's invariants (atomic replace, no partial files).
+verification: mutation
+**Checks:** writes keep the store's invariants.
 **Spawn when:** the diff writes under `store/`. Skip read-only changes.
 **Contents:** What to flag · Do not flag · Proving findings
 
 ## What to flag
-...
 ```
 
-- **`# <name>`** matches the file name. Names are kebab-case and never change
-  once used: dream markers, PR thread signatures and `.pi.agents` are keyed
-  on them.
-- **`model:`** is the Claude model (`sonnet`, `haiku`, `opus` or a `claude-*`
-  ID). Without one, or with anything else, the reviewer runs on Sonnet. Pi
-  routing stays in `config.json`.
-- **`verification:`** is the reviewer's usual proof mode (see "Verification").
-- **`**Checks:**`** is one line saying what it flags.
-- **`**Spawn when:**`** is the condition decided from a diff alone: paths,
-  imports, file types, kinds of change, and a skip rule if there is one. "When
-  relevant" decides nothing. Discovery warns when this line is missing from the
-  header or still says TODO.
-- **`**Contents:**`** lists the spec's sections, so the orchestrator knows what
-  the reviewer covers without reading it. **Required once a file passes 100
-  lines** (README.md included): Claude reads files with `head -n 100`, so
-  sections past that point are unread unless the contents line names them.
-  Discovery warns when it is missing.
+- The name matches the file and never changes: dream markers, thread
+  signatures and `.pi.agents` key on it.
+- `model:` is `sonnet`, `haiku`, `opus` or a `claude-*` ID; anything else runs
+  on Sonnet.
+- `Spawn when` must be decidable from a diff alone. Discovery warns when it is
+  missing or `TODO`.
+- `Contents` is required once a file passes 100 lines, since only the first 100
+  are read. Discovery warns when it is missing.
 
-Everything after the header is the spec, handed to the reviewer as its
-`instructions`. Anything the reviewer needs from the repo's rules goes here:
-README.md reaches the orchestrator, never a reviewer.
-
-**Legacy `AGENT-REVIEWERS.md`** still works: each `## <name>` under `# Agents`
-is a reviewer whose body is its spec, other H1 sections are orchestrator
-context, and a `.reviewers/<name>.md` beside it supplies the spec for an `##`
-whose body is just a summary. Every H2 under `# Agents` is spawned, so prose
-there is a bug (discovery warns). To move a repo over, see
-[`references/reviewers-dir.md`](references/reviewers-dir.md).
+The rest of the file is the reviewer's spec. Put any repo rule a reviewer needs
+in it: README.md reaches only the orchestrator. Legacy `AGENT-REVIEWERS.md`:
+see [`references/legacy-layout.md`](references/legacy-layout.md).
 
 ### Hierarchical Scoping
 
@@ -1309,17 +1201,6 @@ finding to skip its proof. Surface it per round:
 ```
 Reported: pr-test-analyzer=ok(mutation) comment-analyzer=ok(evidence-query) silent-failure-hunter=ok(mixed) foo=ok(undeclared)
 ```
-
-**Legacy layout: your charter declares only your own reviewers.** In an
-`AGENT-REVIEWERS.md`, do **not** add a `verification:` line under
-`## pr-test-analyzer` or any other default name. A user agent whose name
-matches a default *replaces* it (`discover-agents.sh:13`), so a section
-containing only a declaration substitutes ~20 characters for the entire shipped
-prompt — measured at 3,647 characters replaced by 22, reported as
-`kind=user-override`, with the roster silently lobotomised and the audit reading
-as complete. That is the failure this rule exists to catch, produced by following
-the rule carelessly. In the `.reviewers/` layout this cannot happen: a starter is
-copied in whole, and its header already carries its `verification:` line.
 
 **A charter on `main` does not govern a branch already open.** Reviewer files
 are read from the PR's branch, so a roster committed to `main` after a PR was cut
@@ -1514,17 +1395,9 @@ Task tool:
     — a control that has not been shown to work proves nothing by staying
     silent.
 
-    **Generated files are not yours to review.** Lockfiles, minified
-    bundles, source maps and `.beads/` exports are already dropped from
-    your file list; don't go looking at them.
-
-    **Code comments:** a comment earns its place by documenting something
-    surprising or hard-won. Flag a comment that doesn't for deletion, never
-    for rewording, and always as P3. Flag comments that tell the story of how
-    the code got here (history, past bugs, rejected alternatives) the same way.
-
-    **Keep your finding terse:** the defect, the proof, the fix. No
-    preamble, no restating the code.
+    **Comments:** flag a comment for deletion, as P3, unless it documents
+    something surprising or hard-won. Never ask for rewording. Keep findings
+    terse: the defect, the proof, the fix.
 
     **Never modify the working tree.** You review; you do not revert, stage, or
     fix. If you find the tree dirty or otherwise inconsistent, report it — do not
