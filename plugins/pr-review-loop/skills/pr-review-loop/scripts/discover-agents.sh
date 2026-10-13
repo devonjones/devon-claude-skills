@@ -331,8 +331,11 @@ for rdir in "${REVIEWER_DIRS[@]}"; do
         fi
         [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
             || echo "Warning: $rel_spec: '$name' is not a reviewer name (kebab-case), but it is spawned as one" >&2
-        head -n "$REVIEWER_HEADER_LINES" "$spec" | grep -qE '^\**Spawn when:?\**' \
+        header="$(head -n "$REVIEWER_HEADER_LINES" "$spec")"
+        grep -qE '^\**(Spawn when|When to spawn):?\**' <<< "$header" \
             || echo "Warning: $rel_spec has no 'Spawn when:' line in its first $REVIEWER_HEADER_LINES lines, so the orchestrator cannot tell when it applies" >&2
+        ! grep -qE '^\**(Checks|Spawn when):?\**:? *TODO' <<< "$header" \
+            || echo "Warning: $rel_spec has a TODO in its header; fill in what it checks and when to spawn it" >&2
         bin="$rel_dir/bin"
         [[ -d "$rdir/bin" ]] || bin=""
         section=$(jq -nc --rawfile body "$spec" --arg name "$name" --arg scope "$scope" --arg source "$rel_spec" \
