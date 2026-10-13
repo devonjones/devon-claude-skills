@@ -1,11 +1,11 @@
 ---
 name: youtube-synthesizer
-description: Turn a YouTube video into a faithful-capture literature note in an Obsidian vault, with optional Dropbox sync via rclone. Use when the user wants to ingest a video (explainer, howto, lecture) into their personal source notes corpus. Combines transcript + load-bearing visual frames + structured extraction. Auto-discovers vaults under ~/ObsidianVaults/ and offers to push the new entry to dropbox: after writing.
+description: Turn a YouTube video into a faithful-capture literature note in an Obsidian vault (transcript, load-bearing visual frames, structured extraction), with optional Dropbox sync via rclone. Use when the user gives a YouTube URL or video ID and wants to ingest, save, or take notes on it (explainer, howto, lecture) into their ObsidianVaults source notes.
 ---
 
 # YouTube Synthesizer
 
-Orchestrates `youtube-transcript` and `youtube-screenshotter` to produce an Obsidian literature note for a video. Drives image selection by *value-filter* — every candidate frame is classified by KIND, and only frames that communicate something the transcript words don't survive into the entry. All vision and reasoning runs on your own native capability — no separate API calls, no extra billing.
+Orchestrates `youtube-transcript` and `youtube-screenshotter` (each `<... scripts dir>` below is that skill's `scripts/` directory) to produce an Obsidian literature note for a video. Drives image selection by *value-filter* — every candidate frame is classified by KIND, and only frames that communicate something the transcript words don't survive into the entry. All vision and reasoning runs on your own native capability — no separate API calls, no extra billing.
 
 You — the agent running this skill — do the visual judgment inline as you follow the procedure below. The skill produces faithful capture of the source; downstream synthesis into the user's mental model is their job, not yours.
 
@@ -20,7 +20,7 @@ Optional:
 - **`<vault>`** — absolute path to the target Obsidian vault, **or** a vault name relative to `~/ObsidianVaults/`. The skill writes to `<vault>/sources/videos/<ingested-date>-<sanitized-title>/`. If omitted, see Phase D.1 for the discovery flow.
 - **`--rerun`** — overwrite an existing entry at the target path. Without this flag, the skill refuses to overwrite (Phase D.2).
 - **`--why <reason>`** — populate the `why_ingested` frontmatter field. If omitted, leave it as an empty string; the user can fill it in after.
-- **`--no-sync`** — skip the post-write Dropbox sync prompt (Phase D.6). Otherwise the skill asks after a successful write whether to push the new entry to `dropbox:ObsidianVaults/<vault-name>/sources/videos/<entry-dir>/`.
+- **`--no-sync`** — skip the post-write Dropbox sync prompt (Phase D.6). Otherwise the skill asks after a successful write whether to push the new entry to `dropbox:ObsidianVaults/<vault-name>/sources/videos/<channel>/<entry-dir>/`.
 
 If `<URL>` is missing, ask the user before starting work — do not guess. `<vault>` resolution is described in Phase D.1; do not guess that either.
 
@@ -37,7 +37,7 @@ Grouping by channel keeps a creator's videos together — opening `<vault>/sourc
 
 ## The value-filter principle
 
-> **Images appear in the wiki entry only when they communicate something the transcript words don't, or when they help explain the narrative — even if that means several in a row.**
+> **Images appear in the entry only when they communicate something the transcript words don't, or when they help explain the narrative — even if that means several in a row.**
 
 The skill does **not** treat visual change as the trigger for capturing a "scene." A typical explainer video is ~70% talking-head plus filler (title cards, pull-quote text cards, between-content transitions) and ~30% load-bearing visuals (diagrams, maps, charts, code, UI, b-roll). Only the load-bearing 30% should appear as images in the entry. Number of images per video is whatever the source has of substance: 0 in a pure-talking-head section, 4-in-a-row during an animated diagram explanation.
 
@@ -159,7 +159,7 @@ When a near-duplicate is detected, **keep the earlier frame** (it's the establis
 
 ### A.7. Whole-list audit pass
 
-Re-read every frame in the keep-list as a curated set and ask, for each one, "is this image actually useful in the entry?" This is a separate pass from per-frame classification (A.4): the per-batch sub-agents in A.4 each see only their own 10–20 frames, so cross-batch redundancy and accumulated drift are invisible there.
+Re-read every frame in the keep-list as a curated set and ask, for each one, "is this image actually useful in the entry?" This is a separate pass from per-frame classification (A.4): the per-batch sub-agents in A.4 each see only their own 10 frames, so cross-batch redundancy and accumulated drift are invisible there.
 
 **Delegate this to a single audit sub-agent** (Agent tool, `subagent_type: general-purpose`). The main agent passes the audit-agent the full keep-list (timestamp + frame_path + kind + note for every entry) and asks it to re-read the frames and return a JSON `[{timestamp, decision: "keep"|"drop", reason}, ...]`. The audit-agent reads the frames in its own context — the main agent never loads them. If the keep-list is large enough that even one sub-agent can't fit all the frames in 32 MB, partition by chapter or by index range and run several audit-agents in parallel.
 
@@ -180,195 +180,12 @@ The expected size depends entirely on the video's information density. A 1hr lec
 
 ---
 
-## Phase B — Frontmatter
+## Phases B and C — Frontmatter and structured extraction
 
-This phase assembles the YAML frontmatter from the screenshotter's metadata block.
-
-### B.1. Generate the frontmatter dictionary
-
-The frontmatter has two parts: a base schema shared with future article/pdf/substack source-skills (so the future sqlite3 indexer joins on a single contract), and YouTube-specific extras alongside.
-
-**Base schema:**
-
-```yaml
-source_type: youtube
-source_url: <metadata.source_url>
-source_title: <metadata.source_title>
-source_author: <metadata.source_author>           # channel display name for YouTube
-source_published_date: <metadata.source_published_date>   # YYYY-MM-DD
-source_description: |
-  <metadata.description verbatim from yt-dlp — author-written video description.
-  Block-scalar YAML so multi-line is fine. Leave empty string if no description.>
-ingested_date: <today's date in YYYY-MM-DD>
-tags: []           # populated by Phase C
-topics: []         # populated by Phase C
-why_ingested: ""   # optional; from --why flag at invocation time
-```
-
-`source_description` is the verbatim author-written description. It is **not** rendered in the body — it would duplicate TL;DR / takeaways. It lives in frontmatter only, where it serves two purposes:
-
-1. **Hallucination check** — Phase C compares the agent-generated TL;DR against this prose. If the TL;DR introduces framing not grounded in either the transcript or the description, the agent has drifted.
-2. **Searchable reference** — the user (or a future re-run with an updated SKILL.md) can compare against the original.
-
-**YouTube-specific extras** (alongside the base, not nested):
-
-```yaml
-video_id: <metadata.video_id>
-channel: <metadata.channel>            # mirror of source_author for in-context clarity
-channel_id: <metadata.channel_id>      # stable handle, survives channel renames
-playlist_id: <metadata.playlist_id>    # null unless invoked via playlist URL
-playlist_title: <metadata.playlist_title>
-duration_seconds: <metadata.duration_seconds>
-chapter_markers:                       # if present in metadata; otherwise omit
-  - title: "..."
-    start_time: 0.0
-    end_time: 153.0
-transcript_corrections: []  # populated by Phase C / Phase D as soft-corrects are applied
-```
-
-`transcript_corrections` is a list of `{original, corrected, timestamp}` entries logging every soft-correct the synthesizer applied to the auto-caption text. Auditable; lets a future linter spot systematic captioner failures across the corpus. Empty list if no corrections were applied.
-
-`channel_id` is the key for future "process all videos from this channel and cross-link them" runs — channels can rename themselves, IDs are stable.
-
-**Frontmatter discipline:** strict key-value, no narrative prose. Structured data (lists of objects) is fine — `chapter_markers` and `transcript_corrections` are both lists of dicts. Narrative content goes in the body, never in frontmatter.
+Read [references/frontmatter-and-extraction.md](references/frontmatter-and-extraction.md) before starting Phase B. It defines the frontmatter schema (B.1) and the body sections: TL;DR, key takeaways, description check, references, commands and code, tags and topics, and the auto-caption soft-correct policy (C.1-C.8). Phase D cites those section numbers.
 
 ---
 
-## Phase C — Structured extraction
-
-Produces the body sections of the wiki entry plus the `tags` / `topics` frontmatter and the `transcript_corrections` log. Source-faithful: extract what the video communicated; do not interpret or synthesize. Use the transcript text, the video description, and (for Commands & Code) what's visible in kept frames.
-
-### C.1. TL;DR
-
-1–2 sentences capturing the video's central claim or thesis. The highest-leverage section for re-discovery six months later — the user reads this to remember what the video was about.
-
-Source: transcript primarily. Look for explicit thesis statements (often in the first 60s and the final 60s), the chapter titles (especially the first), and the title.
-
-Avoid: editorializing ("an interesting take on..."), interpretation ("the video argues that... but..."), framing for any particular use case.
-
-### C.2. Key takeaways
-
-3–5 bullets, each a single sentence, capturing the points the video makes that the user will want to remember.
-
-Source: transcript. A takeaway is a substantive claim the presenter makes — not a section header. "Three days is the maximum economic distance for hauling grain by ox" is a takeaway; "The presenter discusses grain hauling" is not.
-
-Avoid: meta-statements about the video itself, restating the title, padding the list to hit a count (3 strong bullets beat 5 weak ones).
-
-### C.3. Hallucination check via description
-
-Before finalizing the TL;DR and key takeaways, compare them against the verbatim video description (`source_description` from Phase B):
-
-- Many channels include an "ABOUT THIS VIDEO" prose block in the description that summarizes the video's premise in the author's own words. This is ground truth for what the video is about.
-- If the agent-generated TL;DR introduces framing or claims that aren't grounded in **either** the transcript **or** the description, the agent has drifted — re-do the TL;DR.
-- Bias toward attribution-implicit voice rather than asserting claims as fact. An entry in `sources/videos/` is by definition a record of what the source said; the framing should make that clear without explicit "the video argues..." hedging on every sentence.
-
-This is a check, not a copy. Do not paste the description prose into the TL;DR. Use it to detect drift.
-
-### C.4. Description-driven references
-
-Pull the references list from the video description, not from the transcript prose. The description is where authors put the actual URLs they're pointing at; the transcript contains the verbal mentions ("check out my Discord," "see the resources on my website") but rarely the URLs themselves.
-
-**Where references come from (in priority order):**
-
-1. **URLs in the video description** (`metadata.description`). Most cited resources live here. Extract via regex on `https?://` and `www.` prefixes.
-2. **URLs spoken in-video and captured by the transcript** (rare, but worth catching).
-3. **People / titles named in the video without explicit URLs** — emit as plain text (no fabricated URLs).
-
-**URL classification** (kept vs dropped):
-
-| Keep | Drop |
-|---|---|
-| Author's resource page / website (when video mentions specific content there) | Patreon / "support me" / tip jar |
-| Project / tool homepages that are the topic of the video | Merch / store URLs |
-| Cited papers, articles, books | Sponsor codes / affiliate links |
-| GitHub / source code | Generic social media handles (X, IG, TikTok) |
-| Related videos on the same topic | Newsletter signups (unless newsletter is itself the cited source) |
-| Community spaces (Discord, forum) **only when video points at specific topical content there** | Generic "join my community" with no specific in-video reference |
-| Standalone documentation links | Linktree / link-aggregator URLs (resolve to the destination if possible, drop if not) |
-
-**Output format:** one bullet per kept reference, with the actual URL and a one-line annotation noting why it was cited:
-
-```markdown
-- [The Grainbound resources page](https://thegrainbound.com/resources/) — host of the worksheet and practice map referenced in chapter 4.
-- [The Grainbound Discord](https://discord.gg/PTnt72aj8B) — community where the worksheet+map are pinned.
-- A separate video on vassal/loyalty systems — referenced at workflow step 7 (no URL provided in description).
-```
-
-**Avoid auto-generated wikilinks at this skill version.** Cross-references between video entries should emerge organically as the corpus grows; auto-linking on heuristic guesses tends to produce noise. A future cross-source linker (sqlite3-backed) will resolve names to wikilinks once matching `sources/` entries exist.
-
-### C.5. Commands & Code
-
-For howto / technical videos: every shell command, code block, or configuration the presenter demonstrates or types out, captured as code blocks with the language tag.
-
-Source: kept frames where code is visible (read the image, transcribe verbatim) plus transcript where the presenter narrates a command.
-
-For non-technical videos (worldbuilding, history, design discussion), this section is omitted entirely — do not pad with pseudo-commands.
-
-Format:
-
-```python
-# from frame at 04:32 — the main loop the presenter demonstrates
-for x in range(10):
-    process(x)
-```
-
-Each block gets a one-line lead-in noting the timestamp it came from, so the reader can locate the visual context.
-
-### C.6. Tags + topics
-
-Populate the frontmatter `tags` and `topics` fields with a controlled list extracted from the video's content.
-
-- **`topics`** — broad subject categories (e.g. `worldbuilding`, `medieval-history`, `economics`, `joinery`, `python`). 1–4 entries. Helps the user filter the corpus along the major axes they think about. Match the user's existing vocabulary if you can see prior entries in the same vault.
-- **`tags`** — finer-grained markers (e.g. `grain-supply`, `oxen`, `radius-of-effect`, `dovetails`, `unit-tests`). 3–8 entries. These power the future sqlite3 FTS index more than topics do.
-
-Both lists must be kebab-case strings, no spaces, no special characters. Do not invent vague tags (`interesting`, `useful`); every entry should map to a concrete subject.
-
-### C.7. Auto-caption soft-correct policy
-
-YouTube's auto-captioner produces transcription errors that propagate verbatim into the wiki entry under a strict "do not change words" rule. Examples: *"kills for measurement"* (meant *"scales for measurement"* — homophone misread). This breaks future full-text search ("scales" matches no results) and produces gibberish in the rendered prose.
-
-The synthesizer is allowed — and required — to **soft-correct** these obvious mis-transcriptions when composing the body prose in Phase D.
-
-**Categories to correct:**
-
-- **Homophones** — *kills↔scales, their↔there↔they're, write↔right, hear↔here, principle↔principal* — when the intended word is unambiguous from the surrounding sentence.
-- **Garbled compound words** — caption merges or splits words wrongly (e.g. *"a head"* → *"ahead"* in motion contexts; *"every day"* vs *"everyday"* per usage).
-- **Dropped articles** — when the sentence is otherwise grammatical and a missing *the/a/an* is obvious.
-
-**Categories NOT to correct:**
-
-- Paraphrasing or summarizing — the discipline of source-faithfulness applies to *what the presenter intended to say*, not to "improving" their delivery. Do not condense filler words, repair sentence fragments, or smooth out mid-sentence corrections the presenter made themselves.
-- Ambiguous cases — when you're not confident which word the presenter meant, leave the caption verbatim. Better to have one piece of garbled text than to invent the wrong word.
-- Domain jargon you don't recognize — a word you find unfamiliar isn't necessarily a mis-transcription.
-
-**Logging corrections.** For every correction applied, append an entry to the `transcript_corrections` frontmatter list:
-
-```yaml
-transcript_corrections:
-  - original: "kills"
-    corrected: "scales"
-    timestamp: 320.5
-  - original: "their"
-    corrected: "there"
-    timestamp: 487.2
-```
-
-The timestamp is the transcript-snippet timestamp where the original word appears. Logging makes corrections auditable and lets a future linter spot systematic captioner failures across the corpus.
-
-### C.8. Output of Phase C
-
-You now hold:
-
-- A TL;DR string (validated against `source_description`)
-- A key-takeaways bullet list
-- A references list (description-driven, filtered, with URLs)
-- A commands-and-code block list (or empty)
-- Populated `tags` and `topics` arrays for the frontmatter
-- A `transcript_corrections` list of soft-corrects applied (so far — Phase D applies more during prose composition and appends to this list)
-
-These are consumed by Phase D (output writing).
-
----
 
 ## Phase D — Output writing
 
@@ -515,8 +332,6 @@ The result, per chapter:
 <consolidated list from Phase C.5, or omit the section entirely if empty>
 ```
 
-In flat mode, replace the chapter sections with a single `## Body` containing all the reflowed prose.
-
 Notes:
 
 - Image embeds use Obsidian's wikilink form `![[image-NN.png]]` since the file is in the same per-note folder. This renders inline in Obsidian and remains a valid relative reference if the entry is moved.
@@ -550,9 +365,9 @@ The synthesizer ships a wrapper script that is the **only** sanctioned way to in
 
 The script enforces the convention in code:
 
-- Source must resolve under `~/ObsidianVaults/<vault>/sources/videos/<entry-dir>/` with exactly that path shape; anything else is rejected before rclone runs.
-- Target is *computed* by the script as `dropbox:ObsidianVaults/<vault>/sources/videos/<entry-dir>/`; the agent does not get to specify it. Targets at the Dropbox root, the `ObsidianVaults/` parent, the vault root, the `sources/` dir, or the `videos/` dir are explicitly refused.
-- The destination vault dir (`dropbox:ObsidianVaults/<vault>/`) must already exist on Dropbox before the sync runs, verified via `rclone lsd`. This catches the typo case where a misspelled vault name (`woldbuilding` instead of `worldbuilding`) would otherwise silently create a new dir on Dropbox and orphan the entry. Vault creation is intentionally a manual gesture: if the user really is bootstrapping a new vault, the error message tells them to run `rclone mkdir dropbox:ObsidianVaults/<vault>/` once, then re-try the sync.
+- Source must resolve under `~/ObsidianVaults/<vault>/sources/videos/<entry-dir>/` with exactly that path shape (`<vault>/sources/videos/<channel>/<entry-dir>/`); anything else is rejected before rclone runs.
+- Target is *computed* by the script as `dropbox:ObsidianVaults/<vault>/sources/videos/<channel>/<entry-dir>/`; the agent does not get to specify it. Targets at the Dropbox root, the `ObsidianVaults/` parent, the vault root, the `sources/` dir, the `videos/` dir, or the channel dir are explicitly refused.
+- The destination vault dir (`dropbox:ObsidianVaults/<vault>/`) and channel dir must already exist on Dropbox before the sync runs, verified via `rclone lsd`, so a misspelled name cannot silently create a new dir. For a genuinely new vault or channel, the error message gives the one-time `rclone mkdir` command; run it, then retry the sync.
 - Missing rclone or unconfigured `dropbox:` remote → the script reports the issue and exits non-zero without invoking rclone.
 
 The agent **must not** invoke `rclone` directly anywhere in this skill — there is no situation where calling rclone outside this script is correct. Users with a different vault layout or remote name should run rclone manually outside the skill rather than try to subvert the script.
@@ -563,23 +378,16 @@ The agent **must not** invoke `rclone` directly anywhere in this skill — there
 2. Ask: *"Sync this entry to Dropbox now?"*
 3. On yes, run:
    ```
-   <youtube-synthesizer scripts dir>/sync_to_dropbox.sh <vault>/sources/videos/<entry-dir>
+   <youtube-synthesizer scripts dir>/sync_to_dropbox.sh ~/ObsidianVaults/<vault>/sources/videos/<channel>/<entry-dir>
    ```
    Block on completion; report success or the script's error message verbatim.
-4. On no, print *"Skipped sync. Run later with: sync_to_dropbox.sh <entry-dir>"* so the user has the exact command if they change their mind.
-
-### D.7. Failure-mode degradations (current scope)
-
-- Re-running on existing entry without `--rerun`: print message, exit (D.2).
-- Very short video (≤ 3 min) or no `chapter_markers`: force flat structure (D.4.a).
-- Live stream / unavailable / no transcript: handled in Phase A; Phase D is unreachable in those cases.
-- rclone not installed or `dropbox:` remote not configured: report the rclone error verbatim, leave the local entry intact, and suggest the user install/configure rclone or re-run with `--no-sync`.
+4. On no, print *"Skipped sync. Run later with: sync_to_dropbox.sh <absolute-entry-dir>"* so the user has the exact command if they change their mind.
 
 ---
 
 ## Previewing an entry
 
-Wiki entries use Obsidian's wikilink syntax (`![[image-NN.png]]`) which doesn't render in standard markdown viewers. The `scripts/preview.py` helper renders any entry to HTML and serves the entry directory over HTTP — useful on a headless box where you can't open Obsidian directly.
+Entries use Obsidian's wikilink syntax (`![[image-NN.png]]`) which doesn't render in standard markdown viewers. The `scripts/preview.py` helper renders any entry to HTML and serves the entry directory over HTTP — useful on a headless box where you can't open Obsidian directly.
 
 ```
 <youtube-synthesizer scripts dir>/preview.py <entry-dir> [--port 8765] [--bind 0.0.0.0]
@@ -589,19 +397,13 @@ Pass either an entry directory (containing exactly one `*.md` file plus `image-N
 
 Use `--no-serve` to render the HTML and exit without starting the server. Use `--bind 127.0.0.1` to restrict to localhost when working on a shared box.
 
-The script is stdlib-only (no dependencies). It is generic over wiki entries — any future source-type skill that produces this same per-note folder structure can use it too.
+The script is stdlib-only (no dependencies). It is generic over entries with this per-note folder structure.
 
 ---
 
 ## Discipline: faithful capture, no editorializing
 
-The skill's job is to deliver "here is what this video said and showed, structured and searchable" — not to weave the content into the user's mental model. That weaving is downstream, in the vault root where the user (and you, in other tasks) builds permanent notes on top of these literature notes.
-
-Concretely: do not reframe content for any particular use case (worldbuilding, debugging, learning), do not add interpretive headers, do not editorialize the presenter's claims. Capture what was said and shown.
-
-The agent's voice should not blend with the presenter's voice. The synthesizer-generated TL;DR and takeaways describe the video's claims — they should attribute claims to the video implicitly through the document's framing (an entry in `sources/videos/` is by definition a record of what the source said) rather than asserting claims as undisputed facts.
-
-The soft-correct policy (Phase C.7) is the one place the skill modifies words. It applies *only* to obvious auto-caption mis-transcriptions, never to paraphrasing or "improving" delivery. Every correction is logged in `transcript_corrections` for auditability.
+Deliver what the video said and showed, structured and searchable. Do not reframe content for a use case, add interpretive headers, or editorialize the presenter's claims; weaving it into the user's mental model is downstream work. The TL;DR and takeaways attribute claims to the video implicitly through the entry's framing, not as undisputed fact. The only word changes allowed are the logged soft-corrects (C.7).
 
 ---
 
@@ -617,6 +419,7 @@ The soft-correct policy (Phase C.7) is the one place the skill modifies words. I
 
 - **No transcript available** (no captions, foreign language) → error early with a clear message; stop
 - **Video unavailable** (private, members-only, age-restricted, geo-blocked) → error early; stop
-- **Live streams** → refuse for now (no fixed endpoint to sample over)
-- **Very short videos** (≤ 3 min) → flat-mode rendering, no chapter sections
-- **Video has chapter markers but they don't cover the full duration** → see Phase D.4.c gap-handling rule
+- **Live streams** → refuse (no fixed endpoint to sample over)
+- **Entry already exists, no `--rerun`** → D.2
+- **Short video or incomplete chapter coverage** → D.4.a, D.4.c
+- **rclone missing or `dropbox:` remote unconfigured** → report the script's error verbatim, leave the local entry intact, suggest installing/configuring rclone or using `--no-sync`
