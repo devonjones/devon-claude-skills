@@ -13,6 +13,8 @@ description: |
 
 # PR Review Loop
 
+**Contents:** [⛔ STOP - READ THIS FIRST ⛔](#-stop---read-this-first-) · [⚠️ Do NOT Run as a Background Task Agent](#-do-not-run-as-a-background-task-agent) · [Supported Review Bots](#supported-review-bots) · [Comment Formats: Line Comments vs PR Comments](#comment-formats-line-comments-vs-pr-comments) · [Critical: Be Skeptical of Reviews](#critical-be-skeptical-of-reviews) · [Pattern Analysis: Sweep Before Fixing](#pattern-analysis-sweep-before-fixing) · [Convergence](#convergence) · [Merge Readiness](#merge-readiness) · [Choosing the Roster](#choosing-the-roster) · [Local Mode — one review before you push](#local-mode--one-review-before-you-push) · [Autonomous Loop Workflow](#autonomous-loop-workflow) · [CI Failure Handling](#ci-failure-handling) · [Reply Templates](#reply-templates) · [Out of Scope Suggestions (Beads Integration)](#out-of-scope-suggestions-beads-integration) · [Triggering Reviews by Bot Type](#triggering-reviews-by-bot-type) · [Agent Reviewers](#agent-reviewers) · [Suggesting Reviewer Changes](#suggesting-reviewer-changes) · [Dream Markers (reviewer telemetry)](#dream-markers-reviewer-telemetry) · [Rate Limit Detection](#rate-limit-detection) · [Scripts](#scripts) · [Permission Setup](#permission-setup) · [Prerequisites](#prerequisites)
+
 ## ⛔ STOP - READ THIS FIRST ⛔
 
 ### 1. Locate the scripts directory

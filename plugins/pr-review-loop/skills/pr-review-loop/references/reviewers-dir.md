@@ -1,5 +1,7 @@
 # Converting a repo to `.reviewers/`
 
+**Contents:** [1. Snapshot the roster](#1-snapshot-the-roster) · [2. Convert](#2-convert) · [3. Choose starters](#3-choose-starters) · [4. Assess every reviewer](#4-assess-every-reviewer) · [5. Verify](#5-verify) · [6. Commit](#6-commit)
+
 You are moving a repo's reviewers from `AGENT-REVIEWERS.md` to the default
 layout, where each reviewer is its own file. `SKILL.md` ("Reviewer Files")
 has the format. This file is the procedure: convert, choose starters, assess,
