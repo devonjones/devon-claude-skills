@@ -94,8 +94,9 @@ get_check_status() {
 
     if [[ "$pending" -gt 0 ]]; then
         echo "pending:$pending/$total"
-    elif [[ "$fail" -gt 0 ]]; then
-        echo "failing:$fail/$total"
+    elif [[ "$fail" -gt 0 || "$pass" -lt "$total" ]]; then
+        # A conclusion none of the lists names (STALE, a new one) is not a pass.
+        echo "failing:$((total - pass))/$total"
     else
         echo "passing:$pass/$total"
     fi

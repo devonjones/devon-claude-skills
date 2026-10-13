@@ -96,6 +96,8 @@ check "REST failure reports the REST call's own error" \
 echo "=== check-ci.sh ==="
 RUNS_OK='{"check_runs":[{"name":"t","status":"completed","conclusion":"success"}]}'
 RUNS_BAD='{"check_runs":[{"name":"t","status":"completed","conclusion":"failure"}]}'
+RUNS_STALE='{"check_runs":[{"name":"t","status":"completed","conclusion":"stale"}]}'
+RUNS_RUNNING='{"check_runs":[{"name":"t","status":"in_progress","conclusion":null}]}'
 
 STUB_HEAD="$SHA_A" STUB_RUNS="$RUNS_OK" run check-ci.sh 1
 check "passing checks exit 0" "$RC" 0
@@ -103,6 +105,12 @@ check "verdict is read from the head commit" "$(grep -c "commits/$SHA_A/check-ru
 
 STUB_HEAD="$SHA_A" STUB_RUNS="$RUNS_BAD" run check-ci.sh 1
 check "failing checks exit 1" "$RC" 1
+
+STUB_HEAD="$SHA_A" STUB_RUNS="$RUNS_STALE" run check-ci.sh 1
+check "unclassified conclusion (stale) is not a pass" "$RC" 1
+
+STUB_HEAD="$SHA_A" STUB_RUNS="$RUNS_RUNNING" run check-ci.sh 1
+check "in-progress run reports pending" "$(grep -c 'still running' <<<"$OUT" || true)" 1
 
 STUB_HEAD="$SHA_A" run check-ci.sh 1
 check "no check runs exits 0" "$RC" 0
@@ -116,6 +124,18 @@ check "--wait: check runs unreadable until timeout exits 2" "$RC" 2
 
 STUB_HEAD_FAIL=1 run check-ci.sh 1
 check "unresolvable head SHA exits 2" "$RC" 2
+
+STUB_HEAD="garbage" STUB_RUNS="$RUNS_OK" run check-ci.sh 1
+check "malformed head SHA exits 2" "$RC" 2
+
+STUB_HEAD="$SHA_A" STUB_RUNS="$RUNS_OK" run check-ci.sh 1 --wait
+check "--wait: passing checks exit 0" "$RC" 0
+
+STUB_HEAD="$SHA_A" STUB_RUNS="$RUNS_BAD" run check-ci.sh 1 --wait
+check "--wait: failing checks exit 1" "$RC" 1
+
+STUB_HEAD="$SHA_A" STUB_RUNS="$RUNS_RUNNING" run check-ci.sh 1 --wait --timeout 30
+check "--wait: still running at timeout exits 2" "$RC" 2
 
 STUB_HEAD="$SHA_A" STUB_HEAD_LATER="$SHA_B" STUB_RUNS="$RUNS_OK" run check-ci.sh 1 --wait
 check "--wait: head moved exits 3" "$RC" 3
