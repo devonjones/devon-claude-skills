@@ -16,7 +16,7 @@
 # Callers must treat 2 as "enabled" (a config we can't read must never
 # silently switch a bot off) but must NOT report it as a config decision, so
 # they compare the return code against 1 rather than testing for success:
-# inline in commit-and-push.sh and trigger-review.sh, via a `bot_disabled`
+# inline in trigger-review.sh, via a `bot_disabled`
 # helper in get-review-comments.sh (which asks twice). Exit 2 is deliberately
 # distinct from 0 so "your config is broken" can't masquerade as "you turned
 # this off", which is exactly the failure a silent `|| exit 0` would hide.

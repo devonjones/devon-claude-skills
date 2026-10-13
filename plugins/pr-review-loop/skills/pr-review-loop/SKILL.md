@@ -19,32 +19,17 @@ description: |
 
 ### 1. Locate the scripts directory
 
-**FIRST**, use the Glob tool to find the scripts:
-```
-Glob pattern: **/pr-review-loop/*/scripts/commit-and-push.sh
-Path: ~/.claude/plugins/cache
-```
-This gives you the full absolute path to the scripts directory.
+Glob `**/skills/pr-review-loop/scripts/discover-agents.sh` under `~/.claude`. It
+matches both the plugin cache and a `~/.claude/skills/` checkout. Call every
+script by that full path. The examples below write `scripts/` for short.
+Permission allowlists match the literal command, so don't route calls through
+variables or `&&` chains.
 
-**Then use the full literal path for every script call.** For example:
-```bash
-/home/user/.claude/plugins/cache/devon-claude-skills/pr-review-loop/1.0.0/skills/pr-review-loop/scripts/commit-and-push.sh "msg"
-```
+### 2. Commit only what the round reviewed
 
-**NEVER use variables** like `$SCRIPTS/commit-and-push.sh` — this breaks permission matching.
-**NEVER use compound commands** like `export PATH=... && commit-and-push.sh` — this also breaks permissions.
-**Always inline the full absolute path** in every Bash call.
-
-### 2. No raw git commands
-
-| ❌ FORBIDDEN | ✅ USE INSTEAD |
-|--------------|----------------|
-| `git commit` | `scripts/commit-and-push.sh "msg"` |
-| `git commit -m "..."` | `scripts/commit-and-push.sh "msg"` |
-| `git push` | `scripts/commit-and-push.sh "msg"` |
-| `git push origin` | `scripts/commit-and-push.sh "msg"` |
-
-**If you use `git commit` or `git push` directly, it will be BLOCKED.**
+Stage the round's files by name, then `git commit` and `git push`. Never
+`git add -A`: it sweeps in edits no reviewer saw. The repo's pre-commit hooks run
+as usual.
 
 ### 3. The PR is the system of record — agents RECORD, one script POSTS
 
@@ -452,8 +437,8 @@ pushed code as usual.
 ## Autonomous Loop Workflow
 
 **CRITICAL RULES - NEVER VIOLATE THESE:**
-1. **ALWAYS use full absolute paths for scripts** - Glob once to find the scripts directory, then inline the full path in every Bash call. NEVER use variables or compound commands (see setup at top of document)
-2. **ALWAYS use `commit-and-push.sh`** - NEVER `git commit` or `git push` (see table at top of document)
+1. **Call scripts by their full path** (see ⛔ rule 1)
+2. **Commit only the round's files** (see ⛔ rule 2)
 3. **ALWAYS reply to EVERY comment**:
    - Line comments (Gemini, agents): use `reply-to-comment.sh`
    - PR comments (Claude): use `gh pr comment` with consolidated response
@@ -545,7 +530,7 @@ CI FIX SUB-LOOP (max 3 attempts per round):
 │    a. Read the failure logs from check-ci output  │
 │    b. Diagnose the root cause                     │
 │    c. Apply a MINIMAL, TARGETED fix               │
-│    d. commit-and-push.sh "fix: CI failure desc"   │
+│    d. Commit the fix (⛔ rule 2) and push         │
 │    e. Go to step 1 (decrement retry counter)      │
 │ 4. If max retries exhausted → STOP and ask user   │
 └──────────────────────────────────────────────────┘
@@ -584,8 +569,8 @@ scripts/check-ci.sh <PR> --wait
 # Fix it
 # (edit the file to add the missing blank line)
 
-# Push the fix
-scripts/commit-and-push.sh "fix: lint error in utils.py"
+# Commit and push the fix
+git add src/utils.py && git commit -m "fix: lint error in utils.py" && git push
 
 # Check again
 scripts/check-ci.sh <PR> --wait
@@ -811,7 +796,7 @@ them). Turn one off with `# Configuration .bots`:
 A disabled bot means, for the whole loop:
 
 - **Do NOT post `/gemini review`** or any other manual trigger comment for it — not via a script, not via `gh pr comment`.
-- **Do NOT wait for its review.** `trigger-review.sh <PR> --gemini` exits immediately, `commit-and-push.sh --trigger-review` skips the trigger, and `get-review-comments.sh --wait` skips its 5-minute poll when every external bot is disabled.
+- **Do NOT wait for its review.** `trigger-review.sh <PR> --gemini` exits immediately, and `get-review-comments.sh --wait` skips its 5-minute poll when every external bot is disabled.
 - **Skip its COLLECT step.** With Gemini off, C1 stops being a wait on Gemini. Drop `--wait` only when *every* external bot is off — if Cursor is still enabled it auto-reviews on push and C1 must keep waiting for it. With all of them off, C1 is a plain fetch of existing line comments (agent-posted threads from prior rounds) and the round's real reviewers are the C3 agents.
 - **Do not fall back "because Gemini is missing."** Disabled is not rate-limited; there is no quota to wait out and no substitute round to run.
 
@@ -1807,7 +1792,6 @@ When detected, the script suggests:
 
 | Script | Purpose |
 |--------|---------|
-| `commit-and-push.sh "msg"` | **ALWAYS USE** - Never use raw git commit/push |
 | `reply-to-comment.sh <PR> <id> "msg"` | **ALWAYS USE** - Reply and auto-resolve every comment |
 | `get-review-comments.sh <PR> [--with-ids] [--wait]` | **USE --wait** - Fetch line comments (Gemini, Cursor), polls 5min if --wait |
 | `get-pr-comments.sh <PR> [--with-ids] [--wait] [--author]` | Fetch PR-level comments (Claude, Copilot) with priority detection |
@@ -1837,7 +1821,8 @@ When detected, the script suggests:
 
 To enable autonomous loops, user should grant access:
 ```
-Bash(scripts/commit-and-push.sh:*)
+Bash(git commit:*)
+Bash(git push:*)
 Bash(scripts/reply-to-comment.sh:*)
 Bash(scripts/trigger-review.sh:*)
 Bash(scripts/check-ci.sh:*)
