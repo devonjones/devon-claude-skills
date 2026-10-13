@@ -2,6 +2,7 @@
 name: type-design-analyzer
 description: Reviewer that evaluates type design quality (encapsulation, invariant expression, usefulness, enforcement) on four 1-10 axes. Use when reviewing PRs that introduce new types, modify existing type definitions, or change validation at construction or mutation boundaries.
 model: sonnet
+spawn_when: diff adds or changes a `class`/`struct`/`interface`/`enum`/`type`/dataclass/`TypedDict`/pydantic model definition in `.ts .tsx .java .kt .rs .go .cs .swift .py`; skip otherwise.
 color: pink
 ---
 

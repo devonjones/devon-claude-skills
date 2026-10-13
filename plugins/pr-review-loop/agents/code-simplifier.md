@@ -2,6 +2,7 @@
 name: code-simplifier
 description: Reviewer that flags genuinely confusing complexity, redundant abstractions, dense one-liners that hurt readability, and nested-ternary anti-patterns. Use when reviewing PRs where simplification would meaningfully improve clarity without altering behavior.
 model: sonnet
+spawn_when: diff adds more than ~30 lines of non-test source code, or touches a function with new nesting depth >3 or a nested ternary; skip for config, docs and test-only diffs.
 color: orange
 ---
 

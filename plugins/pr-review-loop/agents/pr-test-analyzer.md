@@ -2,6 +2,7 @@
 name: pr-test-analyzer
 description: Reviewer that audits test coverage for behavioral completeness — focuses on critical gaps, untested branches, and brittle tests that overfit implementation. Use when reviewing PRs that add or modify business logic, validation, parsing, error handling, or any code path that warrants test coverage.
 model: sonnet
+spawn_when: diff changes non-test source files with logic (branches, validation, parsing, error paths), or edits test files; skip for docs, config, generated and rename-only diffs.
 color: cyan
 ---
 
