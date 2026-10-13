@@ -26,3 +26,7 @@ __pycache__/
 # deliberately: untracking it is a change the other box inherits, so it waits
 # for agreement rather than being decided on one machine.
 .beads/dolt-monitor.pid
+
+# bd runtime state (per-machine: lock, Dolt server port and local path).
+/.beads.gate.lock
+.beads/dolt-server-config.yaml
