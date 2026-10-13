@@ -98,9 +98,9 @@ def main():
             for part in response.parts:
                 if part.inline_data:
                     current_image = part.as_image()
-                    print(f"Image generated! Use 'save <filename>' to save it.")
+                    print("Image generated! Use 'save <filename>' to save it.")
                 elif part.text:
-                    print(f"Claude: {part.text}")
+                    print(f"Model: {part.text}")
 
         except Exception as e:
             print(f"Error: {e}")

@@ -1,18 +1,16 @@
 ---
 name: nano-banana
-description: Generate, edit, and compose images using Google's Gemini 3 Pro Image model (Nano Banana Pro). Use this skill when the user asks to create images, generate visuals, edit photos, compose multiple images, create logos, thumbnails, infographics, product shots, or any image generation task. Supports text-to-image, image editing, multi-image composition (up to 14 images), iterative refinement, aspect ratio control, and Google Search-grounded image generation for real-time data visualization.
+description: Generate, edit, and compose images with Google's Gemini 3 Pro Image model (Nano Banana Pro). Use when the user asks to create or edit an image, photo, logo, thumbnail, infographic or product shot, combine up to 14 images, refine an image over several turns, or make an image from live Google Search data.
 ---
 
 # Nano Banana Pro
-
-Image generation skill powered by Google's Gemini 3 Pro Image model. Enables text-to-image generation, image editing, multi-image composition, and real-time data visualization.
 
 ## Requirements
 
 - `GEMINI_API_KEY` environment variable set
 - Python packages: `google-genai`, `Pillow`
 
-Install dependencies:
+Install dependencies (paths in this skill are relative to the skill directory):
 ```bash
 pip install -r requirements.txt
 ```
@@ -89,7 +87,7 @@ python scripts/generate_image.py "A kawaii red panda sticker, bold outlines, cel
 
 ### Iterative Design Refinement
 
-Use the chat script for back-and-forth refinement:
+`chat_image.py` reads prompts from stdin, so the user runs it in their own terminal; Claude cannot drive it. For refinement from Claude, re-run `edit_image.py` on the previous output.
 
 ```bash
 python scripts/chat_image.py
@@ -106,31 +104,15 @@ Then interact:
 
 ### Real-Time Data Visualization
 
-Generate infographics with current data:
-
 ```bash
 python scripts/search_grounded_image.py "Visualize today's weather in Tokyo as an infographic" tokyo_weather.png --aspect 9:16
 ```
 
-Use cases:
-- Live stock-market infographics
-- Breaking-news visuals
-- Weather dashboards
-- Current event visualizations
-
 ### Multi-Image Composition
-
-Combine reference images:
 
 ```bash
 python scripts/compose_images.py "Create a product comparison shot with these items side by side, professional lighting" comparison.png item1.png item2.png item3.png --aspect 16:9
 ```
-
-Use cases:
-- Product comparison shots
-- Character sheets
-- Team photos
-- Style-consistent image series
 
 ## Inline Python Usage
 
@@ -164,6 +146,7 @@ for part in response.parts:
 ### Editing with Inline Code
 
 ```python
+import os
 from PIL import Image
 from google import genai
 from google.genai import types
@@ -180,24 +163,6 @@ response = client.models.generate_content(
 )
 ```
 
-## Prompting Tips
+## Checking Output
 
-**Photorealistic**: Include camera settings, lighting, lens details
-```
-"Shot on 85mm lens, golden hour lighting, shallow depth of field"
-```
-
-**Logos**: Specify style, colors, typography
-```
-"Clean minimalist logo, sans-serif font, monochrome, vector style"
-```
-
-**Product shots**: Describe studio setup
-```
-"Studio-lit, 3-point softbox, polished surface, 45-degree angle"
-```
-
-**Stylized art**: Name the style explicitly
-```
-"Anime style, cel-shading, bold outlines, vibrant colors"
-```
+Open each generated file with the Read tool to confirm it matches the request; if not, adjust the prompt and re-run.

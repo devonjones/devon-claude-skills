@@ -53,7 +53,7 @@ def main():
         from google.genai import types
         from PIL import Image
     except ImportError as e:
-        missing = "google-genai" if "genai" in str(e) else "Pillow"
+        missing = "Pillow" if e.name == "PIL" else "google-genai"
         print(f"Error: {missing} package not installed. Run: pip install {missing}", file=sys.stderr)
         sys.exit(1)
 
