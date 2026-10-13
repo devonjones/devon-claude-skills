@@ -1,0 +1,8 @@
+{
+  "name": "assessing-skills",
+  "description": "Assess a Claude skill against Anthropic's skill authoring best practices and report measured findings, a verdict, and evaluations.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Devon Jones"
+  }
+}
