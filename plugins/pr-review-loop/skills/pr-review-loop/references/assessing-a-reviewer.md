@@ -1,5 +1,7 @@
 # Assessing a pr-review-loop Reviewer
 
+**Contents:** What a reviewer is · Workflow · Roster checks · Evaluations · Evidence · Report format
+
 Hand this file to a Claude together with one reviewer definition, or a whole
 `.reviewers/` directory (or legacy `AGENT-REVIEWERS.md`). It assesses each reviewer against Anthropic's
 [Skill authoring best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)
