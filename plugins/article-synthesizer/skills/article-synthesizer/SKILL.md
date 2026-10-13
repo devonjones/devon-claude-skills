@@ -1,13 +1,11 @@
 ---
 name: article-synthesizer
-description: Turn a web article into a faithful-capture literature note in an Obsidian vault. Use when the user wants to ingest a web page (blog post, essay, technical article, documentation page) into their personal source notes corpus. Fetches the page, extracts structured content (TL;DR, takeaways, faithful body prose, references). The article sibling of youtube-synthesizer — same vault conventions, same frontmatter base schema, no frame pipeline.
+description: Turns a web article URL into a faithful-capture literature note in an Obsidian vault (TL;DR, key takeaways, source prose, references). Use when the user wants to ingest, save, or clip a blog post, essay, technical article, or documentation page into their source notes. Not for YouTube videos (youtube-synthesizer) or PDFs.
 ---
 
 # Article Synthesizer
 
-Produces an Obsidian literature note from a web article. The web-page sibling of `youtube-synthesizer`: same vault layout, same shared frontmatter base schema (so the future sqlite3 indexer joins on a single contract), same faithful-capture discipline. Deliberately simpler — no frames, no ffmpeg, no sub-agents. Fetch the page, extract its substance, write the note.
-
-You — the agent running this skill — do the extraction inline as you follow the procedure below. The skill produces faithful capture of the source; downstream synthesis into the user's mental model is their job, not yours.
+Produces an Obsidian literature note from a web article. Sibling of `youtube-synthesizer`: same vault layout, same frontmatter base schema, same faithful-capture discipline. No frames, ffmpeg, or sub-agents: fetch the page, extract its substance, write the note. You do the extraction inline.
 
 ## Invocation
 
@@ -28,11 +26,9 @@ If `<URL>` is missing, ask the user before starting work — do not guess. `<vau
 
 A single Obsidian literature note at `<vault>/sources/articles/<sanitized-domain>/<ingested-date>-<sanitized-title>/` containing:
 
-- `<sanitized-title>.md` — frontmatter + body (TL;DR, key takeaways, faithful-capture prose, references). Same `<sanitized-title>` as the parent directory's title segment, without the date prefix (the directory carries the date already).
+- `<sanitized-title>.md` — frontmatter + body (TL;DR, key takeaways, faithful-capture prose, references).
 
-Grouping by domain keeps a site's articles together — opening `<vault>/sources/articles/martinfowler-com/` shows every entry from that site side-by-side. This mirrors `youtube-synthesizer`'s channel grouping.
-
-**Scope boundary — images:** article images are linked at their remote URLs, never downloaded. There is no image pipeline in v1; the entry directory contains only the `.md` file. If an image is load-bearing, its remote link plus the surrounding prose carries the information.
+**Scope boundary — images:** article images are linked at their remote URLs, never downloaded. The entry directory contains only the `.md` file.
 
 ---
 
@@ -49,10 +45,10 @@ Fetch `<URL>` with the WebFetch tool, prompting for the full article content —
 If WebFetch is unavailable in the session, errors out, or returns content that is obviously truncated or boilerplate-only, fall back to fetching the raw HTML:
 
 ```
-curl -sL "<URL>" -o <work_dir>/page.html
+page="$(mktemp --suffix=.html)"; curl -sL "<URL>" -o "$page"; echo "$page"
 ```
 
-Read the HTML directly and extract the article content and head metadata yourself. Record `fetched_via: curl`.
+Read that file directly and extract the article content and head metadata yourself. Record `fetched_via: curl`.
 
 ### A.3. Validate what came back
 
@@ -81,7 +77,7 @@ From the fetched page, collect:
 
 ## Phase B — Frontmatter
 
-The frontmatter has two parts: the base schema shared with `youtube-synthesizer` and future pdf/substack source-skills (so the future sqlite3 indexer joins on a single contract), and article-specific extras alongside.
+The frontmatter has two parts: the base schema shared with `youtube-synthesizer`, and article-specific extras alongside.
 
 **Base schema:**
 
@@ -100,7 +96,7 @@ topics: []         # populated by Phase C
 why_ingested: ""   # optional; from --why flag at invocation time
 ```
 
-`source_description` is the verbatim publisher-written description. It is **not** rendered in the body — it would duplicate TL;DR / takeaways. It lives in frontmatter only, as a hallucination check (Phase C.3) and a searchable reference.
+`source_description` is the verbatim publisher-written description. It is **not** rendered in the body — it would duplicate TL;DR / takeaways. It lives in frontmatter only; it is the hallucination check in C.3.
 
 **Article-specific extras** (alongside the base, not nested):
 
@@ -121,7 +117,7 @@ Produces the body sections plus the `tags` / `topics` frontmatter. Source-faithf
 
 ### C.1. TL;DR
 
-1–2 sentences capturing the article's central claim or thesis. The highest-leverage section for re-discovery six months later.
+1–2 sentences capturing the article's central claim or thesis.
 
 Source: the article text primarily. Look for explicit thesis statements (often in the opening paragraphs and the conclusion), plus the title and meta description.
 
@@ -161,14 +157,14 @@ Pull the references list from the article's outbound links — the links the aut
 
 Omit the section entirely if no links survive the filter. Do not fabricate URLs for works the article names without linking — emit those as plain text.
 
-**Avoid auto-generated wikilinks at this skill version.** Cross-references between entries should emerge organically as the corpus grows; a future cross-source linker (sqlite3-backed) will resolve names to wikilinks once matching `sources/` entries exist.
+Do not generate wikilinks.
 
 ### C.5. Tags + topics
 
 Populate the frontmatter `tags` and `topics` fields:
 
 - **`topics`** — broad subject categories (e.g. `distributed-systems`, `woodworking`, `economics`, `python`). 1–4 entries. Match the user's existing vocabulary if you can see prior entries in the same vault.
-- **`tags`** — finer-grained markers (e.g. `crdt`, `conflict-resolution`, `dovetails`, `unit-tests`). 3–8 entries. These power the future sqlite3 FTS index more than topics do.
+- **`tags`** — finer-grained markers (e.g. `crdt`, `conflict-resolution`, `dovetails`, `unit-tests`). 3–8 entries.
 
 Both lists must be kebab-case strings, no spaces, no special characters. Do not invent vague tags (`interesting`, `useful`); every entry should map to a concrete subject.
 
@@ -267,7 +263,7 @@ Print a clear success message with the absolute path to the .md file so the user
 
 ### D.5. Dropbox sync — out of scope for v1
 
-`youtube-synthesizer`'s `sync_to_dropbox.sh` is the only sanctioned rclone wrapper in this marketplace, and it enforces the `~/ObsidianVaults/<vault>/sources/videos/<channel>/<entry>/` path shape in code — it rejects `sources/articles/` paths outright. Until that script (or a sibling) supports the articles tree, sync is out of scope for this skill and `--no-sync` is effectively always on. Do not invoke `rclone` directly to work around this — the same "rclone sync is destructive" reasoning applies here as in `youtube-synthesizer` Phase D.6.a. Users who want the entry on Dropbox can run rclone manually outside the skill.
+`youtube-synthesizer`'s `sync_to_dropbox.sh` rejects `sources/articles/` paths, so `--no-sync` is always on. Do not invoke `rclone` directly (rclone sync is destructive); users can sync manually outside the skill.
 
 ---
 
@@ -292,13 +288,11 @@ This skill is driven by cryo's drain worker (like `youtube-synthesizer`), so it 
 
 ## Discipline: faithful capture, no editorializing
 
-The skill's job is to deliver "here is what this article said, structured and searchable" — not to weave the content into the user's mental model. That weaving is downstream, in the vault root where the user (and you, in other tasks) builds permanent notes on top of these literature notes.
+Record what the article said, structured and searchable. Do not reframe content for any use case, add interpretive headers, or editorialize the author's claims; weaving into the user's mental model is downstream work.
 
-Concretely: do not reframe content for any particular use case, do not add interpretive headers, do not editorialize the author's claims. Capture what was written.
+The TL;DR and takeaways describe the article's claims, attributed implicitly through the document's framing: no "the article argues..." on every sentence, and no asserting claims as undisputed fact.
 
-The agent's voice should not blend with the author's voice. The synthesizer-generated TL;DR and takeaways describe the article's claims — they should attribute claims to the article implicitly through the document's framing rather than asserting claims as undisputed facts, and without explicit "the article argues..." hedging on every sentence.
-
-Unlike `youtube-synthesizer`, there is no soft-correct policy: written articles don't have auto-caption transcription errors. The author's words, code, and headings are captured as published.
+Unlike `youtube-synthesizer`, there is no soft-correct policy: the author's words, code, and headings are captured as published.
 
 ---
 
@@ -307,14 +301,3 @@ Unlike `youtube-synthesizer`, there is no soft-correct policy: written articles 
 - Network access to the article's host
 - WebFetch tool available in the session (preferred), or `curl` on PATH for the fallback
 - A target Obsidian vault path (writable) — used by Phase D. Convention: `~/ObsidianVaults/<vault-name>/`.
-
-## Failure modes
-
-All fetch-side failures are hard stops — **never fabricate content for a page you could not fetch**:
-
-- **Unfetchable** (404, gone, DNS failure, connection refused) → error early with a clear message; stop
-- **Paywalled** → stop; report that the page is paywalled
-- **Login-walled** → stop; report that the page requires authentication
-- **Non-HTML content type** (PDF, image, binary) → refuse; PDFs point at a future `pdf-synthesizer` skill
-- **JS-only SPA** (no article text in the HTML shell) → try the curl fallback; if the content still isn't there, fail honestly — this skill does not run a browser
-- **Re-running on existing entry without `--rerun`** → print message, exit (D.2)
