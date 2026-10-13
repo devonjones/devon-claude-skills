@@ -4,8 +4,7 @@
 
 You are moving a repo's reviewers from `AGENT-REVIEWERS.md` to the default
 layout, where each reviewer is its own file. `SKILL.md` ("Reviewer Files")
-has the format. This file is the procedure: convert, choose starters, assess,
-verify, commit.
+has the format.
 
 **Conversion moves text; it does not edit it.** The script keeps every
 reviewer's name, spec text, model and verification line. Rewording a reviewer
@@ -26,8 +25,8 @@ snapshot holds the whole roster.
 ## 2. Convert
 
 ```bash
-python3 scripts/convert-reviewers.py repo           # dry run: prints the plan
-python3 scripts/convert-reviewers.py repo --write
+scripts/convert-reviewers.py repo           # dry run: prints the plan
+scripts/convert-reviewers.py repo --write
 ```
 
 For every `AGENT-REVIEWERS.md`, it writes `.reviewers/<name>.md` beside that
@@ -48,9 +47,8 @@ It also moves files around:
 - **Prose under `# Agents`** goes to `.reviewers/README.md`, including H2s that
   aren't reviewers, like `## Retired reviewers`. So do other H1s
   (`# Guidelines`, `# Context`). README.md is context for the orchestrator.
-- **`# Configuration`** becomes `.reviewers/config.json`. `disabled` and
-  `defaults_version_checked` are dropped, because nothing runs in the new
-  layout unless its file is there.
+- **`# Configuration`** becomes `.reviewers/config.json`, minus `disabled` and
+  `defaults_version_checked`.
 - **Every `AGENT-REVIEWERS.md`** is deleted.
 
 Read the plan's `note` lines before running `--write`. One matters most: a
@@ -63,14 +61,12 @@ Step 4 diffs against it to see exactly what the assessment changed.
 
 ## 3. Choose starters
 
-In the old layout, the shipped defaults (`code-reviewer`, `pr-test-analyzer`,
-…) ran on every repo unless `disabled`. In the new layout nothing runs unless
-its file is in `.reviewers/`. The plan's `starters:` line names the defaults
-that were running on this repo. Ask the user which to keep, then:
+The plan's `starters:` line names the defaults that ran on this repo. Ask the
+user which to keep, then:
 
 ```bash
-python3 scripts/convert-reviewers.py starters               # list them, with what each checks
-python3 scripts/convert-reviewers.py starters --into . code-reviewer pr-test-analyzer
+scripts/convert-reviewers.py starters               # list them, with what each checks
+scripts/convert-reviewers.py starters --into . code-reviewer pr-test-analyzer
 ```
 
 Keep a starter's name unchanged. Its eval history, dream scorecard and any
@@ -88,16 +84,14 @@ and then assess each converted reviewer against it. Tell it to:
 - write its full report to a file, and return a short verdict per reviewer
   plus the most important problems.
 
-Use a fresh agent, not your own context: it judges the files as the
-orchestrator and the reviewers will see them, without your memory of the old
-layout. Afterwards, confirm only header lines changed since you staged:
+Use a fresh agent, not your own context. Afterwards, confirm only header
+lines changed since you staged:
 
 ```bash
 git diff -U0 | grep '^[-+][^-+]' | grep -vE '^[-+]\*\*(Checks|Spawn when):\*\*'   # expect nothing
 ```
 
-Hand the report to the user. File its findings as
-tickets; don't apply them in this change.
+Hand the report to the user, and file its findings as tickets.
 
 ## 5. Verify
 
@@ -119,5 +113,4 @@ means a reviewer was lost or renamed.
 Commit the `.reviewers/` directories, the deleted indexes and the filled
 headers together, in one commit. `discover-agents.sh` reads the working tree,
 so a half-converted tree is what the next review round would run. Open PRs keep
-the old layout until they rebase. Both layouts work, so nothing breaks in the
-meantime.
+the old layout until they rebase.

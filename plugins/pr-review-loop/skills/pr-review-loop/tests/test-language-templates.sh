@@ -324,6 +324,24 @@ assert_jq "config.json still holds the first pack's settings" "$(cat "$repo/.rev
 assert_jq "and the user's own settings" "$(cat "$repo/.reviewers/config.json")" '.bots.gemini == false'
 
 echo
+echo "=== Test I4d: a second pack with settings merges into the user's config.json ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/backend" "$repo/frontend"
+run_install "$repo" i4d golang:backend
+printf '{"bots": {"gemini": false}}\n' > "$repo/.reviewers/config.json"
+run_install "$repo" i4e python:frontend
+assert_exit "exit 0" "$i4e_exit" "0"
+assert_jq "the user's setting survives" "$(cat "$repo/.reviewers/config.json")" '.bots.gemini == false'
+assert_jq "and the pack's overlap is merged in" "$(cat "$repo/.reviewers/config.json")" '.overlap_acknowledged | has("test-coverage-reviewer")'
+
+echo
+echo "=== Test I_T5: a bare '..' subtree is refused ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/sub"
+run_install "$repo/sub" iT5 "golang:.."
+assert_exit "exit 2" "$iT5_exit" "2"
+
+echo
 echo "=== Test I5: refuse a repo still on AGENT-REVIEWERS.md ==="
 repo="$(make_temp_repo)"
 echo "existing" > "$repo/AGENT-REVIEWERS.md"

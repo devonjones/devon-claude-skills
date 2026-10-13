@@ -201,6 +201,12 @@ if ! JQ_PARSE_ERR="$(printf '%s\n' "$RAW_JSON" | jq -se '
     elif length != 1 then error("expected one top-level JSON object, got \(length)")
     else error("top-level value must be an object, got \(.[0] | type)") end
 ' 2>&1 > /dev/null)"; then
+    # A dedicated config file that doesn't parse would silently drop pi
+    # routing and the validator; there is no section around it to fall back to.
+    if [[ "$FILE" == *.json ]]; then
+        echo "Error: $FILE is not valid JSON: $JQ_PARSE_ERR" >&2
+        exit 1
+    fi
     echo "Warning: # Configuration section in $FILE contains invalid JSON: $JQ_PARSE_ERR" >&2
     if [[ "$BOTS_ONLY" == "true" ]]; then
         exit 1

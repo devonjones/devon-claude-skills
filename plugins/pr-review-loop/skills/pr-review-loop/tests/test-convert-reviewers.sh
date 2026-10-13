@@ -25,6 +25,8 @@ Intro prose above every heading.
 {"defaults_version_checked": "1.8.0", "disabled": ["code-simplifier"], "bots": {"gemini": false}}
 ```
 
+The bots are off because this repo has no Gemini quota.
+
 # Agents
 
 ## inline-reviewer
@@ -48,6 +50,10 @@ Other things.
 **When to spawn:** the diff touches `idx/`.
 
 Read `.reviewers/indexed-reviewer.md` and follow it as your complete review specification.
+
+## my_pci_auditor
+
+Underscore name, still a reviewer.
 
 ## Retired reviewers
 
@@ -95,6 +101,8 @@ check "existing spec body kept" 'grep -q "The indexed spec body." .reviewers/ind
 check "subtree index converts beside itself" '[[ -f svc/.reviewers/svc-reviewer.md ]]'
 check "prose above the first heading is kept in README.md" 'grep -q "Intro prose above every heading." .reviewers/README.md'
 check "prose H2 and other H1s go to README.md" 'grep -q "old-reviewer was retired" .reviewers/README.md && grep -q "parameterized queries" .reviewers/README.md'
+check "a non-kebab name is still converted as a reviewer" '[[ -f .reviewers/my_pci_auditor.md ]]'
+check "notes written around the JSON block go to README.md" 'grep -q "no Gemini quota" .reviewers/README.md'
 check "config.json keeps what still applies" '[[ "$(jq -c . .reviewers/config.json)" == "{\"bots\":{\"gemini\":false}}" ]]'
 
 PR_REVIEW_LOOP_TEST_CHANGED_FILES="$(git ls-files; find .reviewers svc -type f)" "$DISCOVER" 0 > "$T/after.json" 2>"$T/after.err"
@@ -104,6 +112,16 @@ check "same reviewers, same models (minus the prose H2, plus the stray file that
 check "the stray file runs after conversion" '[[ "$(jq -r ".agents[] | select(.name == \"stray-reviewer\") | .name" "$T/after.json")" == stray-reviewer ]]'
 check "spec text survives" '[[ "$(jq -r ".agents[] | select(.name==\"inline-reviewer\") | .instructions" "$T/after.json")" == *"Flags the inline things."*"Other things."* ]]'
 check "TODO headers are reported" 'grep -q "inline-reviewer.md has a TODO in its header" "$T/after.err"'
+
+echo "=== conversion refuses a duplicate reviewer and keeps an existing config.json ==="
+printf '# Agents\n\n## dup-reviewer\n\none\n\n## dup-reviewer\n\ntwo\n' > "$T/dup.md"
+rm -rf "$T/d"; mkdir -p "$T/d"; set +e; python3 "$CONVERT" template "$T/dup.md" --into "$T/d" >/dev/null 2>&1; rc=$?; set -e
+check "a duplicate name stops conversion, writing nothing" '[[ $rc -ne 0 && ! -e "$T/d/.reviewers/dup-reviewer.md" ]]'
+fixture
+printf '{"bots": {"cursor": false}}\n' > .reviewers/config.json
+OUT="$(python3 "$CONVERT" repo --write)"
+check "an existing config.json is not overwritten" '[[ "$(jq -c . .reviewers/config.json)" == "{\"bots\":{\"cursor\":false}}" ]]'
+check "and the plan says to merge it by hand" '[[ "$OUT" == *"config.json already exists"* ]]'
 
 echo "=== starters ==="
 rm -rf "$T/s"; mkdir -p "$T/s"

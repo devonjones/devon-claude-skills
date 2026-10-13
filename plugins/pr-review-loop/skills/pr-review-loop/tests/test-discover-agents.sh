@@ -1253,8 +1253,11 @@ assert_jq "a root AGENT-REVIEWERS.md keeps the legacy layout, defaults included"
 assert_stderr_contains "both present warns" "$tr3_err" "only config.json is read"
 printf '{"disabled": "nope"' > "$repo/.reviewers/config.json"
 run_discover "$repo" "src/a.py" tr3b
-assert_jq "a broken config.json is not silently empty" "$tr3b" 'true' 2>/dev/null
-assert_stderr_contains "a broken config.json is reported" "$tr3b_err" "config.json"
+assert_exit "a broken config.json stops discovery" "$tr3b_exit" "1"
+assert_stderr_contains "and names the file" "$tr3b_err" ".reviewers/config.json is not valid JSON"
+: > "$repo/.reviewers/config.json"
+run_discover "$repo" "src/a.py" tr3c
+assert_stderr_contains "an empty config.json warns" "$tr3c_err" "config.json is empty, so none of its settings apply"
 rm -rf "$repo"
 
 echo
@@ -1276,6 +1279,13 @@ rm -rf "$repo"
 
 echo
 echo "=== Test R5: a root .reviewers/ with no reviewer files is not a converted repo ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/.reviewers"
+printf 'notes\n' > "$repo/.reviewers/README.md"
+run_discover "$repo" "a.py" tr5r
+assert_jq "README.md alone is not a converted repo" "$tr5r" '.configuration.layout == "agent-reviewers"'
+rm -rf "$repo"
+
 repo="$(make_temp_repo)"
 mkdir -p "$repo/.reviewers"
 printf '{"bots": {"gemini": false}}\n' > "$repo/.reviewers/config.json"

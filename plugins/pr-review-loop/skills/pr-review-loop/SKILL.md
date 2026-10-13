@@ -113,7 +113,7 @@ The convergence rule (see Convergence) depends on classifying findings as P1/P2 
 
 The (iii) escape valve exists so the model isn't forced to relabel a genuine "won't fix" as a reclassification: surface the finding to the user, they sign off, it's recorded in the merge-readiness summary.
 
-**Comment, docstring and PR-body findings are P3 by default.** They are P2 only if the text is wrong in a way that would lead a reader to write a bug. Fix them by deleting or shortening, never by adding: a comment earns its place only by documenting something surprising or hard-won, so delete one that doesn't, without rewording or arguing on the thread. A comment says what the code does and why, tersely. It does not tell the story of how the code got this way: no history, past bugs, round numbers or rejected alternatives. That belongs in the commit message, if anywhere. A reasoned decline on wording or style grounds is final, and reviewers don't reopen it.
+**Comment, docstring and PR-body findings are P3 by default.** They are P2 only if the text is wrong in a way that would lead a reader to write a bug. Fix them by deleting, never by rewording or adding: a comment stays only if it documents something surprising or hard-won, never the history of how the code got here. A reasoned decline on wording or style is final.
 
 **Classifying `![medium]` (Gemini's most-used label) — use these heuristics:**
 
@@ -389,7 +389,7 @@ diff touches.
 - Decide from each reviewer's `summary` (its header), not its spec. Skip a
   reviewer whose `Spawn when` the diff doesn't meet.
 - Name every skipped reviewer and why in the spawning summary and the round
-  report's `Roster:` line. Skipped reviewers don't count in `D dispatched / R reported`.
+  report's `Roster:` line.
 - Later rounds dispatch the reviewers whose findings drove the fixes, plus any
   whose focus the fix commit touched.
 - Never skip a mandatory reviewer, or one whose focus the diff plainly touches.
@@ -690,13 +690,9 @@ Located in `plugins/pr-review-loop/agents/`. Each has frontmatter (`name`, `desc
 | `type-design-analyzer` | sonnet | Encapsulation, invariant expression / usefulness / enforcement (4 axes 1-10) |
 | `code-simplifier` | sonnet | Genuine complexity / nested ternaries / dead code; behavior-preserving |
 
-```bash
-scripts/convert-reviewers.py starters                     # list them
-scripts/convert-reviewers.py starters --into . code-reviewer pr-test-analyzer
-```
-
-Keep a starter's name when you copy it in: dream scorecards, eval history and
-`.pi.agents` entries are keyed on it. Once copied, it's the repo's file to edit.
+`scripts/convert-reviewers.py starters` lists them and copies them in (see
+[`references/reviewers-dir.md`](references/reviewers-dir.md) step 3). Once
+copied, a starter is the repo's file to edit.
 
 A repo still on `AGENT-REVIEWERS.md` (`configuration.layout` is
 `"agent-reviewers"`) runs the six starters as built-in defaults. Its
@@ -827,7 +823,7 @@ scripts/install-template.sh golang:backend python:frontend
 scripts/install-template.sh golang:.
 ```
 
-The script is transactional — it stages every file first and writes nothing if any of them already exists, or if the repo still has a root `AGENT-REVIEWERS.md` (convert it first).
+
 
 #### After install: offer repo-tailored recommendations
 
@@ -843,7 +839,7 @@ On accept, follow the "Project-Specific Reviewer Recommendations" section below 
 
 #### When the user declines the install offer
 
-Don't re-prompt within the same loop invocation. Track the decline via `TaskCreate` (or equivalent ephemeral state) so a fresh loop invocation re-fires the offer if conditions still hold. Continue with the 6 starters running as built-in defaults (the legacy behaviour for a repo with no reviewers).
+Don't re-prompt within the same invocation. The repo stays in the legacy layout, so the six starters run as built-in defaults.
 
 ### Project-Specific Reviewer Recommendations
 
@@ -853,7 +849,7 @@ After `install-template.sh` succeeds and the user accepts the post-install "want
 
 The original sketch for this flow used Claude Code's plan mode. **It doesn't work.** Verified: `EnterPlanMode` exists but `ExitPlanMode` returns no structured data — there's no programmatic way for a skill to read back which items the user approved, rejected, or modified. The right primitive is `AskUserQuestion` with `multiSelect: true`, which returns the user's picks structured.
 
-Trade-off: no "modify a proposal before accepting" UX. The user accepts or rejects each proposal as written. If they want to tweak wording, they accept and edit the resulting `.reviewers/<name>.md` by hand.
+Proposals are accepted or rejected as written; to change one, accept it and edit the file.
 
 #### Repo scan: orchestrator picks per-repo
 
@@ -977,7 +973,7 @@ No re-run of `discover-agents.sh` needed — round 1 picks up the new files natu
 
 #### When the user declines the recommendations prompt
 
-Just continue to the next pre-loop step. The template install stays in place; no further writes happen. Track the decline via `TaskCreate` so the prompt doesn't re-fire if the loop happens to revisit this code path within the same invocation.
+Continue to the next pre-loop step; don't re-prompt within the same invocation.
 
 ### Spawning Summary
 
@@ -1720,9 +1716,8 @@ Bash(scripts/pi-review.sh:*)
 - `gh` CLI authenticated
 - `jq` - JSON processor for parsing GitHub API responses
   Install with: `apt install jq` (Ubuntu/Debian) or `brew install jq` (macOS)
-- `pre-commit` (optional) - If `.pre-commit-config.yaml` exists in the repo, pre-commit will be run.
-  If pre-commit is not installed, a warning is shown but commits proceed.
-  Install with: `pip install pre-commit && pre-commit install`
+- `python3` - `convert-reviewers.py` and `install-template.sh` (standard library only)
+- `pre-commit` (optional) - its hooks run on `git commit` once installed with `pre-commit install`
 - Docker and a model provider API key (optional) - only for agents routed to the Pi engine (`# Configuration .pi`).
 - `bd` (beads) (optional) - Issue tracker for capturing out-of-scope suggestions as tickets.
   If not installed, out-of-scope suggestions are handled with "Out of scope for this PR" replies.

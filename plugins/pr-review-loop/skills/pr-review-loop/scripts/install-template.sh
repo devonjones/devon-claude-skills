@@ -66,7 +66,7 @@ for pair in "${PAIRS[@]}"; do
     if [[ "$lang" == */* || "$lang" == .* ]]; then
         echo "Error: invalid language name '$lang' (no slashes or leading dots allowed)" >&2; exit 2
     fi
-    if [[ "$subtree" == */../* || "$subtree" == ../* || "$subtree" == */.. || "$subtree" == /* ]]; then
+    if [[ "$subtree" == .. || "$subtree" == */../* || "$subtree" == ../* || "$subtree" == */.. || "$subtree" == /* ]]; then
         echo "Error: invalid subtree '$subtree' (no '..' traversal or absolute paths allowed)" >&2; exit 2
     fi
     pack="$TEMPLATES_DIR/$lang"

@@ -27,7 +27,8 @@ from pathlib import Path
 HEADER_LINES = 12
 PLUGIN = Path(__file__).resolve().parents[3]
 STARTERS = PLUGIN / "agents"
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+NAME_RE = re.compile(r"^\S+$")  # prose headings have spaces; names don't
+KEBAB_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 MODEL_RE = re.compile(r"^\s*model:\s*\"?([A-Za-z0-9._:-]+)\"?\s*$")
 VERIFY_RE = re.compile(r"^\s*verification:")
 CHECKS_RE = re.compile(r"^\*\*(?:What it checks|Checks):?\*\*:?\s*(.*)$")
@@ -140,6 +141,9 @@ def plan_file(src, into):
             m = re.search(r"```json\n(.*?)\n```", body, re.S)
             if m:
                 config = json.loads(m.group(1))
+            prose = re.sub(r"```json\n.*?\n```", "", body, flags=re.S).strip()
+            if prose:  # notes written around the JSON block
+                readme.append(f"# Configuration notes\n\n{prose}\n")
         elif h1 == "Agents" and h2 is None:
             if body.strip():
                 readme.append(f"# Agents\n\n{body}")
@@ -148,7 +152,11 @@ def plan_file(src, into):
                 readme.append(f"## {h2}\n\n{body}")
                 notes.append(f"moved '## {h2}' to README.md: it is not a reviewer name")
                 continue
+            if not KEBAB_RE.match(h2):
+                notes.append(f"'{h2}' is not kebab-case; it still runs, under the same name")
             spec = rdir / f"{h2}.md"
+            if any(path == spec for path, _ in writes):
+                sys.exit(f"{src}: '## {h2}' appears twice under # Agents; merge them, then convert")
             if spec.exists():  # index entry + spec file: the H2 is the summary
                 writes.append((spec, render(h2, spec.read_text(), summary=body)))
             else:
@@ -187,8 +195,11 @@ def cmd_repo(args):
     defaults = sorted(p.stem for p in STARTERS.glob("*.md"))
     if config is not None:
         disabled = set(config.get("disabled", []))
-        if portable(config):
-            writes.append((root / ".reviewers" / "config.json", json.dumps(portable(config), indent=2) + "\n"))
+        cfg = root / ".reviewers" / "config.json"
+        if portable(config) and cfg.exists():
+            notes.append(".reviewers/config.json already exists; merge the # Configuration settings into it by hand")
+        elif portable(config):
+            writes.append((cfg, json.dumps(portable(config), indent=2) + "\n"))
         active = [d for d in defaults if d not in disabled]
     else:
         active = defaults
