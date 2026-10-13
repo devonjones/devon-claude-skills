@@ -114,11 +114,19 @@ check "the stray file runs after conversion" '[[ "$(jq -r ".agents[] | select(.n
 check "spec text survives" '[[ "$(jq -r ".agents[] | select(.name==\"inline-reviewer\") | .instructions" "$T/after.json")" == *"Flags the inline things."*"Other things."* ]]'
 check "TODO headers are reported" 'grep -q "inline-reviewer.md has a TODO in its header" "$T/after.err"'
 
-echo "=== names that are not safe file names stay prose ==="
-printf '# Agents\n\n## ../../escape\n\nx\n\n## src/foo\n\ny\n\n## README\n\nz\n\n## .hidden\n\nw\n' > "$T/unsafe.md"
-rm -rf "$T/u"; mkdir -p "$T/u"; python3 "$CONVERT" template "$T/unsafe.md" --into "$T/u" >/dev/null 2>&1 || true
-check "nothing is written outside .reviewers/" '[[ -z "$(find "$T" -maxdepth 2 -name "escape.md" ; find "$T/u" -path "*src*")" ]]'
-check "only README.md is written, holding all four" '[[ "$(ls "$T/u/.reviewers")" == "README.md" && "$(grep -c "^## " "$T/u/.reviewers/README.md")" == 4 ]]'
+echo "=== a reviewer name that can't be a safe file name stops the conversion ==="
+for bad in '../../escape' 'src/foo' 'README' 'readme' '.hidden'; do
+  printf '# Agents\n\n## %s\n\nx\n' "$bad" > "$T/bad.md"; rm -rf "$T/u"; mkdir -p "$T/u"
+  set +e; python3 "$CONVERT" template "$T/bad.md" --into "$T/u" >/dev/null 2>"$T/u.err"; rc=$?; set -e
+  check "'$bad' stops conversion and writes nothing" '[[ $rc -ne 0 && -z "$(find "$T/u" -type f)" ]] && grep -q "rename it" "$T/u.err"'
+done
+check "nothing escaped the scratch dir" '[[ -z "$(find "$T" -maxdepth 2 -name "escape.md")" ]]'
+printf '# Agents\n\n## café-reviewer\n\nx\n' > "$T/uni.md"; rm -rf "$T/u"; mkdir -p "$T/u"
+python3 "$CONVERT" template "$T/uni.md" --into "$T/u" >/dev/null
+check "a Unicode name is a reviewer" '[[ -f "$T/u/.reviewers/café-reviewer.md" ]]'
+printf '# Agents\n\n## Foo\n\none\n\n## foo\n\ntwo\n' > "$T/case.md"; rm -rf "$T/u"; mkdir -p "$T/u"
+set +e; python3 "$CONVERT" template "$T/case.md" --into "$T/u" >/dev/null 2>&1; rc=$?; set -e
+check "names differing only in case are duplicates" '[[ $rc -ne 0 && -z "$(find "$T/u" -type f)" ]]'
 
 echo "=== conversion refuses a duplicate reviewer and keeps an existing config.json ==="
 printf '# Agents\n\n## dup-reviewer\n\none\n\n## dup-reviewer\n\ntwo\n' > "$T/dup.md"

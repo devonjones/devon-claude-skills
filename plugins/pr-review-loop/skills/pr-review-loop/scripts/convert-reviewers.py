@@ -27,9 +27,11 @@ from pathlib import Path
 HEADER_LINES = 12
 PLUGIN = Path(__file__).resolve().parents[3]
 STARTERS = PLUGIN / "agents"
-# Any name that's a safe file name: no spaces (prose), no slashes, no leading
-# dot, and not README (that file is the orchestrator's context).
-NAME_RE = re.compile(r"^(?!README$)[A-Za-z0-9_-][A-Za-z0-9_.-]*$")
+# A heading with whitespace is prose. Any other heading is a reviewer, and its
+# name must be a safe file name: word characters (Unicode included), . or -,
+# no leading dot, and not README in any case (README.md is the orchestrator's).
+PROSE_RE = re.compile(r"\s")
+NAME_RE = re.compile(r"^(?!\.)[\w.-]+$")
 KEBAB_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 MODEL_RE = re.compile(r"^\s*model:\s*\"?([A-Za-z0-9._:-]+)\"?\s*$")
 VERIFY_RE = re.compile(r"^\s*verification:")
@@ -150,15 +152,17 @@ def plan_file(src, into):
             if body.strip():
                 readme.append(f"# Agents\n\n{body}")
         elif h1 == "Agents":
-            if not NAME_RE.match(h2):
+            if PROSE_RE.search(h2):
                 readme.append(f"## {h2}\n\n{body}")
                 notes.append(f"moved '## {h2}' to README.md: it is not a reviewer name")
                 continue
+            if not NAME_RE.match(h2) or h2.casefold() == "readme":
+                sys.exit(f"{src}: reviewer '## {h2}' can't be a file name in .reviewers/; rename it, then convert")
             if not KEBAB_RE.match(h2):
                 notes.append(f"'{h2}' is not kebab-case; it still runs, under the same name")
             spec = rdir / f"{h2}.md"
-            if any(path == spec for path, _ in writes):
-                sys.exit(f"{src}: '## {h2}' appears twice under # Agents; merge them, then convert")
+            if any(path.name.casefold() == spec.name.casefold() and path.parent == rdir for path, _ in writes):
+                sys.exit(f"{src}: '## {h2}' appears twice under # Agents (names compare case-insensitively); merge them, then convert")
             if spec.exists():  # index entry + spec file: the H2 is the summary
                 writes.append((spec, render(h2, spec.read_text(), summary=body)))
             else:
