@@ -267,14 +267,15 @@ run_eval() {
     echo "Replaying $(wc -l < "$dir/commits.txt") commits on ${all_models[*]}" >&2
     for m in "${all_models[@]}"; do replay_model "$agent" "$m" "$dir/commits.txt" & done
     wait
-    local f; pids=()
-    while read -r _ sha; do
+    local f
+    while read -r _ sha; do   # one commit's judgements at a time
+        pids=()
         for m in "${all_models[@]}"; do
             f="$dir/replays/${sha:0:12}__${m//\//_}.json"
             judge "$agent" "$f" "$sha" & pids+=($!)
         done
+        wait_all "${pids[@]}" || { echo "Error: judging failed; rerun to retry (finished judgements are kept)" >&2; exit 1; }
     done < "$dir/commits.txt"
-    wait_all "${pids[@]}" || { echo "Error: judging failed; rerun to retry (finished judgements are kept)" >&2; exit 1; }
 
     local scores
     scores="$(score "$agent" "${all_models[@]}")"

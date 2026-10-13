@@ -1507,8 +1507,7 @@ Turn it on in `# Configuration`:
 roster. Treat it like `disabled_defaults_unknown`.
 
 **Spawn a Haiku recorder Task per Pi agent**, in the same parallel batch as the
-Claude reviewers. Haiku does the mechanical part, recording, so Opus never spends
-context on it, and the Task description keeps dream's firing coverage intact.
+Claude reviewers. Haiku records the report, so Opus spends no context on it.
 It records like any other reviewer, so `post-findings.sh` merges Pi findings
 into the round's one review:
 
@@ -1599,13 +1598,13 @@ scripts/eval-reviewer.sh assign                                 # all evaluated 
 - **Ground truth** is the agent's signed threads. The first word of the first reply is the verdict: `Fixed`, `Out of scope` and `Deferred` mean real; `Won't fix` and `Withdrawn` mean noise. `Noted` and other replies are not scored.
 - **Replay**: the commits with the most real findings are reviewed again on each model (`pi-review.sh --replay`, which posts nothing). Claude models are tested through Pi as `anthropic/...`, so every candidate runs in the same harness. These bill `ANTHROPIC_API_KEY`.
 - **Judge**: Claude Sonnet (headless `claude -p`, on your subscription, not the API key) matches each model's findings to the originals and calls unmatched ones plausible or not.
-- **Pass**: a failed replay is retried once, as the loop re-runs a reviewer that did not report; the model then fails at most 10% of runs, its severity-weighted catch rate is within 0.10 of the baseline, and its junk rate (declined or implausible findings) is at most 0.10 above the baseline. Without a baseline: catches at least 0.5, junk at most 0.3. Below 8 real findings the result is **inconclusive** and nothing is recommended.
+- **Pass**: a failed replay is retried once; the model then fails at most 10% of runs, its severity-weighted catch rate is within 0.10 of the baseline, and its junk rate (declined or implausible findings) is at most 0.10 above the baseline. Without a baseline: catches at least 0.5, junk at most 0.3. Below 8 real findings the result is **inconclusive** and nothing is recommended.
 - **Cost**: measured tokens x price, from `~/.config/pr-review-loop/pi-prices.json` (start from `pi/prices.example.json`). Plan models are priced the same way, at the provider's pay-per-token list price, which is what their quota draw is worth. With no entry, the price the run reported is used (Pi's list price; a Claude replay's API-equivalent cost). Unpriced models rank last.
 - **Ranking**: passing plan models come first, cheapest draw first, then pay-per-token models by cost. Plan quota unused at the end of its period is wasted, so plans rank first and are used up before pay-per-token models.
 - **assign** puts each agent on a passing model whose subscription has the least projected load, follows it with passing models on other subscriptions, and ends with `claude`. Winning Anthropic models become `claude:sonnet` / `claude:haiku`. It prints a block for `# Configuration`; nothing is written until you approve it.
 
 Replays and judgements are cached under `~/.cache/pr-review-loop/eval/`, so an
-interrupted run picks up where it stopped and a failed replay is retried. A
+interrupted run picks up where it stopped. A
 failed grading or judge call stops the run rather than being scored. Large commits can take a model 10+
 minutes each.
 

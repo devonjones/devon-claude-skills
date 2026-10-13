@@ -128,6 +128,10 @@ mv -f "$D/x/grades/${S1:0:12}.json" "$T/g1"
 run run x --models cheap/a --baseline anthropic/claude-sonnet-4-6
 [[ "$RC" -eq 1 ]] && grep -q 'grading failed' "$T/err" && ok "grading failure -> exit 1, not material by default" || bad "rc=$RC"
 mv -f "$T/g1" "$D/x/grades/${S1:0:12}.json"
+J1="$D/x/replays/${S1:0:12}__cheap_a.judge.json"; mv -f "$J1" "$T/j1"
+run run x --models cheap/a --baseline anthropic/claude-sonnet-4-6
+[[ "$RC" -eq 1 ]] && grep -q 'judging failed' "$T/err" && ok "judge failure -> exit 1, not a failed model run" || bad "rc=$RC"
+mv -f "$T/j1" "$J1"
 mkdir -p "$T/stub"; printf '#!/usr/bin/env bash\necho "{\\"report\\": {\\"findings\\": []}, \\"usage\\": {\\"input\\": 1, \\"output\\": 1, \\"cacheRead\\": 0, \\"cacheWrite\\": 0, \\"usd\\": 0}}"\n' > "$T/pi-review.sh"
 cp -f "$T/err" "$T/err.keep"
 FAILED_REPLAY="$D/x/replays/${S2:0:12}__failing_d.json"

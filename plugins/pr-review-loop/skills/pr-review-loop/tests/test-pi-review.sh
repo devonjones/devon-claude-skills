@@ -206,6 +206,7 @@ FAKE_ZAI_QUOTA="$(week 80 2)" run pi-agent
 rm -rf "$T/cache/quota"
 run pi-agent
 [[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && ok "no quota reading: no pacing" || bad "rc=$RC ran=$(ran)"
+grep -q 'no Z.ai quota reading' "$T/err" && ok "no quota reading: says so" || bad "no warning: $(cat "$T/err")"
 (cd "$REPO" && sed -i 's|"pi-agent": \["google/gemini-2.5-flash", "zai/glm-5.1"\]|"pi-agent": ["zai/glm-5.1", "google/gemini-2.5-flash"]|' AGENT-REVIEWERS.md)
 rm -rf "$T/cache"
 
