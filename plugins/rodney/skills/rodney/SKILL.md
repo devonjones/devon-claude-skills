@@ -98,7 +98,7 @@ timeout 60 rodney screenshot $RODNEY_HOME/dashboard.png   # then Read it
 
 For Cloudflare or Google sign-in walls, either:
 - run `rodney start --show` for a visible window (needs a display), or
-- have Devon pass the check in a Chrome started with
+- have the user pass the check in a Chrome started with
   `--remote-debugging-port=<port>`, then `rodney connect localhost:<port>` and
   drive it from there.
 
