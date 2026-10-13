@@ -91,4 +91,4 @@ Evaluations and baseline runs (not run by design). Behaviour on Haiku/Opus not t
 10. left for owner - keep or remove the no-op flag.
 11. left for owner - cosmetic; renaming terms across the file risks changing meaning without owner taste.
 
-Result: SKILL.md 320 -> 303 lines (19532 -> 16585 bytes). No scripts or tests exist, so no `bash -n` or test run applied.
+Result: SKILL.md 320 -> 303 lines (19532 -> 16589 bytes). No scripts or tests exist, so no `bash -n` or test run applied.
