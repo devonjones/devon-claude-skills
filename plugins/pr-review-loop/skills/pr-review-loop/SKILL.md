@@ -7,7 +7,7 @@ description: |
 
   Supports multiple review bots: Gemini Code Assist, Cursor Bugbot, and Claude agent fallback.
   Agent reviewers can run on non-Claude models (DeepSeek, Gemini, etc.) via Pi in Docker.
-  Also supports custom agent reviewers defined in AGENT-REVIEWERS.md for focused reviews (security, DRY, etc.).
+  Also supports custom agent reviewers, one file each in .reviewers/ (legacy: AGENT-REVIEWERS.md), for focused reviews (security, DRY, etc.).
   Automatically detects priority levels from different bot formats and handles rate limits.
 ---
 
@@ -69,7 +69,7 @@ Why this is load-bearing, not ceremony:
 - **One write per round**: GitHub's secondary rate limit is per account. Agents posting one comment each put 40 comments into one minute and blocked the whole account. Parallel reviewers also landed four threads on one line.
 - **Merge-readiness integrity**: the end-of-loop summary counts threads; zero posted threads with nonzero findings is a protocol violation that must be reported, not papered over.
 
-A repo's `AGENT-REVIEWERS.md` may define an "Output format" / severity
+A repo's reviewer files may define an "Output format" / severity
 template for finding BODIES — that styles the comment text. It never
 overrides the posting requirement.
 
@@ -106,7 +106,7 @@ Streamline the push-review-fix cycle for PRs with automated reviewers.
 Priority detection automatically parses all formats when summarizing and fetching comments.
 
 Gemini and Cursor can each be turned off per repo via `# Configuration .bots`
-in the root `AGENT-REVIEWERS.md` — see "Disabling an External Review Bot". A
+in the root `.reviewers/config.json` (legacy: `# Configuration` in `AGENT-REVIEWERS.md`) — see "Disabling an External Review Bot". A
 disabled bot is never triggered and never waited for.
 
 ### Priority to Exit-Condition Mapping
@@ -406,6 +406,9 @@ lives, because finding count tracks reviewer count almost linearly. One PR ran
   (`configuration.not_dispatched_no_files`). A diff that is *only* generated
   output, such as a dependency bump or a `bd init` migration, needs no review
   loop. Say so and stop.
+- **Decide from the headers.** Each reviewer's `summary` is the first 12
+  lines of its `.reviewers/<name>.md` (`head -n 12`): what it checks, when to
+  spawn it, and what its spec covers. Read those, not the specs.
 - **Spawn a reviewer only when the diff touches its focus.** A concurrency
   reviewer on a diff with no threads, pools, async or locks costs a full
   read and finds nothing, or invents something. A test-coverage reviewer on a
@@ -457,17 +460,17 @@ pushed code as usual.
 
 ### Pre-Loop Setup (do once, before round 1)
 
-1. **Discover and merge agents.** Run `scripts/discover-agents.sh <PR>` once. Its output includes:
-   - The full merged agent list (defaults + user agents per C+E semantics)
-   - The `configuration` block with `stale_pin`, `defaults_version_checked`, `current_plugin_version`, counts
-   - The `language_detection` block (`null` when the repo already has any `AGENT-REVIEWERS.md`; otherwise `{matched: [...], same_directory_polyglot: bool}`)
+1. **Discover agents.** Run `scripts/discover-agents.sh <PR>` once. Its output includes:
+   - The agent list, each with its `summary` (the header the roster is chosen from)
+   - The `configuration` block, including `layout`: `"reviewers"` (a root `.reviewers/` and no root `AGENT-REVIEWERS.md`) or `"agent-reviewers"` (legacy)
+   - The `language_detection` block (`null` when the repo already has reviewers; otherwise `{matched: [...], same_directory_polyglot: bool}`)
 2. **Offer language templates** (only when `language_detection != null` AND `language_detection.matched` is non-empty). See "Language Template Offer" below for the full flow.
-3. **Check the stale pin.** If `configuration.stale_pin` is `true` AND `--skip-stale-check` was not passed:
+3. **Offer conversion** when `configuration.layout` is `"agent-reviewers"` and the repo has an `AGENT-REVIEWERS.md`. Ask once per invocation: "This repo's reviewers are in AGENT-REVIEWERS.md. Convert them to .reviewers/ files first? [y/N]". On yes, follow [`references/reviewers-dir.md`](references/reviewers-dir.md) and commit before round 1. On no, run the loop as it is; both layouts work.
+4. **Check the stale pin** (legacy layout only; it is always `false` for `.reviewers/`). If `configuration.stale_pin` is `true` AND `--skip-stale-check` was not passed:
    - Emit the stale-pin message (see "Stale Pin Detection" above) with current and pinned versions
    - **Exit non-zero.** Do NOT proceed to round 1.
-   - Note: when step 2 just installed a template, `install-template.sh` pinned `defaults_version_checked` to the current plugin version, so the stale-pin check passes by construction.
-4. **Choose the roster** (see "Choosing the Roster" below), then **emit the spawning summary**: a one-line summary of which agents will run and which you skipped (see "Spawning Summary" above).
-5. **Track --skip-stale-check usage.** If the bypass flag was used, remember to include the bypass note in the final merge-readiness summary.
+5. **Choose the roster** (see "Choosing the Roster" below), then **emit the spawning summary**: a one-line summary of which agents will run and which you skipped (see "Spawning Summary" above).
+6. **Track --skip-stale-check usage.** If the bypass flag was used, remember to include the bypass note in the final merge-readiness summary.
 
 After setup, proceed to The Loop.
 
@@ -486,7 +489,7 @@ EACH ROUND — three phases, in order:
   ┌─────────────────────────────────────────────────────────────┐
   │ C1. Get Gemini comments (--wait only on first check)        │
   │ C2. Check for other bot PR comments (Claude, Cursor, etc.)  │
-  │ C3. Run agent reviewers (defaults + AGENT-REVIEWERS.md);    │
+  │ C3. Run agent reviewers (.reviewers/ files, chosen roster); │
   │     agents RECORD findings + return manifests; then         │
   │     post-findings.sh posts them as ONE review (same-line    │
   │     merged, P3s rolled up); then validate each posted       │
@@ -716,15 +719,18 @@ When using Claude fallback:
 
 4. **Continue the normal review loop** - address comments using `reply-to-comment.sh`
 
-## Agent Reviewers (Default + Custom Focused Reviews)
+## Agent Reviewers
 
-The skill ships **6 default specialist reviewer agents** that spawn automatically. Users can author additional agents — or override / disable defaults — via `AGENT-REVIEWERS.md`.
+A repo's reviewers are the files in its `.reviewers/` directories, one file per
+reviewer (see "Reviewer Files" below). Nothing else runs. The plugin ships
+**starter** reviewers and language packs that setup copies in, and
+`convert-reviewers.py` moves a legacy `AGENT-REVIEWERS.md` repo over.
 
-### Default Specialist Reviewers
+### Starter Reviewers
 
-Located in `plugins/pr-review-loop/agents/`. Each is a native subagent with frontmatter (`name`, `description`, `model`, `color`) plus our standard focus/check/flag/skip/suggest template, with touch-it-you-own-it scope rules baked in:
+Located in `plugins/pr-review-loop/agents/`. Each has frontmatter (`name`, `description`, `model`, `spawn_when`, `color`); `convert-reviewers.py starters` turns one into a `.reviewers/<name>.md` whose header comes from that frontmatter:
 
-| Default | Model | Focus |
+| Starter | Model | Focus |
 |---------|-------|-------|
 | `code-reviewer` | sonnet | CLAUDE.md compliance + significant bugs; confidence ≥80; quote-the-rule forcing function |
 | `silent-failure-hunter` | sonnet | Empty / broad catches, optional-chain swallowing, fallback masking |
@@ -733,32 +739,39 @@ Located in `plugins/pr-review-loop/agents/`. Each is a native subagent with fron
 | `type-design-analyzer` | sonnet | Encapsulation, invariant expression / usefulness / enforcement (4 axes 1-10) |
 | `code-simplifier` | sonnet | Genuine complexity / nested ternaries / dead code; behavior-preserving |
 
-Defaults always spawn unless explicitly overridden or disabled (see "Override and Configuration Semantics" below).
+```bash
+scripts/convert-reviewers.py starters                     # list them
+scripts/convert-reviewers.py starters --into . code-reviewer pr-test-analyzer
+```
 
-### Override and Configuration Semantics (C+E)
+Keep a starter's name when you copy it in: dream scorecards, eval history and
+`.pi.agents` entries are keyed on it. Once copied, it's the repo's file to edit.
 
-User-authored agents in `AGENT-REVIEWERS.md` compose with defaults via these rules:
+### Legacy layout: defaults and overrides
 
-| User repo state | What spawns |
+A repo still on `AGENT-REVIEWERS.md` (no root `.reviewers/`, or a root
+`AGENT-REVIEWERS.md` beside it) keeps the old behaviour until it converts. The
+six starters spawn as built-in defaults:
+
+| Legacy repo state | What spawns |
 |-----------------|-------------|
-| No `AGENT-REVIEWERS.md` | All 6 defaults |
-| `AGENT-REVIEWERS.md` with no `# Agents` section | All 6 defaults + the user's `# Guidelines` / `# Context` apply |
-| `AGENT-REVIEWERS.md` with new custom agents under `# Agents` | All 6 defaults + user's custom agents (additive) |
-| User agent has the **same name** as a default (`## code-reviewer`) | User's version replaces that default; the other 5 still spawn |
-| User has `# Configuration` with `disabled: ["pr-test-analyzer"]` | 5 defaults spawn (pr-test-analyzer skipped) |
-| Hierarchical scoping (subtree-specific overrides) | Per-subdirectory rules apply as before; defaults always live at scope `/` |
+| No `AGENT-REVIEWERS.md` and no `.reviewers/` | All 6 defaults |
+| `AGENT-REVIEWERS.md` with custom agents under `# Agents` | All 6 defaults + the custom agents |
+| A custom agent with the **same name** as a default | The custom one replaces that default |
+| `# Configuration` with `disabled: ["pr-test-analyzer"]` | The other 5 defaults |
 
-### `# Configuration` Section
+In the `.reviewers/` layout, `disabled` does nothing (discovery warns if it is
+set): remove a reviewer by deleting its file.
 
-Project-level config lives in a `# Configuration` H1 section in the **root** `AGENT-REVIEWERS.md`. The section contains a fenced JSON block. Subdirectory `AGENT-REVIEWERS.md` configurations are warned about and ignored.
+### Configuration
 
-````markdown
-# Configuration
+Project-level settings live in the root `.reviewers/config.json`, plain JSON.
+A legacy repo keeps them in a `# Configuration` H1 of the root
+`AGENT-REVIEWERS.md`, as a fenced `json` block. When both exist, `config.json`
+wins and discovery warns. Configuration in a subtree is ignored.
 
 ```json
 {
-  "defaults_version_checked": "1.2.0",
-  "disabled": ["pr-test-analyzer"],
   "overlap_acknowledged": {
     "my_pci_auditor": {
       "overlaps_with": "security-reviewer",
@@ -775,16 +788,14 @@ Project-level config lives in a `# Configuration` H1 section in the **root** `AG
   }
 }
 ```
-````
 
 Fields:
 
-- **`defaults_version_checked`** — plugin version (matches the value in `.claude-plugin/plugin.json`) whose defaults the user has reviewed. It is stale only if it's older than `DEFAULTS_VERSION` (see Stale Pin Detection). The `/pr-review-loop:audit-agents` tool (q2h) bumps this when the user accepts/rejects each recommendation.
-- **`disabled`** — list of default agent names the user does NOT want spawned. Per-name opt-out.
-- **`overlap_acknowledged`** — map from a user agent name to `{ overlaps_with, reason }`. Both agents continue to spawn; this entry documents intentional duplication so the audit tool doesn't recommend renaming. **`reason` is REQUIRED** — the parser rejects entries without it, so future readers see why both agents are intentionally running.
-- **`independent_validator`** — controls the per-finding validation step (see "Independent Validator Pipeline" below). All three nested fields are optional; defaults are `enabled: true`, `skip_for: []`, `uncertain_action: "post_with_annotation"`.
+- **`overlap_acknowledged`** — map from a reviewer name to `{ overlaps_with, reason }`. Both keep running; this entry documents intentional duplication so the audit tool doesn't recommend renaming. **`reason` is REQUIRED** — the parser rejects entries without it.
+- **`independent_validator`** — controls the per-finding validation step (see "Independent Validator Pipeline" below). All three nested fields are optional; defaults are `enabled: false`, `skip_for: []`, `uncertain_action: "post_with_annotation"`.
 - **`bots`** — map of external review bot name (`gemini`, `cursor`) to boolean. Bots default to enabled; an explicit `false` turns one off for the repo. See "Disabling an External Review Bot" below.
 - **`pi`** — run reviewers on non-Claude models. See "Pi Engine" below.
+- **`disabled`**, **`defaults_version_checked`** — legacy layout only. `disabled` lists defaults not to spawn; `defaults_version_checked` is the pin "Stale Pin Detection" compares.
 
 ### Disabling an External Review Bot
 
@@ -807,12 +818,12 @@ operate over the reviewers that are actually enabled.
 
 ### Language Template Offer
 
-When pre-loop step 2 sees a non-empty `language_detection` block from `discover-agents.sh`, the loop offers to install language-specific reviewer templates before round 1. Templates live under `plugins/pr-review-loop/agent-reviewer-templates/` (initial set: `golang.md`, `python.md`). Each is an opinionated bundle that disables the baked-in defaults it explicitly subsumes (e.g., both packs ship a richer `error-handling-reviewer` and disable `silent-failure-hunter`) and acknowledges legitimate overlaps with `pr-test-analyzer`.
+When pre-loop step 2 sees a non-empty `language_detection` block from `discover-agents.sh`, the loop offers to install language-specific reviewer templates before round 1. Templates live under `plugins/pr-review-loop/agent-reviewer-templates/<language>/`: one reviewer file each, a `README.md` of guidelines, a `config.json` of overlap acknowledgements, and `STARTERS`, the starter reviewers the pack keeps (it leaves out the ones its own reviewers subsume, e.g. its richer `error-handling-reviewer` replaces `silent-failure-hunter`).
 
 #### When the offer fires
 
 Only when ALL of these hold:
-- `language_detection != null` (no AGENT-REVIEWERS.md exists at root OR via walk-up from changed files)
+- `language_detection != null` (no `.reviewers/` or `AGENT-REVIEWERS.md` exists at root OR via walk-up from changed files)
 - `language_detection.matched` is non-empty (at least one manifest detected)
 - The user has not declined the offer earlier in this loop invocation
 
@@ -821,12 +832,12 @@ Only when ALL of these hold:
 **Single match (one language, one subtree):**
 
 ```
-No AGENT-REVIEWERS.md found. Detected: golang in `/` (matched: go.mod).
+No reviewers found. Detected: golang in `/` (matched: go.mod).
 
-Available template: golang.md — adds 8 reviewers (test-coverage,
+Available template: golang — adds 8 reviewers (test-coverage,
 error-handling, complexity, concurrency, resource-leak, external-process,
-dead-code, clarity) and disables silent-failure-hunter / comment-analyzer
-/ code-simplifier (subsumed by the language pack's richer agents).
+dead-code, clarity) to .reviewers/, plus the starters code-reviewer,
+pr-test-analyzer and type-design-analyzer.
 
 Install? [y/N]
 ```
@@ -834,16 +845,16 @@ Install? [y/N]
 **Per-subtree polyglot (`same_directory_polyglot == false`):**
 
 ```
-No AGENT-REVIEWERS.md found. Detected:
+No reviewers found. Detected:
   - golang in `/backend` (matched: go.mod)
   - python in `/frontend` (matched: pyproject.toml)
 
 Available templates:
-  [1] golang.md → /backend/AGENT-REVIEWERS.md
-  [2] python.md → /frontend/AGENT-REVIEWERS.md
+  [1] golang → /backend/.reviewers/
+  [2] python → /frontend/.reviewers/
 
-Each template installs in its detected subtree. A merged # Configuration
-will be written to the root AGENT-REVIEWERS.md.
+Each template installs in its detected subtree. The starters they keep and a
+merged config.json go to the root .reviewers/.
 
 Install all? [y/N/select]
 ```
@@ -851,7 +862,7 @@ Install all? [y/N/select]
 **Same-directory polyglot (`same_directory_polyglot == true`):**
 
 ```
-No AGENT-REVIEWERS.md found. Detected MULTIPLE languages in the same directory:
+No reviewers found. Detected MULTIPLE languages in the same directory:
   - golang in `/` (matched: go.mod)
   - python in `/` (matched: pyproject.toml)
 
@@ -877,7 +888,7 @@ scripts/install-template.sh golang:backend python:frontend
 scripts/install-template.sh golang:.
 ```
 
-The script is transactional — it validates ALL target paths before writing anything and refuses if any `AGENT-REVIEWERS.md` already exists. Successful install bumps `defaults_version_checked` to the current plugin version, so the subsequent stale-pin check (step 3) passes by construction.
+The script is transactional — it stages every file first and writes nothing if any of them already exists, or if the repo still has a root `AGENT-REVIEWERS.md` (convert it first).
 
 #### After install: offer repo-tailored recommendations
 
@@ -893,7 +904,7 @@ On accept, follow the "Project-Specific Reviewer Recommendations" section below 
 
 #### When the user declines the install offer
 
-Don't re-prompt within the same loop invocation. Track the decline via `TaskCreate` (or equivalent ephemeral state) so a fresh loop invocation re-fires the offer if conditions still hold. Continue to step 3 with only the 6 baked-in defaults.
+Don't re-prompt within the same loop invocation. Track the decline via `TaskCreate` (or equivalent ephemeral state) so a fresh loop invocation re-fires the offer if conditions still hold. Continue with the 6 starters running as built-in defaults (the legacy behaviour for a repo with no reviewers).
 
 ### Project-Specific Reviewer Recommendations
 
@@ -903,7 +914,7 @@ After `install-template.sh` succeeds and the user accepts the post-install "want
 
 The original sketch for this flow used Claude Code's plan mode. **It doesn't work.** Verified: `EnterPlanMode` exists but `ExitPlanMode` returns no structured data — there's no programmatic way for a skill to read back which items the user approved, rejected, or modified. The right primitive is `AskUserQuestion` with `multiSelect: true`, which returns the user's picks structured.
 
-Trade-off: no "modify a proposal before accepting" UX. The user accepts or rejects each proposal as written. If they want to tweak wording, they accept and edit the resulting AGENT-REVIEWERS.md by hand.
+Trade-off: no "modify a proposal before accepting" UX. The user accepts or rejects each proposal as written. If they want to tweak wording, they accept and edit the resulting `.reviewers/<name>.md` by hand.
 
 #### Repo scan: orchestrator picks per-repo
 
@@ -1000,22 +1011,20 @@ After the first batch's answers, automatically follow up with batch 2 (no gate q
 
 #### Writing accepted proposals
 
-Each accepted proposal has an explicit `scope`. Use it to route the write:
-
-- **Scope `/`** (root-wide): append to root `AGENT-REVIEWERS.md`. If the root file has no `# Agents` section yet (templates went to subtrees), add one before the first proposal lands.
-- **Scope `/path/`** (subtree): append to `<path>/AGENT-REVIEWERS.md`. If that file doesn't exist (no template was installed at that subtree), create it with just `# Agents` — the root file owns `# Configuration` per the install-template convention.
-
-For each proposal, generate the H2 block:
+Each accepted proposal has an explicit `scope`. Write it to `.reviewers/<proposal.name>.md` under that scope: `.reviewers/` at the root for scope `/`, `<path>/.reviewers/` for scope `/path/`. Refuse rather than overwrite an existing file.
 
 ```markdown
-## <proposal.name>
+# <proposal.name>
+verification: judgement
+**Checks:** <one line: what it flags>
+**Spawn when:** <one line decidable from a diff: paths, imports, kinds of change>
 
 <proposal.focus>
 
 <!-- Proposed during install-template setup; rationale: <proposal.rationale> -->
 ```
 
-Append as a new `## ` block under `# Agents` in the target file. Preserve any existing agents. The rationale comment supports future audit-agents (q2h) recommendations.
+The rationale comment supports future audit-agents (q2h) recommendations.
 
 #### After writing
 
@@ -1029,9 +1038,11 @@ No re-run of `discover-agents.sh` needed — round 1 picks up the new files natu
 
 #### When the user declines the recommendations prompt
 
-Just continue to step 3 (stale-pin check). The template install stays in place; no further writes happen. Track the decline via `TaskCreate` so the prompt doesn't re-fire if the loop happens to revisit this code path within the same invocation.
+Just continue to the next pre-loop step. The template install stays in place; no further writes happen. Track the decline via `TaskCreate` so the prompt doesn't re-fire if the loop happens to revisit this code path within the same invocation.
 
 ### Stale Pin Detection (at loop start)
+
+**Legacy layout only.** A `.reviewers/` repo has no built-in defaults to fall behind, so `stale_pin` is always `false` there.
 
 Before round 1, the loop checks `defaults_version_checked` against `DEFAULTS_VERSION` (plugin root): the plugin version in which the default reviewers last changed. A pin at or above it is current, so most version bumps don't trigger a re-audit. The check is a deterministic semver compare, no LLM inference.
 
@@ -1060,13 +1071,12 @@ Consider running `/pr-review-loop:audit-agents`.
 Once the stale check passes (or `--skip-stale-check` is set), the loop emits a one-line summary of which agents are running and why, before any agent spawns:
 
 ```
-Spawning 6 reviewers: 4 defaults + 1 user override (code-reviewer) + 1 user agent (pci-auditor).
-Disabled defaults: pr-test-analyzer.
+Spawning 6 of 9 reviewers (.reviewers/): code-reviewer, silent-failure-hunter, store-integrity-reviewer, pci-auditor, test-coverage-reviewer, clarity-reviewer.
 Skipped: concurrency-reviewer (no async/threads in diff). Not dispatched (no files in scope): none.
 Validation: enabled (sonnet validators across all flaggers).
 ```
 
-(Math: 6 defaults − 1 disabled (pr-test-analyzer) − 1 overridden (code-reviewer) = 4 default agents spawning; plus the user's `code-reviewer` override and `pci-auditor` user agent = 6 total. The validator model is held constant at sonnet, whatever model each flagger runs on, so per-flagger acceptance-rate telemetry isn't confounded by validator strictness.)
+(In a legacy repo, also name the defaults that are disabled or overridden. The validator model is held constant at sonnet, whatever model each flagger runs on, so per-flagger acceptance-rate telemetry isn't confounded by validator strictness.)
 
 Goes to the same task tracking state / pre-round summary surface as other setup state.
 
@@ -1179,47 +1189,71 @@ Each finding's validator outcome is logged to `.beads/pr-review-loop/findings/<p
 - Per-flagger validation acceptance rate (helps identify reviewers that emit many false positives — comparable across flaggers because the validator model is held constant)
 - Total findings dropped or annotated by the validator
 
-### AGENT-REVIEWERS.md Format
+### Reviewer Files
 
-Two types of H1 sections:
+Each reviewer is one file, `.reviewers/<name>.md`. Helper scripts reviewers run
+live in `.reviewers/bin/`; notes for the orchestrator (guidelines, context, why
+something was retired) in `.reviewers/README.md`; settings in
+`.reviewers/config.json` (see "Configuration").
 
-1. **`# Agents`** - Defines custom agent reviewers (H2 headings become agent names)
-2. **Any other H1 section** - Treated as context/instructions for the main review loop (like CLAUDE.md)
-
-```markdown
-# Agents
-
-## security-reviewer
-Focus on security vulnerabilities: injection attacks, auth bypasses, secrets in code,
-unsafe deserialization, path traversal, etc. Flag anything that could be exploited.
-
-## dry-reviewer
-Identify code duplication. Look for repeated logic that could be abstracted.
-Consider whether abstraction would actually improve maintainability.
-
-# Guidelines
-
-When reviewing this codebase:
-- All database queries must use parameterized statements
-- Prefer composition over inheritance
-- Error messages should never expose internal paths or stack traces
-
-# Context
-
-This is a Ruby on Rails API backend. The frontend is a separate React app.
-Authentication uses JWT tokens stored in httpOnly cookies.
+```
+.reviewers/
+  README.md                      # orchestrator context, not a reviewer
+  config.json
+  security-reviewer.md
+  store-integrity-reviewer.md
+  bin/
+    check-migrations.sh
 ```
 
-**How sections are used:**
-- `# Agents` → H2 headings define agent reviewers with their specialized instructions
-- Other H1 sections (`# Guidelines`, `# Context`, etc.) → Passed to the main pr-review-loop task as context, similar to CLAUDE.md content
+A reviewer file starts with a **header in its first 12 lines**. It is all the
+orchestrator reads to decide whether to spawn the reviewer (`summary` in
+`discover-agents.sh` output):
+
+```markdown
+# store-integrity-reviewer
+model: haiku
+verification: mutation — breaks the write path in a scratch copy and shows the test that catches it
+**Checks:** writes keep the store's invariants (atomic replace, no partial files).
+**Spawn when:** the diff writes under `store/`. Skip read-only changes.
+**Contents:** What to flag · Do not flag · Proving findings
+
+## What to flag
+...
+```
+
+- **`# <name>`** matches the file name. Names are kebab-case and never change
+  once used: dream markers, PR thread signatures and `.pi.agents` are keyed
+  on them.
+- **`model:`** is the Claude model (`sonnet`, `haiku`, `opus` or a `claude-*`
+  ID). Without one, or with anything else, the reviewer runs on Sonnet. Pi
+  routing stays in `config.json`.
+- **`verification:`** is the reviewer's usual proof mode (see "Verification").
+- **`**Checks:**`** is one line saying what it flags.
+- **`**Spawn when:**`** is the condition decided from a diff alone: paths,
+  imports, file types, kinds of change, and a skip rule if there is one. "When
+  relevant" decides nothing. Discovery warns when this line is missing from the
+  header or still says TODO.
+- **`**Contents:**`** lists the spec's sections, so the orchestrator knows what
+  the reviewer covers without reading it.
+
+Everything after the header is the spec, handed to the reviewer as its
+`instructions`. Anything the reviewer needs from the repo's rules goes here:
+README.md reaches the orchestrator, never a reviewer.
+
+**Legacy `AGENT-REVIEWERS.md`** still works: each `## <name>` under `# Agents`
+is a reviewer whose body is its spec, other H1 sections are orchestrator
+context, and a `.reviewers/<name>.md` beside it supplies the spec for an `##`
+whose body is just a summary. Every H2 under `# Agents` is spawned, so prose
+there is a bug (discovery warns). To move a repo over, see
+[`references/reviewers-dir.md`](references/reviewers-dir.md).
 
 ### Hierarchical Scoping
 
-`AGENT-REVIEWERS.md` files can exist at any directory level. Agents and context sections are scoped to their directory and below.
+`.reviewers/` directories (and legacy `AGENT-REVIEWERS.md` files) can exist at any directory level. Their reviewers and context are scoped to their directory and below.
 
 **Resolution rules:**
-1. For each changed file, collect `AGENT-REVIEWERS.md` files from its directory up to repo root
+1. For each changed file, collect `.reviewers/` directories and `AGENT-REVIEWERS.md` files from its directory up to repo root
 2. Resolve sections by H1 name - **lower directory definitions override same-named sections from above**
 3. For `# Agents`: each agent only reviews changes **within its directory scope and below**
 4. For other H1 sections: winning version of each section (per override rule) is combined and passed to the review loop
@@ -1227,11 +1261,11 @@ Authentication uses JWT tokens stored in httpOnly cookies.
 
 **Example structure:**
 ```
-/AGENT-REVIEWERS.md                    # Agents: clarity-reviewer, dry-reviewer
+/.reviewers/                           # clarity-reviewer, dry-reviewer
                                        # Guidelines: general repo rules
-/plugins/AGENT-REVIEWERS.md            # Agents: dry-reviewer (overrides root), plugin-structure-reviewer
+/plugins/.reviewers/                   # dry-reviewer (overrides root), plugin-structure-reviewer
                                        # Guidelines: plugin-specific rules (overrides root)
-/plugins/auth/AGENT-REVIEWERS.md       # Agents: security-reviewer
+/plugins/auth/.reviewers/              # security-reviewer
                                        # Context: auth-specific context
 ```
 
@@ -1249,7 +1283,7 @@ Authentication uses JWT tokens stored in httpOnly cookies.
 
 **Discovery algorithm** (implemented by `scripts/discover-agents.sh`):
 1. Get changed files via `gh pr diff <PR> --name-only`
-2. For each unique directory containing changed files, walk up to repo root collecting `AGENT-REVIEWERS.md` paths
+2. For each unique directory containing changed files, walk up to repo root collecting `.reviewers/` directories and `AGENT-REVIEWERS.md` paths
 3. Parse each file, building agent map (lower directory wins on name collision)
 4. Track each agent's scope (directory where it was defined)
 5. Filter changed files per agent to only those within the agent's scope
@@ -1276,7 +1310,7 @@ be checked; "this design is confusing" is not and must say so.
 excuse itself from work it could do: a prose reviewer asserting one sentence
 restates another can grep for both and show them.
 
-Declare the reviewer's usual mode as the first line of its body —
+Declare the reviewer's usual mode on its header's `verification:` line (in a legacy `AGENT-REVIEWERS.md`, the first line of its section) —
 `verification: mutation` | `evidence-query` | `judgement` | `mixed` — and treat a missing line
 as **undeclared**, a finding about the roster rather than the code. The
 declaration describes what the reviewer typically owes; it never licenses a
@@ -1286,19 +1320,19 @@ finding to skip its proof. Surface it per round:
 Reported: pr-test-analyzer=ok(mutation) comment-analyzer=ok(evidence-query) silent-failure-hunter=ok(mixed) foo=ok(undeclared)
 ```
 
-**The shipped defaults declare themselves; your charter declares only your own
-reviewers.** Do **not** add a `verification:` line under `## pr-test-analyzer` or
-any other default name in your `AGENT-REVIEWERS.md`. A user agent whose name
+**Legacy layout: your charter declares only your own reviewers.** In an
+`AGENT-REVIEWERS.md`, do **not** add a `verification:` line under
+`## pr-test-analyzer` or any other default name. A user agent whose name
 matches a default *replaces* it (`discover-agents.sh:13`), so a section
 containing only a declaration substitutes ~20 characters for the entire shipped
 prompt — measured at 3,647 characters replaced by 22, reported as
 `kind=user-override`, with the roster silently lobotomised and the audit reading
 as complete. That is the failure this rule exists to catch, produced by following
-the rule carelessly. The plugin knows what its own reviewers do; six repos each
-asserting it would invite six answers.
+the rule carelessly. In the `.reviewers/` layout this cannot happen: a starter is
+copied in whole, and its header already carries its `verification:` line.
 
-**A charter on `main` does not govern a branch already open.** `AGENT-REVIEWERS.md`
-is read from the PR's branch, so a roster committed to `main` after a PR was cut
+**A charter on `main` does not govern a branch already open.** Reviewer files
+are read from the PR's branch, so a roster committed to `main` after a PR was cut
 reports `override_count: 0` and `defaults_version_checked: null` against that PR.
 Rebase or merge before concluding a roster change took effect.
 
@@ -1309,12 +1343,13 @@ drops a reviewer shrinks `D` and `R` together, so `D == R` still holds and the
 round reports a full roster it never had. Commit roster changes before
 dispatching.
 
-**Put it in the spawn prompt, not the top of the charter.** `discover-agents.sh`
-hands each reviewer *its own section only* — a repo's `# Guidelines` and anything
-else above the agent definitions reach the orchestrator, never the reviewers
+**Put it in the spawn prompt, not in shared context.** `discover-agents.sh`
+hands each reviewer *its own file (or section) only* — `.reviewers/README.md`, a
+legacy `# Guidelines`, and anything else outside the reviewer reach the
+orchestrator, never the reviewers
 (measured: this repo's Guidelines section appears in 0 of its agents'
-`instructions`). A "prove your findings" paragraph written once at the top of
-`AGENT-REVIEWERS.md` therefore arrives nowhere, while looking like it was
+`instructions`). A "prove your findings" paragraph written once in README.md or at
+the top of `AGENT-REVIEWERS.md` therefore arrives nowhere, while looking like it was
 adopted. The spawning template below carries the requirement instead, so every
 reviewer gets it whether or not its charter repeats it — which is also the only
 version an adopter cannot forget. Do **not** repeat it in an agent definition:
@@ -1435,7 +1470,7 @@ or in care. It is measured in whether something checks.** The tree-dirtying rule
 in this file was broken by its own author four minutes after it shipped, and a
 reviewer caught it. That is the section working.
 
-Audit the roster when adopting this. Aligning `AGENT-REVIEWERS.md` to this rule
+Audit the roster when adopting this. Aligning the reviewer files to this rule
 may go straight to main — it is roster configuration, and the carve-out is scoped
 to that alignment.
 
@@ -1511,6 +1546,10 @@ Task tool:
 
     **Changed files in your scope:**
     <agent.changed_files from discover-agents.sh output>
+
+    <only when agent.bin is set:>
+    **Helper scripts:** `<agent.bin>/` holds scripts written for this
+    roster. Run them where your spec says to; don't modify them.
 
     ## Your workflow:
 
@@ -1688,30 +1727,24 @@ Example tracking:
 
 As agents reach diminishing returns, stop calling them. The main loop should:
 
-1. Parse `AGENT-REVIEWERS.md` to get all agent names
+1. Take the agent names from `discover-agents.sh` output
 2. Track per-agent state (productive / retirement-candidate / retired)
 3. Only spawn Tasks for non-retired agents
 4. Update state after each cycle based on results
 
 This keeps the review loop efficient while ensuring all perspectives are heard at least once.
 
-## Suggesting AGENT-REVIEWERS.md Creation or Updates
+## Suggesting Reviewer Changes
 
-During the review loop, if you identify guidance that would improve review quality for the repo but isn't captured anywhere, suggest creating or updating an `AGENT-REVIEWERS.md` file.
+During the review loop, if you identify guidance that would improve review quality for the repo but isn't captured anywhere, suggest a new reviewer file or an edit to an existing one.
 
-**When to suggest creating AGENT-REVIEWERS.md:**
-- The repo has no `AGENT-REVIEWERS.md` AND you identify specific guidance that would help — e.g., recurring review patterns, repo-specific conventions reviewers should know, or specialized review concerns (security, API compatibility) that warrant a custom agent reviewer.
+**When to suggest a new reviewer:** review comments keep flagging a kind of issue no reviewer owns, or a new area of the codebase (a subdirectory with different conventions) needs its own `<dir>/.reviewers/`.
 
-**When to suggest updating an existing AGENT-REVIEWERS.md:**
-- You notice review comments repeatedly flagging the same kind of issue that a `# Guidelines` entry could prevent.
-- A new area of the codebase (e.g., a new subdirectory with different conventions) would benefit from scoped agents or guidelines.
-- Existing agent definitions are missing context that would make their reviews more accurate.
+**When to suggest editing one:** a reviewer's `**Spawn when:**` line keeps spawning it on diffs where it finds nothing, or its spec is missing context that would make its findings accurate.
 
-**What NOT to suggest:**
-- Don't suggest creating AGENT-REVIEWERS.md just because the file doesn't exist — only when you have concrete content that would go in it.
-- Don't duplicate guidance that already exists in CLAUDE.md or other repo documentation.
+**What NOT to suggest:** reviewer files just because a repo has none (offer the language templates instead), or guidance that already lives in CLAUDE.md or other repo documentation.
 
-**How to suggest it:** Present the recommendation to the user with the proposed content. Do not create or modify AGENT-REVIEWERS.md without user approval.
+**How to suggest it:** Present the recommendation to the user with the proposed file content. Do not create or modify reviewer files without user approval.
 
 ## Dream Markers (reviewer telemetry)
 
@@ -1788,9 +1821,10 @@ When detected, the script suggests:
 | `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |
 | `pi-review.sh <PR> <agent> <dispatch-sha>` | Run a `pi`-engine agent once in Docker and post its findings. Prints the manifest; only exit 0 is reported. See "Pi Engine" |
 | `emit-dream-marker.sh <kind> key=value ...` | Emit a dream marker (reviewer telemetry) — best-effort, never blocks. See "Dream Markers" |
-| `discover-agents.sh <PR> \| --base <ref>` | Discover + merge agent reviewers; drops generated files from scope and skips reviewers left with nothing (`configuration.excluded_files`, `not_dispatched_no_files`); `--base` diffs `<ref>...HEAD` for local mode. (defaults + user agents per C+E); emits `configuration` block with `stale_pin` and (when no AGENT-REVIEWERS.md exists) the `language_detection` block driving the Language Template Offer |
+| `discover-agents.sh <PR> \| --base <ref>` | Discover reviewers (`.reviewers/` files, or legacy `AGENT-REVIEWERS.md` + defaults), each with its `summary` header; drops generated files from scope and skips reviewers left with nothing; reports `configuration.layout`, and `language_detection` when the repo has no reviewers. `--base` diffs `<ref>...HEAD` for local mode |
+| `convert-reviewers.py repo [--write] \| starters [--into DIR] [NAME...] \| template FILE --into DIR` | Convert a legacy repo to `.reviewers/` (dry run without `--write`), copy starters in, or convert one template file. See `references/reviewers-dir.md` |
 | `detect-language.sh [--repo-root <path>]` | Scan repo for language manifests (go.mod, pyproject.toml, etc.); emits `[{language, subtree, manifest}, ...]`. Deterministic; called by discover-agents.sh |
-| `install-template.sh [--repo-root <path>] <lang>:<subtree> [...]` | Install language template(s) at the given subtrees + merged # Configuration at root. Transactional; refuses existing AGENT-REVIEWERS.md. Bumps `defaults_version_checked` to current plugin version |
+| `install-template.sh [--repo-root <path>] <lang>:<subtree> [...]` | Install language packs into `<subtree>/.reviewers/`, their starters and a merged `config.json` into the root `.reviewers/`. Transactional: writes nothing if any file exists or the repo is still on `AGENT-REVIEWERS.md` |
 | `_load_defaults.sh` | Internal helper: load native default subagents from `plugins/pr-review-loop/agents/` |
 | `_parse_configuration.sh <AGENT-REVIEWERS.md>` | Internal helper: parse the `# Configuration` JSON block; validates required `reason` in `overlap_acknowledged` |
 
@@ -1805,6 +1839,7 @@ Bash(scripts/check-ci.sh:*)
 Bash(scripts/post-line-comment.sh:*)
 Bash(scripts/record-finding.sh:*)
 Bash(scripts/post-findings.sh:*)
+Bash(scripts/convert-reviewers.py:*)
 Bash(scripts/get-agent-comments.sh:*)
 Bash(scripts/reopen-comment.sh:*)
 Bash(scripts/discover-agents.sh:*)
