@@ -81,3 +81,7 @@ proxied_server_client_info.json
 
 # Local copy of the pre-remote Dolt DB, kept from adopting the Dolt remote (#55).
 dolt.pre-remote/
+
+# Issues live in the Dolt remote (refs/dolt/data on origin); a JSONL export
+# here goes stale and invites hand-merges. Use bd export for a snapshot.
+issues.jsonl
