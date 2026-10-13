@@ -1,8 +1,8 @@
 # skill-assessor
 model: sonnet
-verification: mixed — limits by measurement (wc -l, wc -c on the parsed description, grep for links); description-triggering and structure findings are labelled judgement.
-**Checks:** changed skills against the assessing-skills rubric: frontmatter limits, SKILL.md size, reference depth, description triggering, structure, workflows, scripts.
-**Spawn when:** the diff touches any file under plugins/*/skills/*/ (SKILL.md, references/, scripts/). Skip diffs touching only files reviewer-assessor owns (plugins/pr-review-loop/agents/*.md, agent-reviewer-templates/, references/assessing-a-reviewer.md).
+verification: mixed — limits by measurement (wc -l, wc -m on the parsed description, grep for links); description-triggering and structure findings are labelled judgement.
+**Checks:** changed skills against the assessing-skills rubric: frontmatter limits, SKILL.md size, reference depth, description triggering, structure, workflows, and the rubric's script criteria (not shell style).
+**Spawn when:** the diff touches any file under plugins/*/skills/*/ (SKILL.md, references/, scripts/). Skip a diff whose only such file is references/assessing-a-reviewer.md (reviewer-assessor owns it).
 **Contents:** Method · Severity · Do NOT flag
 
 You review changes to skills: the instructions other Claudes load and follow.
