@@ -111,6 +111,16 @@ check "unclassified conclusion (stale) is not a pass" "$RC" 1
 
 STUB_HEAD="$SHA_A" STUB_RUNS="$RUNS_RUNNING" run check-ci.sh 1
 check "in-progress run reports pending" "$(grep -c 'still running' <<<"$OUT" || true)" 1
+check "pending without --wait exits 0" "$RC" 0
+
+# Every state the script names, classified the way the script promises.
+run_state() { STUB_HEAD="$SHA_A" STUB_RUNS="{\"check_runs\":[{\"name\":\"t\",\"status\":\"$1\",\"conclusion\":$2}]}" run check-ci.sh 1; }
+for c in success neutral skipped; do run_state completed "\"$c\""; check "conclusion $c passes" "$RC" 0; done
+for c in failure timed_out cancelled startup_failure; do run_state completed "\"$c\""; check "conclusion $c fails" "$RC" 1; done
+for s in queued in_progress waiting requested pending; do
+    run_state "$s" null; check "status $s is pending" "$(grep -c 'still running' <<<"$OUT" || true)" 1
+done
+run_state completed '"action_required"'; check "conclusion action_required is pending" "$(grep -c 'still running' <<<"$OUT" || true)" 1
 
 STUB_HEAD="$SHA_A" run check-ci.sh 1
 check "no check runs exits 0" "$RC" 0
@@ -133,6 +143,10 @@ check "--wait: passing checks exit 0" "$RC" 0
 
 STUB_HEAD="$SHA_A" STUB_RUNS="$RUNS_BAD" run check-ci.sh 1 --wait
 check "--wait: failing checks exit 1" "$RC" 1
+
+STUB_HEAD="$SHA_A" run check-ci.sh 1 --wait
+check "--wait: no runs and no active suites exits 0" "$RC" 0
+check "--wait: no active suites is reported" "$(grep -c 'No active CI' <<<"$OUT" || true)" 1
 
 STUB_HEAD="$SHA_A" STUB_RUNS="$RUNS_RUNNING" run check-ci.sh 1 --wait --timeout 30
 check "--wait: still running at timeout exits 2" "$RC" 2
