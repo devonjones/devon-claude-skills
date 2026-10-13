@@ -95,6 +95,16 @@
       "author": {
         "name": "Devon Jones"
       }
+    },
+    {
+      "name": "assessing-skills",
+      "description": "Assess a Claude skill against Anthropic's skill authoring best practices: measured limits, judged criteria, description trigger test, evaluations, and a verdict.",
+      "version": "1.0.0",
+      "source": "./plugins/assessing-skills",
+      "category": "productivity",
+      "author": {
+        "name": "Devon Jones"
+      }
     }
   ]
 }

@@ -1,10 +1,24 @@
+---
+name: assessing-skills
+description: Assesses a Claude skill against Anthropic's skill authoring best practices. Measures frontmatter and size limits, judges conciseness, structure, workflows and scripts, tests the description's triggering, proposes evaluations, and returns a report with a Ship / Ship with fixes / Rework verdict. Use when the user asks to assess, audit, grade or review a skill, a SKILL.md, or a plugin's skills.
+---
+
 # Assessing a Skill
 
-Hand this file to a Claude together with a skill directory. It assesses the
-skill against Anthropic's
+Assess the skill the user names against Anthropic's
 [Skill authoring best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)
-and returns a report in the format at the end. For a pr-review-loop reviewer,
-use [assessing-a-reviewer.md](../plugins/pr-review-loop/skills/pr-review-loop/references/assessing-a-reviewer.md) instead.
+and return a report in the format at the end.
+
+**Target:** a skill directory (the one holding `SKILL.md`), a `SKILL.md` path,
+or a skill name. Resolve a name with `find . -path '*/skills/<name>/SKILL.md'`;
+if that finds nothing or several, ask. Several skills named → one full report
+each, in turn.
+
+**Output:** print the report. Write it to a file only when the user gives a
+path or asks to save it.
+
+For a pr-review-loop reviewer, use pr-review-loop's
+`references/assessing-a-reviewer.md` instead.
 
 You are assessing, not editing. Do not change the skill's files.
 
