@@ -28,7 +28,9 @@ case "$*" in
       body=$(cat); jq -c . <<< "$body" >> "$T/comments.jsonl"
       [[ -n "${FAKE_FAIL_PATH:-}" && "$(jq -r .path <<< "$body")" == "$FAKE_FAIL_PATH" ]] && { echo '{"message":"line not in diff"}'; exit 1; }
       echo '{"id":9}' ;;
-  *reviews/7/comments*) echo "101 a.py:10 header" ;;
+  *pulls/42/comments*--jq*)
+      # what --paginate --jq yields for review 7: only its comments, with lines
+      echo "101 a.py:10 header" ;;
   *) echo '{}' ;;
 esac
 GH
@@ -50,6 +52,10 @@ echo "=== bad severity is refused ==="
 repo; set +e; (cd "$T/r" && bash "$RECORD" 42 a.py 1 x HIGH "y" >/dev/null 2>&1); rc=$?; set -e
 check "non-P severity exits non-zero" '[[ $rc -ne 0 ]]'
 
+echo "=== a mistyped mode is an error, not a clean gate ==="
+repo; set +e; (cd "$T/r" && PATH="$T/bin:$PATH" bash "$POST" 42 --chek >/dev/null 2>&1); rc=$?; set -e
+check "unknown mode exits non-zero even with an empty store" '[[ $rc -ne 0 ]]'
+
 echo "=== bad line and no repo are refused ==="
 set +e; (cd "$T/r" && bash "$RECORD" 42 a.py abc x P1 "y" >/dev/null 2>&1); rc=$?; set -e
 check "non-numeric line exits non-zero" '[[ $rc -ne 0 ]]'
@@ -70,6 +76,7 @@ echo "=== one review carries every thread ==="
 repo; seed; run 42 --check; check "--check fails while findings are unposted" '[[ $RC -eq 1 ]]'
 run 42
 check "posts exit 0" '[[ $RC -eq 0 ]]'
+check "the manifest gives each thread its line" '[[ "$OUT" == *"101 a.py:10"* ]]'
 check "one review with 3 comments" '[[ "$(jq ".comments | length" "$T/review.json")" == 3 ]]'
 check "merged thread is signed by both flaggers" \
   '[[ "$(jq -r ".comments[] | select(.path==\"a.py\") | .body" "$T/review.json" | grep -c "<!-- Agent: ")" == 2 ]]'
@@ -94,6 +101,12 @@ echo "=== a rejected review whose threads all post clears the store ==="
 repo; seed; FAKE_REVIEW_FAIL=1 run 42
 check "exits 0" '[[ $RC -eq 0 ]]'
 run 42 --check; check "store consumed" '[[ $RC -eq 0 ]]'
+
+echo "=== a failed P3 roll-up puts every P3 back ==="
+repo; seed; FAKE_REVIEW_FAIL=1 FAKE_FAIL_PATH=c.py run 42
+check "exits non-zero" '[[ $RC -ne 0 ]]'
+check "both P3 findings are back in the store" \
+  '[[ "$(jq -r .severity "$T/r/.git/pr-review-loop/findings-42.jsonl" | sort | uniq -c | tr -s " ")" == " 2 P3" ]]'
 
 echo "=== a rejected review falls back, and failures stay recorded ==="
 repo; seed; FAKE_REVIEW_FAIL=1 FAKE_FAIL_PATH=b.py run 42
