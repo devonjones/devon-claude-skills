@@ -5,7 +5,7 @@ description: Extract transcripts from YouTube videos. Use when the user asks for
 
 # YouTube Transcript
 
-Fetch auto-generated or manually-uploaded captions from a YouTube video via the `youtube-transcript-api` library (run via `uv run --script`).
+Fetch auto-generated or manually-uploaded captions from a YouTube video with `scripts/get_transcript.py` (uses `youtube-transcript-api` via `uv run --script`).
 
 ## Usage
 
@@ -16,7 +16,7 @@ scripts/get_transcript.py "<URL_OR_VIDEO_ID>"
 # With timestamps
 scripts/get_transcript.py "<URL_OR_VIDEO_ID>" --timestamps
 
-# Specific language (falls back to default if unavailable)
+# Specific language (errors if no transcript in that language)
 scripts/get_transcript.py "<URL_OR_VIDEO_ID>" --lang en
 
 # Write directly to a file
@@ -31,6 +31,7 @@ If the user doesn't specify a filename, either print to stdout or save as `<VIDE
 - `https://youtu.be/VIDEO_ID`
 - `https://youtube.com/embed/VIDEO_ID`
 - `https://youtube.com/shorts/VIDEO_ID`
+- `https://youtube.com/v/VIDEO_ID`
 - Raw 11-character video ID
 
 ## Output Format
@@ -46,9 +47,9 @@ If the user doesn't specify a filename, either print to stdout or save as `<VIDE
 
 ## When Captions Aren't Available
 
-The script errors out when a video has no captions at all. Pass that error back to the user — do not fabricate a transcript.
+The script exits 1 with an error message when captions are unavailable (including for the requested `--lang`). Pass that error back to the user — do not fabricate a transcript.
 
 ## Prerequisites
 
 - `uv` — installs the Python dependencies in an ephemeral venv at invocation time. Install with `curl -LsSf https://astral.sh/uv/install.sh | sh` or `pip install uv`.
-- Network access to `youtube.com` (the script calls the public timedtext endpoint directly).
+- Network access to `youtube.com` (the library fetches captions from YouTube).
