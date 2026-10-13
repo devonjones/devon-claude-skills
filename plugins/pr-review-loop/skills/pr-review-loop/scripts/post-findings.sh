@@ -102,8 +102,10 @@ if RESULT=$(gh api --method POST "repos/$REPO/pulls/$PR/reviews" --input - <<< "
     archive
     echo "Posted review $RID: $FINDINGS finding(s) in $COUNT thread(s)."
     # The per-review comments endpoint carries no line numbers; the PR's does.
+    # The post succeeded; a listing failure must not report it as failed.
     gh api --paginate "repos/$REPO/pulls/$PR/comments" \
-        --jq ".[] | select(.pull_request_review_id == $RID)"' | "\(.id) \(.path):\(.line // .original_line) \(.body | split("\n")[0])"'
+        --jq ".[] | select(.pull_request_review_id == $RID)"' | "\(.id) \(.path):\(.line // .original_line) \(.body | split("\n")[0])"' \
+        || echo "Warning: review $RID is posted, but its comment ids could not be listed; read them with get-agent-comments.sh" >&2
     exit 0
 fi
 

@@ -29,8 +29,15 @@ case "$*" in
       [[ -n "${FAKE_FAIL_PATH:-}" && "$(jq -r .path <<< "$body")" == "$FAKE_FAIL_PATH" ]] && { echo '{"message":"line not in diff"}'; exit 1; }
       echo '{"id":9}' ;;
   *pulls/42/comments*--jq*)
-      # what --paginate --jq yields for review 7: only its comments, with lines
-      echo "101 a.py:10 header" ;;
+      [[ -n "${FAKE_LIST_FAIL:-}" ]] && { echo "HTTP 502" >&2; exit 1; }
+      # Run the caller's real --jq over a listing that mixes reviews and line fields.
+      while [[ $# -gt 0 && "$1" != --jq ]]; do shift; done
+      jq -r "$2" <<'JSON'
+[{"id": 101, "pull_request_review_id": 7, "path": "a.py", "line": 10, "original_line": 10, "body": "header one\nbody"},
+ {"id": 102, "pull_request_review_id": 7, "path": "b.py", "line": null, "original_line": 5, "body": "header two"},
+ {"id": 900, "pull_request_review_id": 6, "path": "z.py", "line": 1, "original_line": 1, "body": "another review"}]
+JSON
+      ;;
   *) echo '{}' ;;
 esac
 GH
@@ -76,7 +83,13 @@ echo "=== one review carries every thread ==="
 repo; seed; run 42 --check; check "--check fails while findings are unposted" '[[ $RC -eq 1 ]]'
 run 42
 check "posts exit 0" '[[ $RC -eq 0 ]]'
-check "the manifest gives each thread its line" '[[ "$OUT" == *"101 a.py:10"* ]]'
+check "the manifest gives each thread its line" '[[ "$OUT" == *"101 a.py:10 header one"* ]]'
+check "an outdated thread falls back to its original line" '[[ "$OUT" == *"102 b.py:5 header two"* ]]'
+check "only this review's comments are listed" '[[ "$OUT" != *"900"* ]]'
+repo; seed; FAKE_LIST_FAIL=1 run 42
+check "a failed listing after a successful post still exits 0" '[[ $RC -eq 0 ]]'
+check "and says the review is posted" '[[ "$OUT" == *"review 7 is posted"* ]]'
+run 42 --check; check "the posted findings stay archived" '[[ $RC -eq 0 ]]'
 check "one review with 3 comments" '[[ "$(jq ".comments | length" "$T/review.json")" == 3 ]]'
 check "merged thread is signed by both flaggers" \
   '[[ "$(jq -r ".comments[] | select(.path==\"a.py\") | .body" "$T/review.json" | grep -c "<!-- Agent: ")" == 2 ]]'
