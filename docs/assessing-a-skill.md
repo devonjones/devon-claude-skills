@@ -4,7 +4,7 @@ Hand this file to a Claude together with a skill directory. It assesses the
 skill against Anthropic's
 [Skill authoring best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)
 and returns a report in the format at the end. For a pr-review-loop reviewer,
-use [assessing-a-reviewer.md](assessing-a-reviewer.md) instead.
+use [assessing-a-reviewer.md](../plugins/pr-review-loop/skills/pr-review-loop/references/assessing-a-reviewer.md) instead.
 
 You are assessing, not editing. Do not change the skill's files.
 
