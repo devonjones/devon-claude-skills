@@ -7,7 +7,7 @@ Hand this file to a Claude together with one reviewer definition, or a whole
 [Skill authoring best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)
 and against the pr-review-loop reviewer contract, and returns a report in the
 format at the end. For a whole skill, use
-[assessing-a-skill.md](../../../../../docs/assessing-a-skill.md).
+the `assessing-skills` skill, a separate plugin in this marketplace.
 
 You are assessing, not editing. Do not change the definition or the working tree.
 

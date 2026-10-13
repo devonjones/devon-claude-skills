@@ -1,10 +1,24 @@
+---
+name: assessing-skills
+description: Assesses a Claude skill against Anthropic's skill authoring best practices. Measures frontmatter and size limits, judges conciseness, structure, workflows and scripts, tests the description's triggering, proposes evaluations, and returns a report with a Ship / Ship with fixes / Rework verdict. Use when the user asks to assess, audit, grade or review a skill, a SKILL.md, or a plugin's skills.
+---
+
 # Assessing a Skill
 
-Hand this file to a Claude together with a skill directory. It assesses the
-skill against Anthropic's
+Assess the skill the user names against Anthropic's
 [Skill authoring best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)
-and returns a report in the format at the end. For a pr-review-loop reviewer,
-use [assessing-a-reviewer.md](../plugins/pr-review-loop/skills/pr-review-loop/references/assessing-a-reviewer.md) instead.
+and return a report in the format at the end.
+
+**Target:** a skill directory (the one holding `SKILL.md`), a `SKILL.md` path,
+or a skill name. Resolve a name with `find . -path '*/skills/<name>/SKILL.md'`;
+if that finds nothing or several, ask. Several skills named → one full report
+each, in turn.
+
+**Output:** print the report. Write it to a file only when the user gives a
+path or asks to save it.
+
+For a pr-review-loop reviewer, use `references/assessing-a-reviewer.md` from
+the pr-review-loop plugin, if it is installed.
 
 You are assessing, not editing. Do not change the skill's files.
 
@@ -30,7 +44,7 @@ ones nothing links to, and which scripts exist.
 | Check | Limit | How |
 |---|---|---|
 | `name` | ≤64 chars, `[a-z0-9-]` only, no XML tags, no "anthropic"/"claude" | read frontmatter |
-| `description` | non-empty, ≤1,024 chars, no XML tags | `wc -c` on the value |
+| `description` | non-empty, ≤1,024 chars, no XML tags | `wc -m` on the value, trailing newline stripped |
 | SKILL.md body | <500 lines | `wc -l` |
 | Reference depth | every reference file linked directly from SKILL.md | grep links in each referenced file |
 | Long references | files >100 lines open with a table of contents | `wc -l`, then read the head |
@@ -80,7 +94,7 @@ The description is the only thing Claude sees when choosing among 100+ skills.
 - Name is specific (gerund form preferred: `processing-pdfs`), consistent with
   sibling skills, not `helper`/`utils`/`tools`.
 
-Test it: write three user requests that should trigger the skill and two
+**Description test:** write three user requests that should trigger the skill and two
 near-misses that should not. Does the description separate them?
 
 ### Structure and progressive disclosure
@@ -176,6 +190,7 @@ Before reporting a check as passing, confirm the check could have failed.
 | reference depth | pass/fail | … |
 | TOC on long refs | pass/fail | … |
 | paths | pass/fail | … |
+| unlinked files | pass/fail | … |
 
 ## Findings
 Ordered most severe first.
