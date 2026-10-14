@@ -18,13 +18,13 @@
 #
 # Output JSON shape:
 # {
-#   "agents": [{name, scope, source, instructions, summary?, spec?, bin?, description?, model?, color?, kind, changed_files, engine, pi_model?}, ...],
+#   "agents": [{name, scope, source, instructions, summary?, spec?, bin?, description?, model?, color?, kind, changed_files, engine, pi_models?}, ...],
 #     # A user agent whose spec lives in .reviewers/<name>.md next to the
 #     #   AGENT-REVIEWERS.md that names it: instructions = that file, summary =
 #     #   its H2 body (what it checks, when to spawn it), spec = the file's
 #     #   repo-relative path, bin = .reviewers/bin when that directory exists.
 #     # kind: "default" | "user" | "user-override"
-#     # engine: "claude" | "pi" (from # Configuration .pi); pi_model set only for "pi"
+#     # engine: "claude" | "pi" (from # Configuration .pi); pi_models (fallback chain) only for "pi"
 #     # model: every agent has one - frontmatter for defaults, a `model:` line in
 #     #   the first lines of a user agent's summary or spec, else "sonnet". Never absent:
 #     #   an absent model made the orchestrator spawn on its own (session) model.
@@ -603,20 +603,26 @@ echo "$JQ_INPUT" | jq '
     # A reviewer with nothing in its scope is not spawned. The exception is a
     # genuinely empty diff, where defaults still run (bfd); a diff that was
     # all generated files spawns nobody.
-    # engine "pi" runs the agent through pi-review.sh on pi_model instead of a
-    # Claude Task. Per-agent `pi.agents` entries beat `pi.all`; the parser has
-    # already rejected a pi route with no model to run on.
+    # engine "pi" runs the agent through pi-review.sh down its pi_models chain
+    # instead of a Claude Task. Per-agent `pi.agents` entries beat `pi.all`; the
+    # parser has already rejected a pi route with no model to run on. A chain
+    # that starts with "claude" is just a Claude agent; "claude:<model>" also
+    # sets the Task model, so config can downshift a Claude agent by cost.
     ($config.pi // {}) as $pi |
     ($user_agents + $effective_defaults) as $candidates |
     (if ($files | length) == 0 and ($excluded | length) == 0 then $candidates
      else $candidates | map(select(.changed_files | length > 0)) end
         | map(.name as $n | (($pi.agents // {})[$n]) as $v |
-            (if ($v | type) == "string" then $v
+            (if ($v | type) == "string" or ($v | type) == "array" then $v
              elif $v == true then $pi.model
              elif $v == false then null
              elif $pi.all == true then $pi.model
-             else null end) as $pm |
-            if $pm then . + {engine: "pi", pi_model: $pm} else . + {engine: "claude"} end
+             else null end | if type == "string" then [.] else . end) as $pm |
+            if $pm == null then . + {engine: "claude"}
+            elif ($pm[0] | test("^claude(:|$)")) | not then . + {engine: "pi", pi_models: $pm}
+            # "claude:haiku" first: a Claude agent, on that model.
+            elif $pm[0] | startswith("claude:") then . + {engine: "claude", model: ($pm[0] | ltrimstr("claude:"))}
+            else . + {engine: "claude"} end
             # Every agent gets a Claude model, sonnet unless it names a real one;
             # "inherit" or anything unknown would hand the Task the session model.
             | .model = (if (.model // "" | test("^(sonnet|haiku|opus|claude-[a-z0-9.-]+)$")) then .model else "sonnet" end))

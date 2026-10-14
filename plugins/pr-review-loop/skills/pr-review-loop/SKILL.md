@@ -1479,50 +1479,139 @@ It prints one `<comment-id> <file>:<line> <header>` line per thread. Those ids a
 
 ### Pi Engine (reviewers on non-Claude models)
 
-An agent whose `engine` (from `discover-agents.sh`) is `"pi"` is not a Task.
-Run it as a background Bash job, in parallel with the Tasks:
-
-```bash
-scripts/pi-review.sh <PR> <agent-name> <SHA recorded at C3>
-```
-
-The script runs [Pi](https://www.npmjs.com/package/@mariozechner/pi-coding-agent)
-once (`pi -p`) in Docker, against a throwaway `git archive` export of the
-dispatch SHA. Pi can edit and run code there for mutation proofs. It prints one
-JSON report and exits. Then the script posts the findings and reopens through
-`post-line-comment.sh` and `reopen-comment.sh`, under the agent's own name. No
-GitHub token enters the container. Every comment ends with the engine and model,
-so the operator can see which model raised it.
+An agent whose `engine` (from `discover-agents.sh`) is `"pi"` runs its review on
+a non-Claude model through `scripts/pi-review.sh`, which runs
+[Pi](https://www.npmjs.com/package/@mariozechner/pi-coding-agent) once in
+Docker against a throwaway `git archive` export of the dispatch SHA. Pi can edit
+and run code there for mutation proofs. It reports through tools from
+`pi/review-tools.ts`: `report_finding` and `reopen_thread`, each checked as it is
+called (severity, an in-scope file, a positive line, a reopen ID that exists),
+so a bad call goes back to the model to fix, then `finish_review`. A run that
+never calls `finish_review` did not report. The script **posts nothing**. It
+prints the report as JSON, so no GitHub token enters the container.
 
 Turn it on in `# Configuration`:
 
 ```json
-{ "pi": { "all": true, "model": "deepseek/deepseek-chat",
-          "agents": { "silent-failure-hunter": false, "dry-reviewer": "google/gemini-2.5-flash" } } }
+{ "pi": { "all": true, "model": ["zai/glm-5.1", "claude"],
+          "agents": { "silent-failure-hunter": false,
+                      "code-reviewer": ["qwen-token-plan/qwen3.8-max", "zai/glm-5.1", "claude"] } } }
 ```
 
 - **`all`** (default `false`): route every agent to Pi on `model`.
-- **`model`**: the default Pi model (`provider/id`). Required when `all` or any `true` entry routes an agent to Pi.
-- **`agents`**: per agent. `true` routes the agent to Pi on `model`, a string routes it to Pi on that model, and `false` keeps it on Claude even under `all`. Default agents can be routed this way too, without overriding their prompts.
+- **`model`**: the default chain. Required when `all` or any `true` entry routes an agent to Pi.
+- **`agents`**: per agent. `true` uses `model`, a chain routes the agent on that chain, and `false` keeps it on Claude even under `all`. Default agents can be routed this way too, without overriding their prompts.
+- **A chain** is a model (`provider/id`) or an ordered list of them. The script moves to the next model only when the provider fails: quota or credits used up, rate limit, auth or access denied, unreachable. A model that ran and gave no valid report is a strike, not a reason to try another. `"claude"` in a chain means "from here, use the normal Claude Task", and `"claude:sonnet"`, `"claude:haiku"` or `"claude:opus"` names the Task's model. A chain that starts with a Claude entry is just a Claude agent, so `"code-simplifier": "claude:haiku"` downshifts that agent to Haiku. A provider that reports exhausted quota is skipped by every run for 10 minutes (`PI_REVIEW_EXHAUSTED_TTL`, marker in `~/.cache/pr-review-loop/exhausted/<provider>`). Z.ai plan pacing reorders and skips too: a chain tries its `zai/*` models first while the weekly window has more quota left than time left, and skips them once any window reaches `PI_REVIEW_PLAN_CAP` percent (default 90). Pacing reads the Z.ai quota API with `curl` and `ZAI_API_KEY` from your environment; without a reading it is off, and the script says so.
 
 `configuration.pi_agents_unknown` lists `agents` entries that name nothing on the
 roster. Treat it like `disabled_defaults_unknown`.
 
-**Exit codes.** Only exit 0 counts as reported. 1 means setup failed, 2 means
-the PR head is not the dispatch SHA (nothing was posted, and the round is
-invalid), 3 means Pi gave no valid report, and 4 means a post failed. A Pi run
-that crashed, timed out or hit a provider error never reads as "No issues
-found". Every non-zero exit is a strike under "A reviewer that will not report".
+**Spawn a Haiku recorder Task per Pi agent**, in the same parallel batch as the
+Claude reviewers. Haiku records the report, so Opus spends no context on it.
+It records like any other reviewer, so `post-findings.sh` merges Pi findings
+into the round's one review:
 
-**Telemetry.** A Bash run leaves no Task description, so the script writes its
-own `reviewer-fired` dream marker on every exit. Disposition markers in F3 are
-the same as for any agent.
+```yaml
+Task tool:
+  subagent_type: general-purpose
+  model: haiku
+  description: <agent-name> review for PR #<PR>
+  prompt: |
+    You record a code review that another model has already written. Do not
+    review, judge, rewrite or drop anything yourself.
+
+    1. Run it with `run_in_background: true` (a review can take well over the
+       Bash tool's 10-minute limit) and wait for the completion notice:
+       scripts/pi-review.sh <PR> <agent-name> <SHA recorded at C3>
+       Its stderr names the run log; mention that path in your answer so the
+       operator can watch it with scripts/pi-watch.sh.
+    2. By exit code:
+       - 0: stdout is JSON. For each `report.reopens` entry run
+         scripts/reopen-comment.sh <PR> <comment_id> <agent-name> "<reason>"
+         For each `report.findings` entry run
+         scripts/record-finding.sh <PR> <file> <line> <agent-name> <severity> "<body>"
+         where <body> is exactly:
+           **<title>**
+
+           <body field, verbatim>
+
+           <sub>engine: pi · model: <model></sub>
+         Do not post to GitHub yourself; the orchestrator posts every
+         recorded finding in one review. Never retry a reopen.
+       - 5: stdout is {"fallback": "claude", "model": "<m>"}. Return exactly
+         `FALLBACK claude:<m>`, or `FALLBACK claude` when <m> is empty.
+       - anything else: return `NOT REPORTED exit <n>: <first line of stderr>`.
+    3. Return the manifest, one line per item, nothing else:
+       `<severity> | <file>:<line> | <title>` per recorded finding,
+       `REOPENED | <comment_id>` per reopen,
+       `FAILED | <file>:<line> | <title>` per record or reopen that failed,
+       `DROPPED | <file>:<line> | <title>` per entry in `dropped`,
+       or `No issues found` when the report was empty.
+       First line: `model: <model>`.
+```
+
+**What the orchestrator does with the answer:**
+
+| Answer | Meaning |
+|---|---|
+| A manifest with no `FAILED` line | Reported. Its findings go out with `post-findings.sh`. |
+| A manifest with `FAILED` lines | Reported, but an item is missing. Record that finding yourself with `record-finding.sh` (or reopen that thread) under the agent's name. |
+| `FALLBACK claude[:<model>]` | Not a strike. Spawn this agent's normal Claude Task now, in this round, on `<model>` if one is named. |
+| `NOT REPORTED exit 2` | The branch moved. The round is invalid (see Convergence). |
+| `NOT REPORTED` with any other exit | A strike under "A reviewer that will not report". Exit 6 means every provider in the chain failed. |
+
+**Watching a run.** Every Pi run's event stream is kept for 7 days in
+`~/.cache/pr-review-loop/runs/`. `scripts/pi-watch.sh` follows the newest run
+live (or `pi-watch.sh <file>`, `--once` to print and exit): each tool call with
+its arguments, what the model says, and a running token and cost tally. It runs
+in any terminal or a herdr pane.
+
+**Hung, not slow.** A run is stopped only when its log stops growing for
+`PI_REVIEW_IDLE_TIMEOUT` seconds (default 600). Pi streams every token and tool
+call, so a long review that is still working is left alone. `PI_REVIEW_TIMEOUT`
+(default 3600) is the hard cap.
+
+**Container or host.** `PI_REVIEW_SANDBOX=docker` (default) runs Pi in the
+image, with the scratch copy as the only writable mount. `PI_REVIEW_SANDBOX=host`
+runs your installed `pi` directly, with your `~/.pi/agent` config and the host's
+toolchains (Go, Node, … for mutation proofs). Its environment is stripped to
+`HOME`, `PATH`, the Pi config dir and the one model key, but there is no
+container boundary: PR code the reviewer runs can read your files, gh login
+included.
+
+**Telemetry.** The script writes a `reviewer-fired` dream marker naming the
+model that actually ran and the models it tried first.
+
+**Choosing models: `eval-reviewer.sh`.** Run it in each repo, one agent at a
+time. A model can suit one codebase and not another, and each repo has its own
+reviewers. It picks the **cheapest** model that reviews as well as the baseline,
+judged on that agent's own history in that repo:
+
+```bash
+scripts/eval-reviewer.sh harvest silent-failure-hunter          # its PR threads + how each was answered
+scripts/eval-reviewer.sh run silent-failure-hunter \
+    --models zai/glm-5.1,qwen-token-plan/qwen3.8-max,anthropic/claude-haiku-4-5 \
+    --baseline anthropic/claude-sonnet-4-6 --commits 6
+scripts/eval-reviewer.sh assign                                 # all evaluated agents -> one .pi.agents block
+```
+
+- **Ground truth** is the agent's signed threads. The first word of the first reply is the verdict: `Fixed`, `Out of scope` and `Deferred` mean real; `Won't fix` and `Withdrawn` mean noise. `Noted` and other replies are not scored.
+- **Replay**: the commits with the most real findings are reviewed again on each model (`pi-review.sh --replay`, which posts nothing). Claude models are tested through Pi as `anthropic/...`, so every candidate runs in the same harness. These bill `ANTHROPIC_API_KEY`.
+- **Judge**: Claude Sonnet (headless `claude -p`, on your subscription, not the API key) matches each model's findings to the originals and calls unmatched ones plausible or not.
+- **Pass**: a failed replay is retried once; the model then fails at most 10% of runs, its severity-weighted catch rate is within 0.10 of the baseline, and its junk rate (declined or implausible findings) is at most 0.10 above the baseline. Without a baseline: catches at least 0.5, junk at most 0.3. Below 8 real findings the result is **inconclusive** and nothing is recommended.
+- **Cost**: measured tokens x price, from `~/.config/pr-review-loop/pi-prices.json` (start from `pi/prices.example.json`). Plan models are priced the same way, at the provider's pay-per-token list price, which is what their quota draw is worth. With no entry, the price the run reported is used (Pi's list price; a Claude replay's API-equivalent cost). Unpriced models rank last.
+- **Ranking**: passing plan models come first, cheapest draw first, then pay-per-token models by cost. Unused plan quota is wasted, so plans rank first.
+- **assign** puts each agent on a passing model whose subscription has the least projected load, follows it with passing models on other subscriptions, and ends with `claude`. Winning Anthropic models become `claude:sonnet` / `claude:haiku`. It prints a block for `# Configuration`; nothing is written until you approve it.
+
+Replays and judgements are cached under `~/.cache/pr-review-loop/eval/`, so an
+interrupted run picks up where it stopped. A
+failed grading or judge call stops the run rather than being scored. Large commits can take a model 10+
+minutes each.
 
 **Credentials and settings.**
 - Only the model's provider key enters the container, by name: `<PROVIDER>_API_KEY` as in Pi's provider table (`GEMINI_API_KEY` for `google`). PR code the reviewer runs can read that key, so use a spend-capped one.
 - `PI_REVIEW_ENV_FILE`: a docker env file to pass instead of that one key.
-- `PI_REVIEW_MODELS_JSON`: a Pi `models.json` that replaces the image's `pi/models.json`, for account-specific endpoints (an Alibaba workspace URL, a local Ollama). Copy the providers you still want.
-- `PI_REVIEW_TIMEOUT` (default 900 s).
+- **One provider list:** if you use Pi yourself, its `~/.pi/agent/models.json` (or `$PI_CODING_AGENT_DIR/models.json`) is mounted read-only over the image's `pi/models.json`, so host Pi and the reviewers see the same providers, including account-specific endpoints like an Alibaba workspace URL. `auth.json` is never mounted. `PI_REVIEW_MODELS_JSON` points at a different file; with neither, the image's own list is used.
 - `PI_REVIEW_IMAGE` (default: built from `pi/Dockerfile` on first use). The default image has no toolchains beyond Python; point this at one that adds yours if reviewers should run your tests.
 
 ### Main Loop Integration
@@ -1684,7 +1773,9 @@ When detected, the script suggests:
 | `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post one line comment with agent signature (orchestrator fallback only) |
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |
 | `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |
-| `pi-review.sh <PR> <agent> <dispatch-sha>` | Run a `pi`-engine agent once in Docker and post its findings. Prints the manifest; only exit 0 is reported. See "Pi Engine" |
+| `eval-reviewer.sh harvest\|run\|assign ...` | Pick the cheapest model per agent that reviews as well as a baseline, on this repo's own history; build a `.pi.agents` block that spreads load across subscriptions. See "Pi Engine" |
+| `pi-watch.sh [--latest\|<run.jsonl>] [--once]` | Follow a Pi run live: tool calls, model text, running tokens and cost |
+| `pi-review.sh <PR> <agent> <sha> [--model M] [--replay]` | Run a `pi`-engine agent once in Docker down its model chain. Prints the report as JSON and posts nothing; a Haiku Task posts it. Exit 5 = use the Claude Task. See "Pi Engine" |
 | `emit-dream-marker.sh <kind> key=value ...` | Emit a dream marker (reviewer telemetry) — best-effort, never blocks. See "Dream Markers" |
 | `discover-agents.sh <PR> \| --base <ref>` | Discover reviewers (`.reviewers/` files, or legacy `AGENT-REVIEWERS.md` + defaults), each with its `summary` header; drops generated files from scope and skips reviewers left with nothing; reports `configuration.layout`, and `language_detection` when the repo has no reviewers. `--base` diffs `<ref>...HEAD` for local mode |
 | `convert-reviewers.py repo [--write] \| starters [--into DIR] [NAME...] \| template FILE --into DIR` | Convert a legacy repo to `.reviewers/` (dry run without `--write`), copy starters in, or convert one template file. See `references/reviewers-dir.md` |
@@ -1713,6 +1804,8 @@ Bash(scripts/get-pr-comments.sh:*)
 Bash(scripts/install-template.sh:*)
 Bash(scripts/emit-dream-marker.sh:*)
 Bash(scripts/pi-review.sh:*)
+Bash(scripts/eval-reviewer.sh:*)
+Bash(scripts/pi-watch.sh:*)
 ```
 
 ## Prerequisites
@@ -1720,9 +1813,11 @@ Bash(scripts/pi-review.sh:*)
 - `gh` CLI authenticated
 - `jq` - JSON processor for parsing GitHub API responses
   Install with: `apt install jq` (Ubuntu/Debian) or `brew install jq` (macOS)
-- `python3` - `convert-reviewers.py` and `install-template.sh` (standard library only)
+- `python3` - `convert-reviewers.py`, `install-template.sh` and `eval-reviewer.sh` (standard library only)
 - `pre-commit` (optional) - its hooks run on `git commit` once installed with `pre-commit install`
 - Docker and a model provider API key (optional) - only for agents routed to the Pi engine (`# Configuration .pi`).
+  `PI_REVIEW_SANDBOX=host` runs your own `pi` instead: `npm install -g @mariozechner/pi-coding-agent` (the image pins the version in `pi/Dockerfile`).
+- `claude` CLI (optional) - `eval-reviewer.sh` (judge and grader) and `--replay` with a `claude` entry.
 - `bd` (beads) (optional) - Issue tracker for capturing out-of-scope suggestions as tickets.
   If not installed, out-of-scope suggestions are handled with "Out of scope for this PR" replies.
   See: https://github.com/steveyegge/beads

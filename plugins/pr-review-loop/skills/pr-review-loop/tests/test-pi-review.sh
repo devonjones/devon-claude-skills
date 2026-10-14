@@ -1,22 +1,29 @@
 #!/usr/bin/env bash
 # pi-review.sh, run for real against a fake `gh` and a fake `docker`.
 #
-# The fake docker prints whatever Pi "said" ($FAKE_PI_OUT) and exits $FAKE_PI_RC,
-# so each case checks what the wrapper does with a given Pi transcript: what it
-# posts, what it refuses, and which exit code the orchestrator sees.
+# The fake docker plays Pi in --mode json: for each model it prints the events
+# stored in $T/pi/<model with / as _> and plays the review tools by writing
+# $T/pi/<model>.report into the mounted /out (see `says` / `fails` below), so
+# each case checks what the wrapper does with a given run - which model it ends
+# on, what it reports, and which exit code the orchestrator sees.
 #
 # Usage: tests/test-pi-review.sh
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PI_REVIEW="$SCRIPT_DIR/../scripts/pi-review.sh"
-T="$(mktemp -d)"; trap 'chmod -R u+w "$T" 2>/dev/null; rm -rf -- "$T"' EXIT
+T="$(mktemp -d)"; trap 'rm -rf -- "$T"' EXIT
 PASSED=0; FAILED=0
 ok(){ PASSED=$((PASSED+1)); echo "  PASS: $1"; }
 bad(){ FAILED=$((FAILED+1)); echo "  FAIL: $1"; }
 
-# A repo whose root config routes `pi-agent` to pi and leaves `claude-agent` alone.
+# A repo with a base commit and one PR commit. The root config routes pi-agent
+# down a chain, keeps claude-agent on Claude, and gives fallback-agent a chain
+# that ends in claude.
 REPO="$T/repo"; mkdir -p "$REPO/src"
+G(){ git -C "$REPO" -c user.name=t -c user.email=t@t -c core.hooksPath=/dev/null "$@"; }
+printf 'x = 0\n' > "$REPO/src/a.py"
+G init -q; G add -A; G commit -q -m base
 printf 'x = 1\n' > "$REPO/src/a.py"; printf 'y = 2\n' > "$REPO/src/b.py"
 cat > "$REPO/AGENT-REVIEWERS.md" <<'MD'
 # Configuration
@@ -25,7 +32,9 @@ cat > "$REPO/AGENT-REVIEWERS.md" <<'MD'
 {"defaults_version_checked": "99.0.0",
  "disabled": ["code-reviewer", "silent-failure-hunter", "pr-test-analyzer",
               "comment-analyzer", "type-design-analyzer", "code-simplifier"],
- "pi": {"model": "deepseek/deepseek-chat", "agents": {"pi-agent": true}}}
+ "pi": {"model": "deepseek/deepseek-chat",
+        "agents": {"pi-agent": ["zai/glm-5.1", "google/gemini-2.5-flash"],
+                   "fallback-agent": ["zai/glm-5.1", "claude"]}}}
 ```
 
 # Agents
@@ -35,13 +44,14 @@ Look for bugs.
 
 ## claude-agent
 Look for bugs too.
-MD
-git -C "$REPO" init -q
-git -C "$REPO" -c user.name=t -c user.email=t@t -c core.hooksPath=/dev/null add -A
-git -C "$REPO" -c user.name=t -c user.email=t@t -c core.hooksPath=/dev/null commit -q -m init
-SHA="$(git -C "$REPO" rev-parse HEAD)"
 
-mkdir -p "$T/bin"
+## fallback-agent
+Also bugs.
+MD
+G add -A; G commit -q -m pr
+SHA="$(G rev-parse HEAD)"
+
+mkdir -p "$T/bin" "$T/pi"
 cat > "$T/bin/gh" <<'GH'
 #!/usr/bin/env bash
 printf '%s\0' "$@" >> "$GH_LOG"; printf '\n' >> "$GH_LOG"
@@ -50,217 +60,335 @@ case "$*" in
   "pr view"*headRefOid*)        # FAKE_HEAD_AFTER: the head moves after the first read (a push mid-run)
       if [[ -n "${FAKE_HEAD_AFTER:-}" && -e "$GH_LOG.headread" ]]; then echo "$FAKE_HEAD_AFTER"
       else : > "$GH_LOG.headread"; echo "$FAKE_HEAD"; fi ;;
-  "pr view"*commits*)           echo "$FAKE_HEAD" ;;
+  "pr view"*commits*)           echo "$FAKE_FIRST" ;;
   "pr diff"*)                   [[ -n "${FAKE_DIFF_FAIL:-}" ]] && exit 4; echo "diff --git a/src/a.py b/src/a.py" ;;
-  "api graphql"*)               # one resolved thread whose first comment is database id 7
-      echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"T1","isResolved":true,"comments":{"nodes":[{"id":"C1","databaseId":7,"body":"x","author":{"login":"me"},"path":"src/a.py","line":1}]}}]}}}}}' ;;
-  *"--method POST"*)
-      [[ -n "${FAKE_POST_FAIL:-}" ]] && { echo '{"message":"Validation Failed"}'; exit 1; }
-      echo '{"id":7}' ;;
+  "api graphql"*)               echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}' ;;
   *)                            echo '{}' ;;
 esac
 GH
 cat > "$T/bin/docker" <<'DOCKER'
 #!/usr/bin/env bash
-case "$1" in
-  run) echo run >> "$DOCKER_LOG"; printf '%s\n' "$*" >> "$DOCKER_LOG.args"
-       if [[ -n "${FAKE_LOCK_SCRATCH:-}" ]]; then   # leave the wrapper an unremovable scratch dir
-           w="$(tr ' ' '\n' <<<"$*" | sed -n 's|:/work$||p')"; mkdir -p "$w/locked/x"; chmod 500 "$w/locked"; fi
-       printf '%s' "$FAKE_PI_OUT"; exit "${FAKE_PI_RC:-0}" ;;
-  rm)  [[ -n "${FAKE_DOCKER_RM_FAIL:-}" ]] && exit 1; exit 0 ;;
-  *)   exit 0 ;;
-esac
+[[ "$1" == rm && -n "${FAKE_DOCKER_RM_FAIL:-}" ]] && exit 1
+[[ "$1" == run ]] || exit 0
+printf '%s\n' "$*" >> "$DOCKER_LOG.args"
+if [[ -n "${FAKE_LOCK_SCRATCH:-}" ]]; then   # leave the wrapper an unremovable scratch dir
+    w="$(tr ' ' '\n' <<<"$*" | sed -n 's|:/work$||p')"; mkdir -p "$w/locked/x"; chmod 500 "$w/locked"; fi
+while [[ $# -gt 0 && "$1" != --model ]]; do shift; done
+m="${2//\//_}"; echo "$2" >> "$DOCKER_LOG"
+# Hung (silent) or slow-but-working (trickling) runs, before anything is reported.
+if [[ -n "${FAKE_PI_SILENT:-}" ]]; then sleep "$FAKE_PI_SILENT"; fi
+if [[ -n "${FAKE_PI_TRICKLE:-}" ]]; then for i in $(seq "$FAKE_PI_TRICKLE"); do echo '{"type":"turn_start"}'; sleep 1; done; fi
+out="$(tr ' ' '\n' < <(tail -n 1 "$DOCKER_LOG.args") | sed -n 's|:/out$||p')"
+if [[ -f "$PI_DIR/$m.report" ]]; then   # the model called the tools
+    jq -c '.findings[]' "$PI_DIR/$m.report" > "$out/findings.jsonl"
+    jq -c '.reopens[]?' "$PI_DIR/$m.report" > "$out/reopens.jsonl"
+    jq -e '.closed != false' "$PI_DIR/$m.report" >/dev/null && echo "x" > "$out/done"
+fi
+cat "$PI_DIR/$m" 2>/dev/null || { echo "no fake for $2" >&2; exit 1; }
 DOCKER
-chmod +x "$T/bin/gh" "$T/bin/docker"
+# Z.ai quota API: answers $FAKE_ZAI_QUOTA, or fails like an unreachable API.
+cat > "$T/bin/curl" <<'CURL'
+#!/usr/bin/env bash
+cat > "$CURL_LOG.stdin"; printf '%s\n' "$*" > "$CURL_LOG"
+[[ -n "${FAKE_ZAI_QUOTA:-}" ]] || exit 7
+printf '%s' "$FAKE_ZAI_QUOTA"
+CURL
+chmod +x "$T/bin/gh" "$T/bin/docker" "$T/bin/curl"
 
-# run <agent> [pi stdout]  -> sets OUT, RC; logs in $T/gh.log, $T/docker.log
-run(){ : > "$T/gh.log"; rm -f "$T/gh.log.headread"; : > "$T/docker.log"; : > "$T/docker.log.args"; set +e
-  OUT=$(cd "$REPO" && PATH="$T/bin:$PATH" GH_LOG="$T/gh.log" DOCKER_LOG="$T/docker.log" \
-        FAKE_HEAD="${FAKE_HEAD:-$SHA}" FAKE_PI_OUT="${2:-}" FAKE_HEAD_AFTER="${FAKE_HEAD_AFTER:-}" FAKE_DIFF_FAIL="${FAKE_DIFF_FAIL:-}" \
-        FAKE_LOCK_SCRATCH="${FAKE_LOCK_SCRATCH:-}" FAKE_DOCKER_RM_FAIL="${FAKE_DOCKER_RM_FAIL:-}" \
-        PR_REVIEW_LOOP_TEST_CHANGED_FILES=$'src/a.py\nsrc/b.py' \
-        PR_REVIEW_LOOP_PACE_S=0 PR_REVIEW_LOOP_PACE_DIR="$T/pace" DREAM_HOME="$T/dream" \
-        DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY-k}" \
-        bash "$PI_REVIEW" 42 "$1" "$SHA" 2>"$T/err"); RC=$?; set -e; }
-posts(){ tr '\0' ' ' < "$T/gh.log" | grep -c -- '--method POST' || true; }
+# says <model> <report json>: Pi ran and reported that through the tools.
+# A non-JSON second argument means it answered in prose and never reported.
+says(){ rm -f "$T/pi/${1//\//_}.report"
+  jq -e . <<<"$2" >/dev/null 2>&1 && printf '%s\n' "$2" > "$T/pi/${1//\//_}.report"
+  jq -nc --arg t "$2" '{type: "agent_end", messages: [
+    {role: "assistant", stopReason: "toolUse", usage: {input: 100, output: 10, cacheRead: 900, cacheWrite: 0}, content: []},
+    {role: "assistant", stopReason: "stop", usage: {input: 50, output: 20, cacheRead: 1000, cacheWrite: 0},
+     content: [{type: "text", text: $t}]}]}' > "$T/pi/${1//\//_}"; }
+# fails <model> <error>: the provider refused (Pi still exits 0).
+fails(){ rm -f "$T/pi/${1//\//_}.report"; jq -nc --arg e "$2" '{type: "agent_end", messages: [
+    {role: "assistant", stopReason: "error", errorMessage: $e, usage: {input: 0, output: 0}, content: []}]}' \
+    > "$T/pi/${1//\//_}"; }
 fence='```'
+report(){ printf '%s' "$1"; }
+EMPTY='{"findings": [], "reopens": []}'
 
-echo "=== a valid report posts in-scope findings and drops out-of-scope ones ==="
-run pi-agent "thinking...
-${fence}json
-{\"findings\": [
-  {\"severity\": \"P2\", \"file\": \"src/a.py\", \"line\": 1, \"title\": \"x is wrong\", \"body\": \"judgement: rename\"},
-  {\"severity\": \"P1\", \"file\": \"elsewhere.py\", \"line\": 3, \"title\": \"not mine\", \"body\": \"b\"}],
- \"reopens\": []}
-${fence}"
+# run <agent> [extra args...] -> OUT, RC; logs: $T/gh.log, $T/docker.log
+run(){ : > "$T/gh.log"; rm -f "$T/gh.log.headread"; : > "$T/docker.log"; : > "$T/docker.log.args"; set +e
+  OUT=$(cd "$REPO" && PATH="$T/bin:$PATH" GH_LOG="$T/gh.log" DOCKER_LOG="$T/docker.log" PI_DIR="$T/pi" \
+        FAKE_HEAD="${FAKE_HEAD:-$SHA}" FAKE_FIRST="$SHA" \
+        PR_REVIEW_LOOP_TEST_CHANGED_FILES=$'src/a.py\nsrc/b.py' \
+        PI_REVIEW_CACHE_DIR="$T/cache" DREAM_HOME="$T/dream" PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$T/no-pi}" \
+        FAKE_HEAD_AFTER="${FAKE_HEAD_AFTER:-}" FAKE_DIFF_FAIL="${FAKE_DIFF_FAIL:-}" \
+        FAKE_LOCK_SCRATCH="${FAKE_LOCK_SCRATCH:-}" FAKE_DOCKER_RM_FAIL="${FAKE_DOCKER_RM_FAIL:-}" \
+        FAKE_PI_SILENT="${FAKE_PI_SILENT:-}" FAKE_PI_TRICKLE="${FAKE_PI_TRICKLE:-}" \
+        PI_REVIEW_IDLE_TIMEOUT="${PI_REVIEW_IDLE_TIMEOUT:-600}" PI_REVIEW_SANDBOX="${PI_REVIEW_SANDBOX:-docker}" \
+        PRIOR_SEEN="${PRIOR_SEEN:-/dev/null}" CLAUDE_LOG="${CLAUDE_LOG:-/dev/null}" FAKE_CLAUDE_NOREPORT="${FAKE_CLAUDE_NOREPORT:-}" FAKE_CLAUDE_LIMIT="${FAKE_CLAUDE_LIMIT:-}" FAKE_CLAUDE_ERR="${FAKE_CLAUDE_ERR:-}" \
+        CURL_LOG="$T/curl.log" FAKE_ZAI_QUOTA="${FAKE_ZAI_QUOTA:-}" \
+        ZAI_API_KEY="${TEST_ZAI_KEY-k}" GEMINI_API_KEY="${TEST_GEMINI_KEY-k}" DEEPSEEK_API_KEY=k \
+        bash "$PI_REVIEW" 42 "$1" "$SHA" "${@:2}" 2>"$T/err"); RC=$?; set -e; }
+ran(){ paste -sd' ' "$T/docker.log"; }
+posts(){ tr '\0' ' ' < "$T/gh.log" | grep -c -- '--method POST' || true; }
+
+echo "=== a valid report comes back as JSON; out-of-scope findings are split off ==="
+rm -rf "$T/cache"
+says zai/glm-5.1 "$(report '{"findings": [
+  {"severity": "P2", "file": "src/a.py", "line": 1, "title": "x is wrong", "body": "judgement: rename"},
+  {"severity": "P1", "file": "elsewhere.py", "line": 3, "title": "not mine", "body": "b"}], "reopens": []}')"
+run pi-agent
 [[ "$RC" -eq 0 ]] && ok "exit 0" || bad "rc=$RC: $(cat "$T/err")"
-[[ "$OUT" == *"P2 | src/a.py:1 | x is wrong"* ]] && ok "manifest line for the posted finding" || bad "manifest: $OUT"
-[[ "$OUT" == *"DROPPED | elsewhere.py:3"* ]] && ok "out-of-scope finding dropped, not posted" || bad "manifest: $OUT"
-[[ "$(posts)" -eq 1 ]] && ok "exactly one POST" || bad "posts=$(posts)"
-grep -q 'engine: pi · model: deepseek/deepseek-chat' "$T/gh.log" \
-    && ok "posted body names engine and model" || bad "body missing engine/model"
-jq -e 'select(.kind == "reviewer-fired" and .reviewer == "pi-agent" and .status == "reported" and .posted == "1")' \
-    "$T/dream/markers/pr-review-loop.jsonl" >/dev/null && ok "firing marker written" || bad "no firing marker"
+jq -e '.model == "zai/glm-5.1" and .tried == ["zai/glm-5.1"]' <<<"$OUT" >/dev/null && ok "names the model that ran" || bad "model: $OUT"
+jq -e '.report.findings == [{"severity":"P2","file":"src/a.py","line":1,"title":"x is wrong","body":"judgement: rename"}]' <<<"$OUT" >/dev/null \
+    && ok "in-scope finding in report" || bad "report: $OUT"
+jq -e '.dropped | length == 1 and .[0].file == "elsewhere.py"' <<<"$OUT" >/dev/null && ok "out-of-scope finding dropped" || bad "dropped: $OUT"
+jq -e '.usage == {"input":150,"output":30,"cacheRead":1900,"cacheWrite":0,"usd":0}' <<<"$OUT" >/dev/null \
+    && ok "usage summed over every turn" || bad "usage: $(jq -c .usage <<<"$OUT")"
+[[ "$(posts)" -eq 0 ]] && ok "posts nothing (the Haiku recorder records)" || bad "posts=$(posts)"
+jq -e 'select(.kind == "reviewer-fired" and .reviewer == "pi-agent" and .status == "reported" and .model == "zai/glm-5.1")' \
+    "$T/dream/markers/pr-review-loop.jsonl" >/dev/null && ok "firing marker names the model" || bad "no firing marker"
 
-echo "=== an empty report is 'No issues found' ==="
-run pi-agent "${fence}json
-{\"findings\": [], \"reopens\": []}
-${fence}"
-[[ "$RC" -eq 0 && "$OUT" == "No issues found" && "$(posts)" -eq 0 ]] && ok "rc 0, no posts" || bad "rc=$RC out=$OUT"
+echo "=== an empty report is still a report ==="
+says zai/glm-5.1 "$(report "$EMPTY")"
+run pi-agent
+[[ "$RC" -eq 0 ]] && jq -e '.report.findings == []' <<<"$OUT" >/dev/null && ok "exit 0, no findings" || bad "rc=$RC"
 
-echo "=== a Pi that fails silently is NOT reported ==="
-FAKE_PI_RC=1 run pi-agent '{"error":{"message":"API key not valid"}}'
-[[ "$RC" -eq 3 && "$(posts)" -eq 0 ]] && ok "provider error -> exit 3, nothing posted" || bad "rc=$RC"
-FAKE_PI_RC=0 run pi-agent "Looks good to me!"
-[[ "$RC" -eq 3 ]] && ok "exit 0 with no JSON block -> exit 3" || bad "rc=$RC"
-run pi-agent "${fence}json
-{\"findings\": [{\"severity\": \"P2\", \"file\": \"src/a.py\", \"line\": \"1\", \"title\": \"t\", \"body\": \"b\"}]}
-${fence}"
-[[ "$RC" -eq 3 && "$(posts)" -eq 0 ]] && ok "string line number -> exit 3" || bad "rc=$RC"
+echo "=== a model that never closed its report is a strike, not a fallback ==="
+says zai/glm-5.1 "Looks good to me!"; says google/gemini-2.5-flash "$(report "$EMPTY")"
+run pi-agent
+[[ "$RC" -eq 3 ]] && ok "no tool report -> exit 3" || bad "rc=$RC"
+[[ "$(ran)" == "zai/glm-5.1" ]] && ok "did not move on to the next model" || bad "ran: $(ran)"
+says zai/glm-5.1 '{"closed": false, "findings": [{"severity": "P2", "file": "src/a.py", "line": 1, "title": "t", "body": "b"}]}'
+run pi-agent
+[[ "$RC" -eq 3 ]] && ok "findings recorded but finish_review never called -> exit 3" || bad "rc=$RC out=$OUT"
+grep -q 'review-tools.ts' "$T/docker.log.args" && grep -q -- '--no-extensions -e /opt/pi-ext/review-tools.ts' "$T/docker.log.args" \
+    && ok "only the review tools extension is loaded" || bad "args: $(cat "$T/docker.log.args")"
 
-echo "=== a moved head posts nothing and never runs Pi ==="
-FAKE_HEAD=0000000000000000000000000000000000000000 run pi-agent "${fence}json
-{\"findings\": [], \"reopens\": []}
-${fence}"
-[[ "$RC" -eq 2 && ! -s "$T/docker.log" ]] && ok "exit 2 before docker run" || bad "rc=$RC docker=$(cat "$T/docker.log")"
+echo "=== a provider failure moves down the chain ==="
+fails zai/glm-5.1 "401 token expired or incorrect"; says google/gemini-2.5-flash "$(report "$EMPTY")"
+run pi-agent
+[[ "$RC" -eq 0 && "$(ran)" == "zai/glm-5.1 google/gemini-2.5-flash" ]] && ok "fell through to gemini" || bad "rc=$RC ran=$(ran)"
+jq -e '.model == "google/gemini-2.5-flash" and .tried == ["zai/glm-5.1:provider-error", "google/gemini-2.5-flash"]' <<<"$OUT" >/dev/null \
+    && ok "tried records both" || bad "tried: $(jq -c .tried <<<"$OUT")"
+[[ ! -e "$T/cache/exhausted/zai" ]] && ok "an auth error does not mark the provider exhausted" || bad "zai marked exhausted"
+fails zai/glm-5.1 "context length exceeded: 210000 > 200000 tokens"
+run pi-agent
+[[ ! -e "$T/cache/exhausted/zai" ]] && ok "a context-length error does not mark the provider exhausted" || bad "zai marked exhausted"
 
-echo "=== a failed post is exit 4 ==="
-FAKE_POST_FAIL=1 run pi-agent "${fence}json
-{\"findings\": [{\"severity\": \"P3\", \"file\": \"src/b.py\", \"line\": 1, \"title\": \"t\", \"body\": \"b\"}], \"reopens\": []}
-${fence}"
-[[ "$RC" -eq 4 && "$OUT" == *"FAILED | src/b.py:1"* ]] && ok "exit 4 with FAILED line" || bad "rc=$RC out=$OUT"
-[[ "$OUT" != *"No issues found"* ]] && ok "a failed post never reads as No issues found" || bad "out=$OUT"
-jq -e 'select(.kind == "reviewer-fired" and .status == "post-failed" and .exit == "4")' "$T/dream/markers/pr-review-loop.jsonl" >/dev/null \
-    && ok "exit-4 run: marker status post-failed" || bad "marker: $(tail -1 "$T/dream/markers/pr-review-loop.jsonl")"
+echo "=== exhausted quota is remembered across runs ==="
+fails zai/glm-5.1 "429 You have exceeded your monthly quota"
+run pi-agent
+[[ "$RC" -eq 0 && -e "$T/cache/exhausted/zai" ]] && ok "quota error marks zai exhausted" || bad "rc=$RC"
+says zai/glm-5.1 "$(report "$EMPTY")"
+run pi-agent
+[[ "$(ran)" == "google/gemini-2.5-flash" ]] && ok "next run skips zai without calling it" || bad "ran: $(ran)"
+touch -d '2 hours ago' "$T/cache/exhausted/zai"
+run pi-agent
+[[ "$(ran)" == "zai/glm-5.1" ]] && ok "after the TTL zai is tried again" || bad "ran: $(ran)"
+rm -rf "$T/cache"
 
-echo "=== the head moves while Pi runs: nothing is posted ==="
-FAKE_HEAD_AFTER=1111111111111111111111111111111111111111 run pi-agent "${fence}json
-{\"findings\": [{\"severity\": \"P2\", \"file\": \"src/a.py\", \"line\": 1, \"title\": \"t\", \"body\": \"b\"}], \"reopens\": []}
-${fence}"
-[[ "$RC" -eq 2 && "$(posts)" -eq 0 ]] && grep -q 'moved' "$T/err" && ok "post-run head check: exit 2, no POST" || bad "rc=$RC posts=$(posts)"
+echo "=== Z.ai plan pacing ==="
+week(){ jq -nc --argjson p "$1" --argjson d "$2" '{data: {limits: [
+    {unit: 3, number: 5, percentage: 0},
+    {unit: 6, number: 1, percentage: $p, nextResetTime: ((now + $d * 86400) * 1000 | floor)}]}}'; }
+says zai/glm-5.1 "$(report "$EMPTY")"; says google/gemini-2.5-flash "$(report "$EMPTY")"
+FAKE_ZAI_QUOTA="$(week 95 3)" run pi-agent
+[[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && jq -e '.tried[0] == "zai/glm-5.1:plan-cap"' <<<"$OUT" >/dev/null \
+    && ok "a window at 95% skips zai (past the limit the key bills)" || bad "rc=$RC ran=$(ran) out=$OUT"
+grep -q 'Bearer k' "$T/curl.log.stdin" && ! grep -q 'Bearer' "$T/curl.log" \
+    && ok "the key reaches curl on stdin, not argv" || bad "curl argv: $(cat "$T/curl.log")"
+FAKE_ZAI_QUOTA="$(week 0 3)" run pi-agent
+[[ "$(ran)" == "google/gemini-2.5-flash" ]] && ok "the reading is cached, not re-fetched each run" || bad "ran: $(ran)"
+rm -rf "$T/cache/quota"
+(cd "$REPO" && sed -i 's|"pi-agent": \["zai/glm-5.1", "google/gemini-2.5-flash"\]|"pi-agent": ["google/gemini-2.5-flash", "zai/glm-5.1"]|' AGENT-REVIEWERS.md)
+FAKE_ZAI_QUOTA="$(week 20 1)" run pi-agent
+[[ "$(ran)" == "zai/glm-5.1" ]] && ok "80% left with 1 day to reset: zai goes first" || bad "ran: $(ran)"
+rm -rf "$T/cache/quota"
+FAKE_ZAI_QUOTA="$(week 80 2)" run pi-agent
+[[ "$(ran)" == "google/gemini-2.5-flash" ]] && ok "80% used with 2 days left is on pace: configured order stands" || bad "ran: $(ran)"
+rm -rf "$T/cache/quota"
+run pi-agent
+[[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && ok "no quota reading: no pacing" || bad "rc=$RC ran=$(ran)"
+grep -q 'no Z.ai quota reading' "$T/err" && ok "no quota reading: says so" || bad "no warning: $(cat "$T/err")"
+(cd "$REPO" && sed -i 's|"pi-agent": \["google/gemini-2.5-flash", "zai/glm-5.1"\]|"pi-agent": ["zai/glm-5.1", "google/gemini-2.5-flash"]|' AGENT-REVIEWERS.md)
+rm -rf "$T/cache"
 
-echo "=== reopens ==="
-run pi-agent "${fence}json
-{\"findings\": [], \"reopens\": [{\"comment_id\": 7, \"reason\": \"the reply ignores the issue\"}]}
-${fence}"
-[[ "$RC" -eq 0 && "$OUT" == *"REOPENED | comment 7"* && "$OUT" != *"No issues found"* ]] && ok "reopen goes through reopen-comment.sh" || bad "rc=$RC out=$OUT"
-tr '\0' ' ' < "$T/gh.log" | grep -q 'addPullRequestReviewComment' && grep -q 'the reply ignores the issue' "$T/gh.log" \
-    && ok "the reopen reply carries the reason" || bad "no reopen reply in gh calls"
-run pi-agent "${fence}json
-{\"findings\": [], \"reopens\": [{\"comment_id\": \"7\", \"reason\": \"r\"}]}
-${fence}"
-[[ "$RC" -eq 3 ]] && ok "string comment_id -> exit 3" || bad "rc=$RC"
+echo "=== chain endings ==="
+fails zai/glm-5.1 "503 unavailable"
+run fallback-agent
+[[ "$RC" -eq 5 ]] && jq -e '. == {"fallback": "claude", "model": ""}' <<<"$OUT" >/dev/null \
+    && ok "chain reaching claude -> exit 5, agent's own model" || bad "rc=$RC out=$OUT"
+fails google/gemini-2.5-flash "401 bad key"
+run pi-agent
+[[ "$RC" -eq 6 ]] && ok "every provider failed -> exit 6" || bad "rc=$RC"
+says google/gemini-2.5-flash "$(report "$EMPTY")"
+TEST_ZAI_KEY= run pi-agent
+[[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && jq -e '.tried[0] == "zai/glm-5.1:no-key"' <<<"$OUT" >/dev/null \
+    && ok "a missing key skips that model" || bad "rc=$RC ran=$(ran)"
 
-echo "=== finding paths are normalised before the scope check ==="
-run pi-agent "${fence}json
-{\"findings\": [{\"severity\": \"P2\", \"file\": \"./src/a.py\", \"line\": 1, \"title\": \"dot\", \"body\": \"b\"},
- {\"severity\": \"P2\", \"file\": \"/work/src/b.py\", \"line\": 1, \"title\": \"abs\", \"body\": \"b\"}], \"reopens\": []}
-${fence}"
-[[ "$RC" -eq 0 && "$(posts)" -eq 2 && "$OUT" == *"P2 | src/a.py:1 | dot"* && "$OUT" == *"P2 | src/b.py:1 | abs"* ]] \
-    && ok "./src/a.py and /work/src/b.py posted as repo paths" || bad "rc=$RC posts=$(posts) out=$OUT"
+echo "=== the host Pi config is the one source of models ==="
+says zai/glm-5.1 "$(report "$EMPTY")"
+run pi-agent
+grep -q 'models.json' "$T/docker.log.args" && bad "mounted a models.json with no host config" || ok "no host config -> the image's own models.json"
+mkdir -p "$T/pi-home" && echo '{"providers": {}}' > "$T/pi-home/models.json" && echo '{}' > "$T/pi-home/auth.json"
+PI_CODING_AGENT_DIR="$T/pi-home" run pi-agent
+grep -q -- "-v $T/pi-home/models.json:/opt/pi-agent/models.json:ro" "$T/docker.log.args" \
+    && ok "host models.json mounted read-only" || bad "args: $(cat "$T/docker.log.args")"
+grep -q 'auth.json' "$T/docker.log.args" && bad "auth.json mounted" || ok "auth.json never mounted"
+echo '{"providers": {"zai-payg": {"apiKey": "ZAI_API_KEY", "models": [{"id": "glm-5.1"}]}}}' > "$T/pi-home/models.json"
+says zai-payg/glm-5.1 "$(report "$EMPTY")"
+PI_CODING_AGENT_DIR="$T/pi-home" run pi-agent --model zai-payg/glm-5.1
+[[ "$RC" -eq 0 ]] && grep -q -- '-e ZAI_API_KEY ' "$T/docker.log.args" \
+    && ok "custom provider's key variable comes from models.json" || bad "rc=$RC args: $(cat "$T/docker.log.args")"
 
-echo "=== every finding dropped still answers the contract ==="
-run pi-agent "${fence}json
-{\"findings\": [{\"severity\": \"P2\", \"file\": \"elsewhere.py\", \"line\": 1, \"title\": \"t\", \"body\": \"b\"}], \"reopens\": []}
-${fence}"
-[[ "$RC" -eq 0 && "$OUT" == *"DROPPED"* && "$OUT" == *"No issues found"* ]] && ok "DROPPED line plus No issues found" || bad "out=$OUT"
+echo "=== the watchdog stops a hung run, not a slow one ==="
+says zai/glm-5.1 "$(report "$EMPTY")"
+PI_REVIEW_IDLE_TIMEOUT=2 FAKE_PI_SILENT=8 run pi-agent --model zai/glm-5.1
+[[ "$RC" -eq 3 ]] && grep -q 'no output for' "$T/err" && ok "silent past the idle limit -> stopped, exit 3" || bad "rc=$RC err=$(grep -i stop "$T/err")"
+PI_REVIEW_IDLE_TIMEOUT=2 FAKE_PI_TRICKLE=5 run pi-agent --model zai/glm-5.1
+[[ "$RC" -eq 0 ]] && ! grep -q 'Stopping' "$T/err" && ok "still writing after 5s with a 2s idle limit -> left alone" || bad "rc=$RC err=$(grep -i stop "$T/err")"
+ls "$T/cache/runs/"*-pi-agent-*-zai_glm-5.1.jsonl >/dev/null 2>&1 && ok "run log kept in cache/runs" || bad "no run log"
 
-echo "=== failures leave a firing marker that says so ==="
-: > "$T/dream/markers/pr-review-loop.jsonl"
-FAKE_PI_RC=1 run pi-agent 'garbage'
-jq -e 'select(.kind == "reviewer-fired" and .status == "failed" and .exit == "3")' "$T/dream/markers/pr-review-loop.jsonl" >/dev/null \
-    && ok "exit 3 run: marker status failed, exit 3" || bad "marker: $(cat "$T/dream/markers/pr-review-loop.jsonl")"
+echo "=== host mode: no container, a stripped environment ==="
+cat > "$T/bin/pi" <<'PI'
+#!/usr/bin/env bash
+compgen -e | sort > "$HOST_ENV_SEEN.tmp"; mv -f "$HOST_ENV_SEEN.tmp" "$HOST_ENV_SEEN"; printf '%s\n' "$*" > "$HOST_ARGS_SEEN"
+mkdir -p "$PI_REVIEW_OUT"; : > "$PI_REVIEW_OUT/findings.jsonl"; echo x > "$PI_REVIEW_OUT/done"
+echo '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop","usage":{},"content":[{"type":"text","text":"done"}]}]}'
+PI
+chmod +x "$T/bin/pi"
+# The env-scrubbing subshell drops HOST_ENV_SEEN too, so bake the paths into the fake.
+sed -i "s|\$HOST_ENV_SEEN|$T/host-env|g; s|\$HOST_ARGS_SEEN|$T/host-args|g" "$T/bin/pi"
+SECRET_SHOULD_NOT_PASS=x PI_REVIEW_SANDBOX=host run pi-agent --model zai/glm-5.1
+[[ "$RC" -eq 0 && ! -s "$T/docker.log" ]] && ok "host mode runs pi directly, no docker" || bad "rc=$RC err=$(tail -2 "$T/err")"
+grep -qx 'ZAI_API_KEY' "$T/host-env" && grep -qx 'PI_REVIEW_OUT' "$T/host-env" && ! grep -q -e SECRET_SHOULD_NOT_PASS -e GEMINI_API_KEY -e GH_LOG "$T/host-env" \
+    && ok "only the model key and pi's own variables reach pi" || bad "env: $(paste -sd' ' "$T/host-env")"
+grep -q -- '--no-extensions -e .*review-tools.ts' "$T/host-args" && ok "review tools extension loaded" || bad "args: $(cat "$T/host-args")"
 
-echo "=== the provider decides which key enters the container ==="
-sed -i 's|"pi-agent": true|"pi-agent": "google/gemini-2.5-flash"|' "$REPO/AGENT-REVIEWERS.md"
-GEMINI_API_KEY=k run pi-agent "${fence}json
-{\"findings\": [], \"reopens\": []}
-${fence}"
-grep -q -- '-e GEMINI_API_KEY' "$T/docker.log.args" && ! grep -q -- '-e GOOGLE_API_KEY' "$T/docker.log.args" \
-    && ok "google -> GEMINI_API_KEY, by name" || bad "args: $(cat "$T/docker.log.args")"
-GEMINI_API_KEY= run pi-agent ""
-[[ "$RC" -eq 1 ]] && grep -q GEMINI_API_KEY "$T/err" && ok "missing GEMINI_API_KEY -> exit 1" || bad "rc=$RC"
-sed -i 's|"pi-agent": "google/gemini-2.5-flash"|"pi-agent": true|' "$REPO/AGENT-REVIEWERS.md"
+echo "=== a moved head stops before Pi runs ==="
+FAKE_HEAD=0000000000000000000000000000000000000000 run pi-agent
+[[ "$RC" -eq 2 && ! -s "$T/docker.log" ]] && ok "exit 2 before docker run" || bad "rc=$RC ran=$(ran)"
+
+echo "=== the head moves while Pi runs: exit 2 ==="
+says zai/glm-5.1 "$(report "$EMPTY")"
+FAKE_HEAD_AFTER=1111111111111111111111111111111111111111 run pi-agent
+[[ "$RC" -eq 2 ]] && grep -q 'moved' "$T/err" && ok "post-run head check: exit 2" || bad "rc=$RC err=$(tail -1 "$T/err")"
 
 echo "=== a failed setup step is exit 1, not its own code ==="
-FAKE_DIFF_FAIL=1 run pi-agent ""
-[[ "$RC" -eq 1 ]] && ok "gh pr diff exiting 4 -> exit 1 (not 'post failed')" || bad "rc=$RC"
+FAKE_DIFF_FAIL=1 run pi-agent
+[[ "$RC" -eq 1 ]] && ok "gh pr diff exiting 4 -> exit 1" || bad "rc=$RC"
 
 echo "=== cleanup cannot change the outcome ==="
 : > "$T/dream/markers/pr-review-loop.jsonl"
-FAKE_LOCK_SCRATCH=1 run pi-agent "${fence}json
-{\"findings\": [], \"reopens\": []}
-${fence}"
-[[ "$RC" -eq 0 && "$OUT" == "No issues found" ]] && grep -q 'could not remove' "$T/err" \
-    && ok "unremovable scratch dir: still exit 0, with a warning" || bad "rc=$RC out=$OUT err=$(tail -2 "$T/err")"
-jq -e 'select(.status == "reported" and .exit == "0")' "$T/dream/markers/pr-review-loop.jsonl" >/dev/null \
+FAKE_LOCK_SCRATCH=1 run pi-agent
+[[ "$RC" -eq 0 ]] && grep -q 'could not remove' "$T/err" \
+    && ok "unremovable scratch dir: still exit 0, with a warning" || bad "rc=$RC err=$(tail -2 "$T/err")"
+jq -e 'select(.status == "reported")' "$T/dream/markers/pr-review-loop.jsonl" >/dev/null \
     && ok "firing marker still written" || bad "marker: $(cat "$T/dream/markers/pr-review-loop.jsonl")"
-
+find "$T" -type d -name locked -exec chmod 700 {} + 2>/dev/null || true
 : > "$T/dream/markers/pr-review-loop.jsonl"
-FAKE_DOCKER_RM_FAIL=1 run pi-agent "${fence}json
-{\"findings\": [], \"reopens\": []}
-${fence}"
+FAKE_DOCKER_RM_FAIL=1 run pi-agent
 [[ "$RC" -eq 0 ]] && jq -e 'select(.status == "reported")' "$T/dream/markers/pr-review-loop.jsonl" >/dev/null \
     && ok "a failing docker rm in cleanup: still exit 0, marker written" || bad "rc=$RC marker=$(cat "$T/dream/markers/pr-review-loop.jsonl")"
 
-echo "=== a cut-off final report is no report ==="
-run pi-agent "Example of the format:
-${fence}json
-{\"findings\": [], \"reopens\": []}
-${fence}
-Now my report:
-${fence}json
-{\"findings\": [{\"severity\": \"P1\", \"file\": \"src/a.py\", \"line\": 1, \"title\": \"t\""
-[[ "$RC" -eq 3 && "$(posts)" -eq 0 && "$OUT" != *"No issues found"* ]] && ok "unclosed final block -> exit 3, not the earlier example" || bad "rc=$RC out=$OUT"
+echo "=== a truncated last event is not a setup failure ==="
+rm -rf "$T/cache/exhausted" "$T/cache/quota"
+says zai/glm-5.1 "$(report "$EMPTY")"; printf '{"type":"message_upd' >> "$T/pi/zai_glm-5.1"
+run pi-agent --model zai/glm-5.1
+[[ "$RC" -eq 0 ]] && ok "a closed report is still read past a truncated last line" || bad "rc=$RC err=$(tail -2 "$T/err")"
+says zai/glm-5.1 "no report, just prose"; printf '{"type":"message_upd' >> "$T/pi/zai_glm-5.1"
+run pi-agent --model zai/glm-5.1
+[[ "$RC" -eq 3 ]] && ok "no report plus a truncated line -> exit 3, not 1" || bad "rc=$RC err=$(tail -2 "$T/err")"
 
-echo "=== every report-shape guard rejects its bad field ==="
-good='"severity": "P2", "file": "src/a.py", "line": 1, "title": "t", "body": "b"'
-for bad in '"severity": "HIGH", "file": "src/a.py", "line": 1, "title": "t", "body": "b"' \
-           '"severity": "P2", "file": "src/a.py", "line": 0, "title": "t", "body": "b"' \
-           '"severity": "P2", "file": "src/a.py", "line": 1.5, "title": "t", "body": "b"' \
-           '"severity": "P2", "file": "src/a.py", "line": 1, "title": "", "body": "b"' \
-           '"severity": "P2", "file": "src/a.py", "line": 1, "title": "t"'; do
-  run pi-agent "${fence}json
-{\"findings\": [{$bad}], \"reopens\": []}
-${fence}"
-  [[ "$RC" -eq 3 && "$(posts)" -eq 0 ]] && ok "rejected: {$bad}" || bad "accepted (rc=$RC): {$bad}"
+echo "=== which provider errors mark quota exhausted ==="
+for e in "429 Too Many Requests" "rate limit reached for requests" "Insufficient balance" "billing hard limit reached" "out of credits"; do
+    rm -rf "$T/cache/exhausted"; fails zai/glm-5.1 "$e"; run pi-agent --model zai/glm-5.1
+    [[ -e "$T/cache/exhausted/zai" ]] && ok "marks exhausted: $e" || bad "not marked: $e"
 done
-run pi-agent "${fence}json
-{\"findings\": [{$good}], \"reopens\": [{\"comment_id\": 7, \"reason\": \"\"}]}
-${fence}"
-[[ "$RC" -eq 3 ]] && ok "rejected: reopen with an empty reason" || bad "empty reopen reason accepted (rc=$RC)"
+rm -rf "$T/cache/exhausted"; fails zai/glm-5.1 "400 bad request: invalid tool schema"; run pi-agent --model zai/glm-5.1
+[[ ! -e "$T/cache/exhausted/zai" ]] && ok "a bad request does not" || bad "bad request marked exhausted"
+rm -rf "$T/cache/exhausted"
 
-echo "=== credential and provider overrides ==="
-echo '{"providers": {}}' > "$T/models.json"
-PI_REVIEW_MODELS_JSON="$T/models.json" run pi-agent "${fence}json
-{\"findings\": [], \"reopens\": []}
-${fence}"
-grep -q -- "-v $T/models.json:/opt/pi-agent/models.json:ro" "$T/docker.log.args" \
-    && ok "PI_REVIEW_MODELS_JSON mounted read-only over the image's" || bad "args: $(cat "$T/docker.log.args")"
-PI_REVIEW_MODELS_JSON="$T/no-such.json" run pi-agent ""
-[[ "$RC" -eq 1 ]] && grep -q 'PI_REVIEW_MODELS_JSON not readable' "$T/err" && ok "unreadable PI_REVIEW_MODELS_JSON -> exit 1" || bad "rc=$RC"
-printf 'DEEPSEEK_API_KEY=x\n' > "$T/creds.env"
-PI_REVIEW_ENV_FILE="$T/creds.env" run pi-agent "${fence}json
-{\"findings\": [], \"reopens\": []}
-${fence}"
-grep -q -- "--env-file $T/creds.env" "$T/docker.log.args" && ! grep -q -- '-e DEEPSEEK_API_KEY' "$T/docker.log.args" \
-    && ok "PI_REVIEW_ENV_FILE replaces the single -e key" || bad "args: $(cat "$T/docker.log.args")"
-PI_REVIEW_ENV_FILE="$T/no-such.env" run pi-agent ""
-[[ "$RC" -eq 1 ]] && grep -q 'PI_REVIEW_ENV_FILE not readable' "$T/err" && ok "unreadable PI_REVIEW_ENV_FILE -> exit 1" || bad "rc=$RC"
+echo "=== --replay reviews a historical commit with the given model ==="
+says zai/glm-5.1 "$(report "$EMPTY")"
+: > "$T/dream/markers/pr-review-loop.jsonl"
+FAKE_HEAD=0000000000000000000000000000000000000000 run claude-agent --replay --model zai/glm-5.1
+[[ "$RC" -eq 0 ]] && ok "replay ignores the PR head and the agent's engine" || bad "rc=$RC: $(cat "$T/err")"
+tr '\0' ' ' < "$T/gh.log" | grep -q 'graphql' && bad "replay fetched prior comments" || ok "replay skips prior comments"
+[[ ! -s "$T/dream/markers/pr-review-loop.jsonl" ]] && ok "replay writes no firing marker" || bad "replay wrote a marker"
+run claude-agent --replay
+[[ "$RC" -eq 1 ]] && ok "--replay without --model -> exit 1" || bad "rc=$RC"
+printf '=== Thread (ID: 7) ===\nearlier finding\n' > "$T/prior.txt"
+cat > "$T/bin/docker-spy" <<'SPY'
+#!/usr/bin/env bash
+for a in "$@"; do case "$a" in *:/review:ro) cp -f "${a%%:*}/prior-comments.txt" "$PRIOR_SEEN" ;; esac; done
+exec "$(dirname "$0")/docker-real" "$@"
+SPY
+mv -f "$T/bin/docker" "$T/bin/docker-real"; mv -f "$T/bin/docker-spy" "$T/bin/docker"; chmod +x "$T/bin/docker"
+PRIOR_SEEN="$T/prior-seen" run claude-agent --replay --model zai/glm-5.1 --prior "$T/prior.txt"
+export -n PRIOR_SEEN 2>/dev/null || true
+[[ "$RC" -eq 0 ]] && grep -q 'earlier finding' "$T/prior-seen" 2>/dev/null \
+    && ok "--prior reaches the reviewer as its prior comments" || bad "rc=$RC seen=$(cat "$T/prior-seen" 2>/dev/null)"
+mv -f "$T/bin/docker-real" "$T/bin/docker"
+run claude-agent --prior "$T/prior.txt"
+[[ "$RC" -eq 1 ]] && ok "--prior without --replay -> exit 1" || bad "rc=$RC"
+
+echo "=== --replay with a claude entry runs headless Claude Code on the subscription ==="
+cat > "$T/bin/claude" <<'CL'
+#!/usr/bin/env bash
+{ echo "key=${ANTHROPIC_API_KEY-unset}"; printf '%s\n' "$*"; } > "$CLAUDE_LOG"
+[[ -n "${FAKE_CLAUDE_NOREPORT:-}" ]] && { echo '{"result": "looks fine", "usage": {}}'; exit 0; }
+[[ -n "${FAKE_CLAUDE_LIMIT:-}" ]] && { echo '{"is_error": true, "api_error_status": 429, "result": "Claude usage limit reached"}'; exit 1; }
+[[ -n "${FAKE_CLAUDE_ERR:-}" ]] && { printf '%s\n' "$FAKE_CLAUDE_ERR"; exit 1; }
+echo '{"structured_output": {"findings": [{"severity": "P2", "file": "src/a.py", "line": 1, "title": "t", "body": "b"}], "reopens": []},
+       "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 100, "cache_creation_input_tokens": 0},
+       "total_cost_usd": 0.03}'
+CL
+chmod +x "$T/bin/claude"
+ANTHROPIC_API_KEY=sk-should-not-be-used CLAUDE_LOG="$T/claude.log" run claude-agent --replay --model claude:haiku
+[[ "$RC" -eq 0 ]] && jq -e '.model == "claude:haiku" and .usage.billing == "subscription" and (.report.findings | length) == 1' <<<"$OUT" >/dev/null \
+    && ok "claude:haiku replay reports through structured output" || bad "rc=$RC out=$OUT err=$(tail -3 "$T/err")"
+grep -q '^key=unset$' "$T/claude.log" && ok "ANTHROPIC_API_KEY unset: billed to the subscription" || bad "claude saw: $(head -1 "$T/claude.log")"
+grep -q -- '--model haiku' "$T/claude.log" && grep -q 'Bash(gh \*)' "$T/claude.log" \
+    && ok "right model, gh blocked" || bad "args: $(tail -1 "$T/claude.log")"
+[[ ! -s "$T/docker.log" ]] && ok "no docker for a claude replay" || bad "docker ran: $(ran)"
+CLAUDE_LOG="$T/claude.log" FAKE_CLAUDE_NOREPORT=1 run claude-agent --replay --model claude
+[[ "$RC" -eq 3 ]] && ok "no structured report -> exit 3" || bad "rc=$RC"
+grep -q -- '--model sonnet' "$T/claude.log" && ok "bare claude falls back to sonnet for an agent with no model" || bad "args: $(tail -1 "$T/claude.log")"
+CLAUDE_LOG="$T/claude.log" FAKE_CLAUDE_LIMIT=1 run claude-agent --replay --model claude:sonnet
+[[ "$RC" -eq 6 ]] && grep -q 'usage limit' "$T/err" && ok "a usage limit is a provider failure (exit 6), not a strike" || bad "rc=$RC"
+# expected exit | error envelope: 6 = provider failure, 3 = a strike against the reviewer
+while IFS='|' read -r want env; do
+    CLAUDE_LOG="$T/claude.log" FAKE_CLAUDE_ERR="$env" run claude-agent --replay --model claude:sonnet
+    [[ "$RC" -eq "$want" ]] && ok "exit $want: $env" || bad "rc=$RC, want $want: $env"
+done <<'ENVS'
+6|{"is_error": true, "result": "You have hit your limit - resets 5pm"}
+6|{"is_error": true, "result": "Weekly limit reached"}
+6|{"is_error": true, "result": "Invalid API key - please run /login"}
+6|{"is_error": true, "api_error_status": 503, "result": "x"}
+6|{"is_error": true, "api_error_status": 429, "result": "x"}
+6|{"is_error": true, "api_error_status": 401, "result": "x"}
+6|{"is_error": true, "api_error_status": 403, "result": "x"}
+6|{"is_error": true, "result": "5-hour limit reached - resets 3pm"}
+3|{"is_error": true, "result": "context limit exceeded"}
+3|{"is_error": true, "result": "max turns limit reached; no credit given for partial output"}
+3|{"is_error": true, "result": "schema error at line 523; tokens: 500"}
+ENVS
 
 echo "=== setup refusals ==="
-run claude-agent ""
+run claude-agent
 [[ "$RC" -eq 1 ]] && ok "agent not on the pi engine -> exit 1" || bad "rc=$RC"
-DEEPSEEK_API_KEY= run pi-agent ""
-[[ "$RC" -eq 1 ]] && grep -q DEEPSEEK_API_KEY "$T/err" && ok "missing model key -> exit 1, names the var" || bad "rc=$RC"
 
 echo "=== # Configuration .pi parsing and routing ==="
 PARSE="$SCRIPT_DIR/../scripts/_parse_configuration.sh"
 cfg(){ printf '# Configuration\n\n```json\n%s\n```\n' "$1" > "$T/cfg.md"; bash "$PARSE" "$T/cfg.md" >/dev/null 2>&1; }
 cfg '{"pi": {"all": true}}' && bad "all:true with no model accepted" || ok "all:true with no model rejected"
 cfg '{"pi": {"agents": {"x": 5}}}' && bad "numeric agent value accepted" || ok "numeric agent value rejected"
-cfg '{"pi": {"agents": {"x": "openai/gpt-5-mini"}}}' && ok "per-agent model string needs no default model" || bad "per-agent model rejected"
+cfg '{"pi": {"agents": {"x": []}}}' && bad "empty chain accepted" || ok "empty chain rejected"
+cfg '{"pi": {"agents": {"x": ["zai/glm-5.1", ""]}}}' && bad "empty chain entry accepted" || ok "empty chain entry rejected"
+cfg '{"pi": {"agents": {"x": ["zai/glm-5.1", "claude"]}}}' && ok "chain accepted" || bad "chain rejected"
+cfg '{"pi": {"all": true, "model": ["zai/glm-5.1", "claude"]}}' && ok "default model may be a chain" || bad "default chain rejected"
+cfg '{"pi": {"agents": {"x": ["zai/glm-5.1", "claude:haiku"]}}}' && ok "claude:haiku accepted" || bad "claude:haiku rejected"
+cfg '{"pi": {"agents": {"x": "claude:gpt"}}}' && bad "claude:gpt accepted" || ok "claude:<unknown> rejected"
 cfg '{"pi": {"agents": {"x": "qwen3.8-max"}}}' && bad "model with no provider accepted" || ok "model with no provider rejected"
+cfg '{"pi": {"agents": {"x": ["zai/glm-5.1", "qwen3.8-max"]}}}' && bad "chain entry with no provider accepted" || ok "chain entry with no provider rejected"
 cfg '{"pi": {"agents": {"x": "/x/"}}}' && bad "/x/ accepted" || ok "/x/ rejected"
 cfg '{"pi": {"model": "nope"}}' && bad ".model with no provider accepted" || ok ".model with no provider rejected"
 # Each guard must reject with its own message, not by tripping a later jq error.
@@ -268,21 +396,37 @@ cfgerr(){ printf '# Configuration\n\n```json\n%s\n```\n' "$1" > "$T/cfg.md"; bas
 [[ "$(cfgerr '{"pi": 5}')" == *"must be an object (got number)"* ]] && ok "non-object pi rejected by its guard" || bad "msg: $(cfgerr '{"pi": 5}')"
 [[ "$(cfgerr '{"pi": {"all": "yes", "model": "a/b"}}')" == *".all must be a boolean"* ]] && ok "non-boolean .all rejected by its guard" || bad "msg: $(cfgerr '{"pi": {"all": "yes"}}')"
 [[ "$(cfgerr '{"pi": {"agents": ["a/b"]}}')" == *".agents must be an object"* ]] && ok "non-object .agents rejected by its guard" || bad "msg: $(cfgerr '{"pi": {"agents": ["a/b"]}}')"
-ROUTE="$(cd "$REPO" && sed -i 's/"agents": {"pi-agent": true}/"all": true, "agents": {"claude-agent": false}/' AGENT-REVIEWERS.md \
+ROUTE="$(cd "$REPO" && sed -i 's/"agents": {"pi-agent"/"all": true, "agents": {"claude-agent": false, "pi-agent"/' AGENT-REVIEWERS.md \
     && PR_REVIEW_LOOP_TEST_CHANGED_FILES=src/a.py bash "$SCRIPT_DIR/../scripts/discover-agents.sh" 0 2>/dev/null \
-    | jq -c '[.agents[] | {name, engine, pi_model}] | sort_by(.name)')"
-[[ "$ROUTE" == '[{"name":"claude-agent","engine":"claude","pi_model":null},{"name":"pi-agent","engine":"pi","pi_model":"deepseek/deepseek-chat"}]' ]] \
-    && ok "all:true routes to pi; an explicit false keeps an agent on claude" || bad "routing: $ROUTE"
+    | jq -c '[.agents[] | {name, engine, pi_models}] | sort_by(.name)')"
+[[ "$ROUTE" == '[{"name":"claude-agent","engine":"claude","pi_models":null},{"name":"fallback-agent","engine":"pi","pi_models":["zai/glm-5.1","claude"]},{"name":"pi-agent","engine":"pi","pi_models":["zai/glm-5.1","google/gemini-2.5-flash"]}]' ]] \
+    && ok "chains pass through; an explicit false keeps an agent on claude" || bad "routing: $ROUTE"
+ROUTE="$(cd "$REPO" && sed -i 's/"fallback-agent": \["zai\/glm-5.1", "claude"\]/"fallback-agent": ["claude", "zai\/glm-5.1"]/' AGENT-REVIEWERS.md \
+    && PR_REVIEW_LOOP_TEST_CHANGED_FILES=src/a.py bash "$SCRIPT_DIR/../scripts/discover-agents.sh" 0 2>/dev/null \
+    | jq -r '.agents[] | select(.name == "fallback-agent") | .engine')"
+[[ "$ROUTE" == claude ]] && ok "a chain starting with claude is a Claude agent" || bad "engine: $ROUTE"
+ROUTE="$(cd "$REPO" && sed -i 's/"fallback-agent": \["claude",/"fallback-agent": ["claude:haiku",/' AGENT-REVIEWERS.md \
+    && PR_REVIEW_LOOP_TEST_CHANGED_FILES=src/a.py bash "$SCRIPT_DIR/../scripts/discover-agents.sh" 0 2>/dev/null \
+    | jq -c '.agents[] | select(.name == "fallback-agent") | {engine, model}')"
+[[ "$ROUTE" == '{"engine":"claude","model":"haiku"}' ]] && ok "claude:haiku first -> a Claude agent on haiku" || bad "got: $ROUTE"
+says zai/glm-5.1 "$(report "$EMPTY")"
+(cd "$REPO" && sed -i 's/"fallback-agent": \["claude:haiku", "zai\/glm-5.1"\]/"fallback-agent": ["zai\/glm-5.1", "claude:sonnet"]/' AGENT-REVIEWERS.md)
+fails zai/glm-5.1 "503 unavailable"
+run fallback-agent
+[[ "$RC" -eq 5 ]] && jq -e '.model == "sonnet"' <<<"$OUT" >/dev/null && ok "falling to claude:sonnet names sonnet" || bad "rc=$RC out=$OUT"
 
-ROUTE="$(cd "$REPO" && sed -i 's/"all": true, "agents": {"claude-agent": false}/"agents": {"pi-agent": "openai\/gpt-5-mini"}/' AGENT-REVIEWERS.md \
+# .reviewers/config.json replaces the # Configuration block, .pi included.
+ROUTE="$(cd "$REPO" && mkdir -p .reviewers \
+    && printf '%s\n' '{"disabled": ["code-reviewer", "silent-failure-hunter", "pr-test-analyzer", "comment-analyzer", "type-design-analyzer", "code-simplifier"], "pi": {"agents": {"claude-agent": ["qwen-token-plan/qwen3.8-max", "claude"]}}}' > .reviewers/config.json \
     && PR_REVIEW_LOOP_TEST_CHANGED_FILES=src/a.py bash "$SCRIPT_DIR/../scripts/discover-agents.sh" 0 2>/dev/null \
-    | jq -c '[.agents[] | {name, engine, pi_model}] | sort_by(.name)')"
-[[ "$ROUTE" == '[{"name":"claude-agent","engine":"claude","pi_model":null},{"name":"pi-agent","engine":"pi","pi_model":"openai/gpt-5-mini"}]' ]] \
-    && ok "a per-agent model string routes that agent, overriding .model" || bad "routing: $ROUTE"
-
-UNKNOWN="$(cd "$REPO" && sed -i 's/"agents": {"pi-agent": "openai\/gpt-5-mini"}/"agents": {"pi-agent": "openai\/gpt-5-mini", "ghost-agent": true}/' AGENT-REVIEWERS.md \
+    | jq -c '[.agents[] | {name, engine, pi_models}] | sort_by(.name)')"
+rm -rf "$REPO/.reviewers"
+[[ "$ROUTE" == '[{"name":"claude-agent","engine":"pi","pi_models":["qwen-token-plan/qwen3.8-max","claude"]},{"name":"fallback-agent","engine":"claude","pi_models":null},{"name":"pi-agent","engine":"claude","pi_models":null}]' ]] \
+    && ok ".pi read from .reviewers/config.json" || bad "routing: $ROUTE"
+ROUTE="$(cd "$REPO" && mkdir -p .reviewers && printf '%s\n' '{"disabled": ["code-reviewer", "silent-failure-hunter", "pr-test-analyzer", "comment-analyzer", "type-design-analyzer", "code-simplifier"], "pi": {"agents": {"claude-agent": "claude-proxy/opus"}}}' > .reviewers/config.json \
     && PR_REVIEW_LOOP_TEST_CHANGED_FILES=src/a.py bash "$SCRIPT_DIR/../scripts/discover-agents.sh" 0 2>/dev/null \
-    | jq -c '.configuration.pi_agents_unknown')"
-[[ "$UNKNOWN" == '["ghost-agent"]' ]] && ok "pi.agents naming no roster agent shows in pi_agents_unknown" || bad "pi_agents_unknown: $UNKNOWN"
+    | jq -c '.agents[] | select(.name == "claude-agent") | {engine, pi_models}')"
+[[ "$ROUTE" == '{"engine":"pi","pi_models":["claude-proxy/opus"]}' ]] && ok "a provider named claude-* is Pi, not Claude" || bad "routing: $ROUTE"
+rm -rf "$REPO/.reviewers"
 
 echo ""; echo "Passed: $PASSED  Failed: $FAILED"; [[ "$FAILED" -eq 0 ]]
