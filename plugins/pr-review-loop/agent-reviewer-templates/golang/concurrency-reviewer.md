@@ -34,7 +34,7 @@ func (c *cache) run() {
 }
 ```
 
-Flag every new `sync.Mutex`, `sync.RWMutex`, `golang.org/x/sync/semaphore`, lock type from another package, or hand-rolled spin/CAS lock as **P1**. Most code reaches for a lock by default; the default fix here is a rewrite: a goroutine owns the state and channels are its only interface (above), or the state moves to a request-scoped value so nothing is shared. Don't propose a narrower lock, `defer Unlock()` or lock-ordering as the fix. A lock stays only when it meets a tolerated use below **and** the declaration carries a comment giving that concrete reason; verify the reason actually holds (e.g. writes really are at fixed points), and then report it as a P3 note. "Mutex was simpler" or "it's just a small map" is not a reason.
+Flag every new `sync.Mutex`, `sync.RWMutex`, `sync.Map`, `golang.org/x/sync/semaphore`, lock type from another package, or hand-rolled spin/CAS lock as **P1**. Most code reaches for a lock by default; the default fix here is a rewrite: a goroutine owns the state and channels are its only interface (above), or the state moves to a request-scoped value so nothing is shared. Don't propose a narrower lock, `defer Unlock()` or lock-ordering as the fix. A lock stays only when it meets a tolerated use below **and** the declaration carries a comment giving that concrete reason; verify the reason actually holds (e.g. writes really are at fixed points), and then report it as a P3 note.
 
 **Other patterns to FLAG:**
 
@@ -53,8 +53,8 @@ Flag every new `sync.Mutex`, `sync.RWMutex`, `golang.org/x/sync/semaphore`, lock
            select {
            case <-ctx.Done():
                return
-           default:
-               doWork()
+           case job := <-jobs:
+               doWork(job)
            }
        }
    }()
@@ -200,7 +200,7 @@ Flag every new `sync.Mutex`, `sync.RWMutex`, `golang.org/x/sync/semaphore`, lock
     ```
     For long-lived background goroutines (workers, schedulers, consumers), wrap the body in `defer func() { if r := recover(); r != nil { ... log ... } }()`. Short-lived task goroutines tied to a request don't need this — let them propagate. Flag long-lived launches without recovery.
 
-12. **`time.After` in a loop (timer leak):**
+12. **`time.After` in a loop (timer leak)** (pre-Go 1.23 code; from 1.23 unreferenced timers are collected, so check `go.mod` before flagging):
     ```go
     // BAD — every iteration creates a Timer that the GC can't collect until it fires
     for {
@@ -271,6 +271,6 @@ Each tolerated use must have a comment explaining *why* it's not a channel. "Mut
 2. For each `go func()`: identify the termination condition. If none, flag as a leak.
 3. For each `select`: check for `<-ctx.Done()` if a ctx is in scope.
 4. For each channel: identify the sender and verify it (not the receiver) closes the channel.
-5. For each function taking shared state (maps, pointers, struct fields) and launching goroutines: verify mutex or channel ownership.
+5. For each function taking shared state (maps, pointers, struct fields) and launching goroutines: verify channel ownership (a lock only per the tolerated list).
 6. For each `time.After` inside a `for` loop: flag and suggest `time.NewTimer`.
 7. Confirm `go test -race` runs in CI; flag if missing.
