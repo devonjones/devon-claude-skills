@@ -1310,6 +1310,20 @@ fi
 rm -rf "$repo"
 
 # ---------------------------------------------------------------------------
+echo "=== Test S1: same-named subtree reviewer overrides only inside its subtree ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/.reviewers" "$repo/app/javascript/.reviewers"
+printf '# test-coverage-reviewer\nRuby tests.\n' > "$repo/.reviewers/test-coverage-reviewer.md"
+printf '# test-coverage-reviewer\nJS tests.\n' > "$repo/app/javascript/.reviewers/test-coverage-reviewer.md"
+run_discover "$repo" $'app/models/game.rb\napp/javascript/dice.js' ts1
+assert_exit "exit 0" "$ts1_exit" "0"
+assert_jq "root copy keeps the Ruby file" "$ts1" '[.agents[] | select(.name == "test-coverage-reviewer" and .scope == "/") | .changed_files] == [["app/models/game.rb"]]'
+assert_jq "subtree copy takes the JS file" "$ts1" '[.agents[] | select(.name == "test-coverage-reviewer" and .scope == "/app/javascript/") | .changed_files] == [["app/javascript/dice.js"]]'
+run_discover "$repo" $'app/javascript/dice.js' ts1b
+assert_jq "JS-only diff spawns only the subtree copy" "$ts1b" '[.agents[] | select(.name == "test-coverage-reviewer") | .scope] == ["/app/javascript/"]'
+run_discover "$repo" $'app/models/game.rb' ts1c
+assert_jq "Ruby-only diff spawns only the root copy" "$ts1c" '[.agents[] | select(.name == "test-coverage-reviewer") | .scope] == ["/"]'
+
 # Summary
 # ---------------------------------------------------------------------------
 echo

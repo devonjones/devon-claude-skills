@@ -152,8 +152,8 @@ When assessing a whole roster (a `.reviewers/` directory, or a legacy
 - **Undeclared reviewers.** List them. Undeclared on purpose is acceptable;
   undeclared by oversight is a finding.
 - **Hierarchy.** Reviewers in a subtree's `.reviewers/` (or `AGENT-REVIEWERS.md`) see only their subtree,
-  and a lower definition overrides a same-named one above. Check that the
-  override is intended.
+  and a lower definition overrides a same-named one above for files in its subtree only (the
+  parent still reviews the rest of the diff). Check that the override is intended.
 - **Branch.** The charter is read from the PR branch. A roster change on `main`
   does not govern a PR cut before it.
 
