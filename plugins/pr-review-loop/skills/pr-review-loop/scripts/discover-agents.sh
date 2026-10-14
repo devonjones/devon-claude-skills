@@ -10,7 +10,8 @@
 #
 # Agent merge rules (C+E semantics):
 #   - All defaults spawn by default
-#   - User agents with the same name as a default REPLACE the default (override)
+#   - User agents with the same name as a default REPLACE it for the files they own;
+#     the default still reviews the rest of the diff (dropped only if nothing is left)
 #   - Defaults in the `disabled` list do NOT spawn
 #   - Defaults NOT overridden or disabled still spawn (additive)
 #   - User agents with no matching default name simply add to the list
