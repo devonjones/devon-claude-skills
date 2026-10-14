@@ -3,14 +3,15 @@
 # with shipped default specialist reviewers, and report configuration state.
 #
 # Walks up from each changed file's directory to repo root, collecting
-# agent definitions with hierarchical scoping (lower directories override).
+# agent definitions with hierarchical scoping (lower directories override within their subtree).
 # Loads default specialist reviewers from plugins/pr-review-loop/agents/.
 # Parses the root AGENT-REVIEWERS.md's # Configuration section (if present)
 # for `defaults_version_checked`, `disabled`, and `overlap_acknowledged`.
 #
 # Agent merge rules (C+E semantics):
 #   - All defaults spawn by default
-#   - User agents with the same name as a default REPLACE the default (override)
+#   - User agents with the same name as a default REPLACE it for the files they own;
+#     the default still reviews the rest of the diff (dropped only if nothing is left)
 #   - Defaults in the `disabled` list do NOT spawn
 #   - Defaults NOT overridden or disabled still spawn (additive)
 #   - User agents with no matching default name simply add to the list
@@ -523,19 +524,32 @@ echo "$JQ_INPUT" | jq '
     .reviewers_layout as $reviewers_layout |
     .language_detection as $language_detection |
 
-    # ---- 2. Resolve user agents from sections (existing hierarchical-scope logic) ----
+    # ---- 2. Resolve user agents from sections (hierarchical scope) ----
+    # A lower definition overrides a same-named one above it only inside its
+    # own subtree: each changed file goes to the deepest same-named definition
+    # whose scope contains it, and a parent keeps every file no deeper
+    # definition claims. So a root test-coverage-reviewer still reviews the
+    # Ruby files in a diff that also touches app/javascript/, where a
+    # same-named JS reviewer takes the JS files. A name none of whose
+    # definitions owns a file keeps just its deepest definition (step 6 then
+    # drops it, except on an empty diff).
+    def in_scope($s): if $s == "/" then true else startswith($s | ltrimstr("/")) end;
     ([$sections[] | select(.type == "agent")] |
-        sort_by(.scope | split("/") | length) | reverse |
-        reduce .[] as $agent (
-            {seen: {}, result: []};
-            if .seen[$agent.name] then .
-            else .seen[$agent.name] = true | .result += [$agent]
-            end
-        ) | .result
+        group_by(.name) |
+        map(sort_by(.scope | split("/") | length) | reverse |
+            (reduce .[] as $agent (
+                {claimed: [], out: []};
+                [$files[] | select(in_scope($agent.scope))] as $mine |
+                .claimed as $claimed |
+                [$mine[] | . as $f | select(any($claimed[]; . == $f) | not)] as $own |
+                .claimed += $own | .out += [$agent + {changed_files: $own}]
+            ) | .out) as $defs |
+            ([$defs[] | select(.changed_files | length > 0)] | if length > 0 then . else [$defs[0]] end)
+        ) | flatten
     ) as $user_agents_raw |
 
     # User agent names (used for same-name override detection)
-    ($user_agents_raw | map(.name)) as $user_agent_names |
+    ($user_agents_raw | map(.name) | unique) as $user_agent_names |
     ($defaults | map(.name)) as $default_agent_names |
 
     # ---- 3. Determine overrides ----
@@ -545,20 +559,23 @@ echo "$JQ_INPUT" | jq '
     # Disabled defaults (from configuration)
     ($config.disabled // []) as $disabled_defaults |
 
-    # ---- 4. Effective defaults: not overridden, not disabled ----
-    # Precedence: if a default appears in BOTH the disabled list AND is
-    # also overridden by a same-name user agent, the user agent still runs
-    # (as user-override). The default itself is filtered out by EITHER rule.
+    # ---- 4. Effective defaults: not disabled; overridden only where claimed ----
+    # A same-named user agent replaces a default only for the files it owns
+    # (step 2), so a subtree override leaves the default on the rest of the
+    # diff. A default with nothing left is dropped. Precedence: if a default
+    # appears in BOTH the disabled list AND is overridden by a same-name user
+    # agent, the user agent still runs (as user-override); the default never does.
     ($defaults
-        | map(select(.name as $n | ($overridden_default_names | index($n)) == null))
         | map(select(.name as $n | ($disabled_defaults | index($n)) == null))
         | map(. + {kind: "default"})
-        | map(. + {changed_files: (
+        | map(.name as $n | . + {changed_files: (
+            [$user_agents_raw[] | select(.name == $n) | .changed_files[]] as $claimed |
             .scope as $s |
-            if $s == "/" then $files
-            else [$files[] | select(startswith($s | ltrimstr("/")))]
-            end
+            (if $s == "/" then $files
+             else [$files[] | select(startswith($s | ltrimstr("/")))]
+             end) | map(. as $f | select(any($claimed[]; . == $f) | not))
           )})
+        | map(select(.name as $n | (($overridden_default_names | index($n)) == null) or (.changed_files | length > 0)))
     ) as $effective_defaults |
 
     # ---- 5. User agents: tagged as override if name matches a default, else plain user ----
@@ -573,11 +590,6 @@ echo "$JQ_INPUT" | jq '
     # agent without one "sonnet", so none inherits the orchestrator session model.
     ($user_agents_raw
         | map(.name as $n | . + {kind: (if ($default_agent_names | index($n)) != null then "user-override" else "user" end)})
-        | map(.scope as $s | . + {changed_files: (
-            if $s == "/" then $files
-            else [$files[] | select(startswith($s | ltrimstr("/")))]
-            end
-          )})
         | map({name, scope, source, instructions, kind, changed_files}
                + (if .summary then {summary, spec} else {} end)
                + (if .bin then {bin} else {} end)
@@ -657,7 +669,7 @@ echo "$JQ_INPUT" | jq '
             spawned_count: ($merged_agents | length),
             default_count: ($effective_defaults | length),
             override_count: ($overridden_default_names | length),
-            user_count: ($user_agents | map(select(.kind == "user")) | length),
+            user_count: ($user_agents | map(select(.kind == "user") | .name) | unique | length),
             overridden_default_names: $overridden_default_names,
             pi_count: ($merged_agents | map(select(.engine == "pi")) | length),
             # pi.agents entries naming no agent on the roster (typos, disabled defaults)

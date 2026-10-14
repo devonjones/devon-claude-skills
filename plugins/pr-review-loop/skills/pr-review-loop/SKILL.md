@@ -1140,7 +1140,7 @@ see [`references/legacy-layout.md`](references/legacy-layout.md).
 **Resolution rules:**
 1. For each changed file, collect `.reviewers/` directories and `AGENT-REVIEWERS.md` files from its directory up to repo root
 2. Resolve sections by H1 name - **lower directory definitions override same-named sections from above**
-3. For `# Agents`: each agent only reviews changes **within its directory scope and below**
+3. For `# Agents`: each agent only reviews changes **within its directory scope and below**. A same-named reviewer lower down overrides it **only for files in that subtree**: each changed file goes to the deepest same-named definition whose scope contains it, so in a diff touching `app/models/x.rb` and `app/javascript/y.js` a root and an `app/javascript/` `test-coverage-reviewer` both run, each on its own files
 4. For other H1 sections: winning version of each section (per override rule) is combined and passed to the review loop
 5. Root-level definitions see all changes; subdirectory definitions see only their subtree
 
