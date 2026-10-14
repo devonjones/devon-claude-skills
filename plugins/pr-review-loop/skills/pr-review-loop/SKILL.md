@@ -1435,7 +1435,7 @@ Task tool:
     3. **Review the PR diff** (only your changed_files):
        Read each file from your changed_files list directly, or filter the diff:
        ```bash
-       gh pr diff <PR> -- <file1> <file2> ...
+       gh pr diff <PR>   # takes no file arguments; read only the hunks for your changed_files
        ```
 
     4. **RECORD every new finding** (only issues not already raised, only files in your scope):
