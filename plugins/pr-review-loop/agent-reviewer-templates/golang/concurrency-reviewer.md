@@ -227,7 +227,7 @@ Flag every new `sync.Mutex`, `sync.RWMutex`, `sync.Map`, `golang.org/x/sync/sema
         }
     }
     ```
-    Use `time.NewTimer` / `time.NewTicker` with explicit `Stop()` in any loop, especially hot loops.
+    On pre-1.23 code, use `time.NewTimer` / `time.NewTicker` with explicit `Stop()` in any loop, especially hot loops.
 
 13. **Loop variable capture in goroutines** (pre-Go 1.22 code):
     ```go
@@ -272,5 +272,5 @@ Each tolerated use must have a comment explaining *why* it's not a channel. "Mut
 3. For each `select`: check for `<-ctx.Done()` if a ctx is in scope.
 4. For each channel: identify the sender and verify it (not the receiver) closes the channel.
 5. For each function taking shared state (maps, pointers, struct fields) and launching goroutines: verify channel ownership (a lock only per the tolerated list).
-6. For each `time.After` inside a `for` loop: flag and suggest `time.NewTimer`.
+6. For each `time.After` inside a `for` loop on pre-Go-1.23 code (check `go.mod`): flag and suggest `time.NewTimer`.
 7. Confirm `go test -race` runs in CI; flag if missing.
