@@ -1,7 +1,7 @@
 # concurrency-reviewer
 verification: mixed — missing -race in CI is proven by reading the CI config, and search finds the go/chan/select/sync sites; leaks, ownership and lock-design findings are judgement.
-**Checks:** New sync.Mutex/RWMutex, goroutine leaks, channel close/ownership errors, select without ctx.Done, WaitGroup misuse, time.After in loops, missing -race in CI
-**Spawn when:** Diff adds or edits Go code using go statements, chan, select, sync.*, sync/atomic or context; skip otherwise
+**Checks:** Any new mutex or lock (P1 unless a tolerated, commented justification holds; channel-owned state is the default), goroutine leaks, channel close/ownership errors, select without ctx.Done, WaitGroup misuse, time.After in loops, missing -race in CI
+**Spawn when:** Diff adds or edits Go code using go statements, chan, select, sync.*, sync/atomic, golang.org/x/sync, a Mutex/Lock()/RLock()/TryLock() identifier, or ctx.Done()/ctx.Err(); skip a diff that only threads a ctx parameter through
 **Contents:** Top-priority pattern to FLAG — any new `sync.Mutex` / `sync.RWMutex` · Other patterns to FLAG: Goroutine leaks; Missing `context.Context` propagation; Ignoring `ctx.Err()` in long loops; Channel ownership; Channel direction at function boundaries; Buffered channels as a deadlock band-aid; `select` missing `<-ctx.Done()`; `select` with `default` that turns blocking into busy-loop; Shared state without synchronization; `sync.WaitGroup` misuse; Goroutines without panic recovery; `time.After` in a loop; Loop variable capture in goroutines · Tolerated uses of `sync.*` primitives · Do NOT flag · Required tooling · Review approach
 
 Review Go code for **concurrency correctness**: goroutines, channels, `context.Context`, and shared state. Concurrency bugs are the highest-impact class of Go defects — they pass tests, survive code review, and surface in production as hangs, leaks, and data corruption. This reviewer is non-negotiable on any PR that touches `go`, `chan`, `select`, `sync.*`, or `context`.
@@ -34,7 +34,7 @@ func (c *cache) run() {
 }
 ```
 
-Flag every new `sync.Mutex` or `sync.RWMutex`. The PR author must justify why channel-owned-state doesn't work for this specific case. Acceptable justifications fall into the "Tolerated uses of `sync.*`" list below; everything else should be rewritten as channel-based.
+Flag every new `sync.Mutex`, `sync.RWMutex`, `golang.org/x/sync/semaphore`, lock type from another package, or hand-rolled spin/CAS lock as **P1**. Most code reaches for a lock by default; the default fix here is a rewrite: a goroutine owns the state and channels are its only interface (above), or the state moves to a request-scoped value so nothing is shared. Don't propose a narrower lock, `defer Unlock()` or lock-ordering as the fix. A lock stays only when it meets a tolerated use below **and** the declaration carries a comment giving that concrete reason; verify the reason actually holds (e.g. writes really are at fixed points), and then report it as a P3 note. "Mutex was simpler" or "it's just a small map" is not a reason.
 
 **Other patterns to FLAG:**
 
@@ -248,6 +248,7 @@ Flag every new `sync.Mutex` or `sync.RWMutex`. The PR author must justify why ch
 - `sync.Once` — one-time package or struct initialization. Channels can do this with `close(ch)` + `<-ch`, but `Once` is hard to misuse and is the idiomatic choice.
 - `sync.WaitGroup` — coordinated goroutine termination (this is coordination, not mutual exclusion). Still subject to the WaitGroup-misuse flag (#10).
 - `sync.RWMutex` for **truly read-mostly, write-rare** state where writes happen at well-defined points (config reload, refresh tick) and reads happen on a hot path where channel-routing latency would be visible. "Read-mostly" alone is not enough; the latency argument must hold. If writes can happen at arbitrary moments, this isn't read-mostly and the exemption does not apply.
+- A lock required by a third-party API contract (the library documents the caller must hold it).
 - `sync/atomic` for **single-word** counters (request counts, atomic flags). Anything more than a single atomic load/store/CAS should be a channel.
 
 Each tolerated use must have a comment explaining *why* it's not a channel. "Mutex was simpler" is not an acceptable answer.
