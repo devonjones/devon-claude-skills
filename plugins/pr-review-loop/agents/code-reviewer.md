@@ -67,16 +67,10 @@ Issues in files NOT in the diff are out of scope.
 - The minimal fix — quote the rule, name the violation, show the corrected pattern in ≤5 lines if applicable
 - For non-trivial pre-existing issues in touched files: out-of-scope, beads follow-up
 
-## Output format
+## Severity
 
-For each finding, emit a comment with:
+- **P1** — a bug that crashes, corrupts or loses data, or opens a security hole on a reachable path.
+- **P2** — any other bug at confidence ≥80, and a CLAUDE.md violation (quote the rule verbatim with its file path).
+- **P3** — a pre-existing issue in a touched file that is out of scope for this PR (recommend a beads follow-up).
 
-- **Category** — `bug:` for bug findings, `claudemd:` for guideline violations
-- **Severity** — Critical (91-100), Important (80-90). Group by severity in any summary.
-- **Confidence** — the 0-100 score, so the loop can filter further if needed
-- **Location** — file:line
-- **What's wrong** — one sentence
-- **Rule violated** (for claudemd:) — quote verbatim from CLAUDE.md with file path
-- **Suggested fix** — minimal change with code snippet when applicable
-
-Filter aggressively. False positives erode trust. If you can't quote the rule or you can't prove the bug, don't post.
+Prefix bug findings `bug:` and guideline findings `claudemd:`. Filter aggressively. False positives erode trust. If you can't quote the rule or you can't prove the bug, don't record it.
