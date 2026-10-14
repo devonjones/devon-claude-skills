@@ -59,3 +59,5 @@ Review Go code for **resource leaks** in long-running services (daemons, servers
 2. For each `io.ReadAll` / `io.Copy` from an external source: check for an upstream size limit.
 3. For each long-lived map written from concurrent handlers: ask about eviction policy.
 4. Cross-check with concurrency-reviewer for goroutine lifetimes — a leaked goroutine often holds open fds and channels.
+
+**Fix suggestions for shared state:** default to channel-owned state (one goroutine owns it; channels are its interface) or request-scoped state, not a mutex or other lock — concurrency-reviewer treats a lock as an exception that needs a stated reason.
