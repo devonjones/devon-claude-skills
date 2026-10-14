@@ -363,6 +363,12 @@ done <<'ENVS'
 6|{"is_error": true, "result": "Weekly limit reached"}
 6|{"is_error": true, "result": "Invalid API key - please run /login"}
 6|{"is_error": true, "api_error_status": 503, "result": "x"}
+6|{"is_error": true, "api_error_status": 429, "result": "x"}
+6|{"is_error": true, "api_error_status": 401, "result": "x"}
+6|{"is_error": true, "api_error_status": 403, "result": "x"}
+6|{"is_error": true, "result": "5-hour limit reached - resets 3pm"}
+3|{"is_error": true, "result": "context limit exceeded"}
+3|{"is_error": true, "result": "max turns limit reached; no credit given for partial output"}
 3|{"is_error": true, "result": "schema error at line 523; tokens: 500"}
 ENVS
 
