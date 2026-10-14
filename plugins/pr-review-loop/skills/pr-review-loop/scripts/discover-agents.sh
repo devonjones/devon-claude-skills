@@ -558,20 +558,23 @@ echo "$JQ_INPUT" | jq '
     # Disabled defaults (from configuration)
     ($config.disabled // []) as $disabled_defaults |
 
-    # ---- 4. Effective defaults: not overridden, not disabled ----
-    # Precedence: if a default appears in BOTH the disabled list AND is
-    # also overridden by a same-name user agent, the user agent still runs
-    # (as user-override). The default itself is filtered out by EITHER rule.
+    # ---- 4. Effective defaults: not disabled; overridden only where claimed ----
+    # A same-named user agent replaces a default only for the files it owns
+    # (step 2), so a subtree override leaves the default on the rest of the
+    # diff. A default with nothing left is dropped. Precedence: if a default
+    # appears in BOTH the disabled list AND is overridden by a same-name user
+    # agent, the user agent still runs (as user-override); the default never does.
     ($defaults
-        | map(select(.name as $n | ($overridden_default_names | index($n)) == null))
         | map(select(.name as $n | ($disabled_defaults | index($n)) == null))
         | map(. + {kind: "default"})
-        | map(. + {changed_files: (
+        | map(.name as $n | . + {changed_files: (
+            [$user_agents_raw[] | select(.name == $n) | .changed_files[]] as $claimed |
             .scope as $s |
-            if $s == "/" then $files
-            else [$files[] | select(startswith($s | ltrimstr("/")))]
-            end
+            (if $s == "/" then $files
+             else [$files[] | select(startswith($s | ltrimstr("/")))]
+             end) | map(. as $f | select(any($claimed[]; . == $f) | not))
           )})
+        | map(select(.name as $n | (($overridden_default_names | index($n)) == null) or (.changed_files | length > 0)))
     ) as $effective_defaults |
 
     # ---- 5. User agents: tagged as override if name matches a default, else plain user ----
@@ -665,7 +668,7 @@ echo "$JQ_INPUT" | jq '
             spawned_count: ($merged_agents | length),
             default_count: ($effective_defaults | length),
             override_count: ($overridden_default_names | length),
-            user_count: ($user_agents | map(select(.kind == "user")) | length),
+            user_count: ($user_agents | map(select(.kind == "user") | .name) | unique | length),
             overridden_default_names: $overridden_default_names,
             pi_count: ($merged_agents | map(select(.engine == "pi")) | length),
             # pi.agents entries naming no agent on the roster (typos, disabled defaults)

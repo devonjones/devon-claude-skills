@@ -1324,6 +1324,30 @@ assert_jq "JS-only diff spawns only the subtree copy" "$ts1b" '[.agents[] | sele
 run_discover "$repo" $'app/models/game.rb' ts1c
 assert_jq "Ruby-only diff spawns only the root copy" "$ts1c" '[.agents[] | select(.name == "test-coverage-reviewer") | .scope] == ["/"]'
 
+echo "=== Test S2: a subtree override of a default replaces it only inside the subtree ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/app/javascript"
+printf '# Agents\n\n## code-reviewer\nJS-only code review.\n' > "$repo/app/javascript/AGENT-REVIEWERS.md"
+run_discover "$repo" $'app/models/a.rb\napp/javascript/b.js' ts2
+assert_exit "exit 0" "$ts2_exit" "0"
+assert_jq "default keeps the file outside the subtree" "$ts2" '[.agents[] | select(.name == "code-reviewer" and .kind == "default") | .changed_files] == [["app/models/a.rb"]]'
+assert_jq "override takes the subtree file" "$ts2" '[.agents[] | select(.name == "code-reviewer" and .kind == "user-override") | .changed_files] == [["app/javascript/b.js"]]'
+run_discover "$repo" $'app/javascript/b.js' ts2b
+assert_jq "subtree-only diff: default dropped, override runs" "$ts2b" '[.agents[] | select(.name == "code-reviewer") | .kind] == ["user-override"]'
+
+echo "=== Test S3: same default overridden at two scopes counts once ==="
+repo="$(make_temp_repo)"
+mkdir -p "$repo/app/javascript"
+printf '# Agents\n\n## code-reviewer\nRoot review.\n' > "$repo/AGENT-REVIEWERS.md"
+printf '# Agents\n\n## code-reviewer\nJS review.\n' > "$repo/app/javascript/AGENT-REVIEWERS.md"
+printf '# Agents\n\n## foo-reviewer\nRoot foo.\n' >> "$repo/AGENT-REVIEWERS.md"
+printf '\n## foo-reviewer\nJS foo.\n' >> "$repo/app/javascript/AGENT-REVIEWERS.md"
+run_discover "$repo" $'app/models/a.rb\napp/javascript/b.js' ts3
+assert_jq "override_count == 1" "$ts3" '.configuration.override_count == 1'
+assert_jq "overridden_default_names lists the name once" "$ts3" '.configuration.overridden_default_names == ["code-reviewer"]'
+assert_jq "user_count counts foo-reviewer once" "$ts3" '.configuration.user_count == 1'
+assert_jq "no default code-reviewer when root override claims the rest" "$ts3" '[.agents[] | select(.name == "code-reviewer") | .kind] == ["user-override", "user-override"]'
+
 # Summary
 # ---------------------------------------------------------------------------
 echo
