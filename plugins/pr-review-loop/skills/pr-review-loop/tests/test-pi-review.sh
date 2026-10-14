@@ -121,7 +121,7 @@ run(){ : > "$T/gh.log"; rm -f "$T/gh.log.headread"; : > "$T/docker.log"; : > "$T
         FAKE_LOCK_SCRATCH="${FAKE_LOCK_SCRATCH:-}" FAKE_DOCKER_RM_FAIL="${FAKE_DOCKER_RM_FAIL:-}" \
         FAKE_PI_SILENT="${FAKE_PI_SILENT:-}" FAKE_PI_TRICKLE="${FAKE_PI_TRICKLE:-}" \
         PI_REVIEW_IDLE_TIMEOUT="${PI_REVIEW_IDLE_TIMEOUT:-600}" PI_REVIEW_SANDBOX="${PI_REVIEW_SANDBOX:-docker}" \
-        PRIOR_SEEN="${PRIOR_SEEN:-/dev/null}" CLAUDE_LOG="${CLAUDE_LOG:-/dev/null}" FAKE_CLAUDE_NOREPORT="${FAKE_CLAUDE_NOREPORT:-}" FAKE_CLAUDE_LIMIT="${FAKE_CLAUDE_LIMIT:-}" \
+        PRIOR_SEEN="${PRIOR_SEEN:-/dev/null}" CLAUDE_LOG="${CLAUDE_LOG:-/dev/null}" FAKE_CLAUDE_NOREPORT="${FAKE_CLAUDE_NOREPORT:-}" FAKE_CLAUDE_LIMIT="${FAKE_CLAUDE_LIMIT:-}" FAKE_CLAUDE_ERR="${FAKE_CLAUDE_ERR:-}" \
         CURL_LOG="$T/curl.log" FAKE_ZAI_QUOTA="${FAKE_ZAI_QUOTA:-}" \
         ZAI_API_KEY="${TEST_ZAI_KEY-k}" GEMINI_API_KEY="${TEST_GEMINI_KEY-k}" DEEPSEEK_API_KEY=k \
         bash "$PI_REVIEW" 42 "$1" "$SHA" "${@:2}" 2>"$T/err"); RC=$?; set -e; }
@@ -336,6 +336,7 @@ cat > "$T/bin/claude" <<'CL'
 { echo "key=${ANTHROPIC_API_KEY-unset}"; printf '%s\n' "$*"; } > "$CLAUDE_LOG"
 [[ -n "${FAKE_CLAUDE_NOREPORT:-}" ]] && { echo '{"result": "looks fine", "usage": {}}'; exit 0; }
 [[ -n "${FAKE_CLAUDE_LIMIT:-}" ]] && { echo '{"is_error": true, "api_error_status": 429, "result": "Claude usage limit reached"}'; exit 1; }
+[[ -n "${FAKE_CLAUDE_ERR:-}" ]] && { printf '%s\n' "$FAKE_CLAUDE_ERR"; exit 1; }
 echo '{"structured_output": {"findings": [{"severity": "P2", "file": "src/a.py", "line": 1, "title": "t", "body": "b"}], "reopens": []},
        "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 100, "cache_creation_input_tokens": 0},
        "total_cost_usd": 0.03}'
@@ -353,6 +354,17 @@ CLAUDE_LOG="$T/claude.log" FAKE_CLAUDE_NOREPORT=1 run claude-agent --replay --mo
 grep -q -- '--model sonnet' "$T/claude.log" && ok "bare claude falls back to sonnet for an agent with no model" || bad "args: $(tail -1 "$T/claude.log")"
 CLAUDE_LOG="$T/claude.log" FAKE_CLAUDE_LIMIT=1 run claude-agent --replay --model claude:sonnet
 [[ "$RC" -eq 6 ]] && grep -q 'usage limit' "$T/err" && ok "a usage limit is a provider failure (exit 6), not a strike" || bad "rc=$RC"
+# expected exit | error envelope: 6 = provider failure, 3 = a strike against the reviewer
+while IFS='|' read -r want env; do
+    CLAUDE_LOG="$T/claude.log" FAKE_CLAUDE_ERR="$env" run claude-agent --replay --model claude:sonnet
+    [[ "$RC" -eq "$want" ]] && ok "exit $want: $env" || bad "rc=$RC, want $want: $env"
+done <<'ENVS'
+6|{"is_error": true, "result": "You have hit your limit - resets 5pm"}
+6|{"is_error": true, "result": "Weekly limit reached"}
+6|{"is_error": true, "result": "Invalid API key - please run /login"}
+6|{"is_error": true, "api_error_status": 503, "result": "x"}
+3|{"is_error": true, "result": "schema error at line 523; tokens: 500"}
+ENVS
 
 echo "=== setup refusals ==="
 run claude-agent

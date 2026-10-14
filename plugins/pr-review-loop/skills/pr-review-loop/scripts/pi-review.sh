@@ -285,10 +285,14 @@ claude_replay() {
     SECS=$((SECONDS - START))
     # Claude emits a result envelope on every exit; an API error or a usage
     # limit there is the provider failing, not the reviewer.
-    local why
+    # The HTTP status decides when there is one; otherwise the message, by
+    # phrase only - a bare number in it is often a line or token count.
+    local why status
     why="$(jq -r 'select(.is_error == true) | [.api_error_status, .terminal_reason, .result] | map(select(. != null) | tostring) | join(" | ")' \
         "$T/claude.out" 2>/dev/null || true)"
-    if [[ -n "$why" ]] && grep -qiE '\b(429|5[0-9]{2}|401|403)\b|rate.?limit|usage limit|quota|overloaded|credit|authenticat' <<<"$why"; then
+    status="$(jq -r 'select(.is_error == true) | .api_error_status // empty' "$T/claude.out" 2>/dev/null || true)"
+    if [[ "$status" =~ ^(429|401|403|5[0-9][0-9])$ ]] \
+        || { [[ -n "$why" ]] && grep -qiE 'limit|quota|overloaded|credit|api key|authenticat|unauthori[sz]ed' <<<"$why"; }; then
         echo "Provider failure on $MODEL: $why" >&2
         TRIED+=("$MODEL:provider-error"); return 2
     fi

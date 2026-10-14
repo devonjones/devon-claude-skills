@@ -79,6 +79,7 @@ seed junk/c $S2 1000 '[{"i":0,"match":4},{"i":1,"match":5},{"i":2,"match":6},{"i
 # weak/e catches only S1 (weight 9.5 of 18.5, catch 0.51); weaker/f only id 1 (0.16).
 seed weak/e $S1 1000 "$all_s1"; seed weak/e $S2 1000 '[]'
 seed weaker/f $S1 1000 '[{"i":0,"match":1}]'; seed weaker/f $S2 1000 '[]'
+for m in claude:sonnet claude-proxy/x; do seed $m $S1 1000 "$all_s1"; seed $m $S2 1000 "$all_s2"; done
 # failing/d: one of two runs failed.
 seed failing/d $S1 1000 "$all_s1"
 echo '{"failed": true, "exit": 3, "error": "x", "model": "failing/d"}' > "$D/x/replays/${S2:0:12}__failing_d.json"
@@ -90,7 +91,8 @@ cat > "$T/prices.json" <<'EOF'
             "junk/c": {"usd_per_mtok": {"input": 0.1, "output": 0.1}},
             "failing/d": {"usd_per_mtok": {"input": 0.1, "output": 0.1}},
             "weak/e": {"usd_per_mtok": {"input": 0.1, "output": 0.1}},
-            "weaker/f": {"usd_per_mtok": {"input": 0.1, "output": 0.1}}},
+            "weaker/f": {"usd_per_mtok": {"input": 0.1, "output": 0.1}},
+            "claude-proxy/x": {"usd_per_mtok": {"input": 0.1, "output": 0.1}}},
  "plans": {}}
 EOF
 
@@ -122,6 +124,11 @@ jq -e '.candidates[0] | (.catch > 0.5) and (.pass | not)' "$R" >/dev/null && ok 
 run run x --models weak/e,weaker/f
 jq -e '.baseline == null and ([.candidates[] | {(.model): .pass}] | add) == {"weak/e": true, "weaker/f": false}' "$R" >/dev/null \
     && ok "no baseline: catch >= 0.5 passes, below fails" || bad "$(jq -c '[.candidates[] | {model, catch, pass}]' "$R")"
+
+echo "=== only claude and claude:<model> bill as the Claude plan ==="
+run run x --models claude:sonnet,claude-proxy/x
+jq -e '([.candidates[] | {(.model): .billing}] | add) == {"claude:sonnet": "plan", "claude-proxy/x": "paid"}' "$R" >/dev/null \
+    && ok "claude:sonnet is plan, claude-proxy/x is paid" || bad "$(jq -c '[.candidates[] | {model, billing}]' "$R")"
 
 echo "=== a failed grade or replay is not scored as if it were fine ==="
 mv -f "$D/x/grades/${S1:0:12}.json" "$T/g1"
