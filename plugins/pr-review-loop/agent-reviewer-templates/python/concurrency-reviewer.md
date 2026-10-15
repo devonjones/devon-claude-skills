@@ -74,10 +74,10 @@ Review Python code for **concurrency correctness**: threads, processes, asyncio,
 
    ```python
    # BAD
-   _CACHE: dict[str, Any] = {}
+   _COUNTS: dict[str, int] = {}
 
    def worker(key):
-       _CACHE[key] = compute(key)  # concurrent writers race
+       _COUNTS[key] = _COUNTS.get(key, 0) + 1  # read-modify-write: concurrent updates are lost
    ```
 
    Guard it with a `threading.Lock`, use `threading.local()` for per-thread state, or move it into a worker behind a queue.
@@ -169,7 +169,6 @@ Review Python code for **concurrency correctness**: threads, processes, asyncio,
 **Do NOT flag:**
 
 - A `threading.Lock` / `RLock` guarding genuinely shared mutable state, held briefly. That is ordinary Python.
-- `threading.local()`, `queue.Queue` / `multiprocessing.Queue`, and `threading.Event` for one-shot signaling.
 - `asyncio.Lock` / `asyncio.Semaphore` for rate-limiting external API calls (semaphore is the right tool there).
 - `multiprocessing.Manager` for genuinely shared state across processes (it's the supported API).
 - `concurrent.futures` for I/O-bound parallelism in code that can't be ported to async.

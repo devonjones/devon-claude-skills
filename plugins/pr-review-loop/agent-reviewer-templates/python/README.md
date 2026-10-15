@@ -86,18 +86,17 @@ Reason (optional): <only if not obvious>
 Example:
 
 ```
-[concurrency-reviewer] [P1] Shared dict written from worker threads without a lock
+[concurrency-reviewer] [P1] Shared counter updated from worker threads without a lock
 
-File: cache/store.py:18
+File: stats/counts.py:18
 Quote:
-    _CACHE: dict[str, Any] = {}
+    _COUNTS: dict[str, int] = {}
     def worker(key):
-        _CACHE[key] = compute(key)
+        _COUNTS[key] = _COUNTS.get(key, 0) + 1
 
-Issue: worker() runs on a ThreadPoolExecutor, so several threads write _CACHE
-concurrently with nothing ordering the read-modify-write in compute's callers.
-Suggested fix: guard _CACHE with a threading.Lock held only for the write, or
-give each thread its own cache with threading.local().
+Issue: worker() runs on a ThreadPoolExecutor; two threads can read the same
+count and both write count + 1, losing an update.
+Suggested fix: hold a threading.Lock around the read and the write.
 ```
 
 Structured findings are diff-able, easy to triage, and easy to deduplicate when multiple reviewers flag the same line.
