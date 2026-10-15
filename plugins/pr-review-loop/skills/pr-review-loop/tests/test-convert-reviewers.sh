@@ -198,7 +198,10 @@ for name, rest in cases.items():
     out = c.render("r", "**Checks:** a thing\n" + rest)
     if "**Checks:** a thing\n" not in out or rest.split("\n")[-1] not in out.split("\n\n", 1)[1]:
         print(f"{name}: {out!r}")
-for end in "?!:":
+out = c.render("r", "**Checks:** one\ntwo\nthree.\nkept")
+if "**Checks:** one two three.\n" not in out:
+    print(f"three-line wrap: {out!r}")
+for end in ["?", "!", ":", " (e.g. foo.)", ' "done."']:
     out = c.render("r", f"**Checks:** a thing{end}\nkept")
     if f"**Checks:** a thing{end}\n" not in out:
         print(f"terminator {end}: {out!r}")

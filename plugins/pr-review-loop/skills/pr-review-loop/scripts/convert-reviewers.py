@@ -81,7 +81,7 @@ def take(lines, pattern, limit=5, wrap=False):
 
 def continues(prev, line):
     """line wraps prev: prev's sentence is unfinished and line is plain prose."""
-    return bool(line.strip()) and not prev.rstrip().endswith((".", "!", "?", ":")) \
+    return bool(line.strip()) and not prev.rstrip().rstrip(")\"'*`").endswith((".", "!", "?", ":")) \
         and not re.match(r"\s*(\*\*|#|[-*+>|] |\d+\. |```|~~~)", line)
 
 
