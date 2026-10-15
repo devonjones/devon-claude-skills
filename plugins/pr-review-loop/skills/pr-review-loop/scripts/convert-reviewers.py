@@ -67,24 +67,30 @@ def sections(text):
     return out
 
 
-def take(lines, pattern, limit=5):
-    """Remove and return the first line matching pattern in the first lines."""
+def take(lines, pattern, limit=5, wrap=False):
+    """Remove and return the first line matching pattern in the first lines,
+    with wrap, joined with the lines it wraps onto."""
     for i, line in enumerate(lines[:limit]):
         if pattern.match(line):
-            return lines.pop(i).strip()
+            out = lines.pop(i).strip()
+            while wrap and i < len(lines) and continues(out, lines[i]):
+                out = f"{out} {lines.pop(i).strip()}"
+            return out
     return None
 
 
+def continues(prev, line):
+    """line wraps prev: prev's sentence is unfinished and line is plain prose."""
+    return bool(line.strip()) and not prev.rstrip().endswith((".", "!", "?", ":")) \
+        and not re.match(r"\s*(\*\*|#|[-*+>|] |\d+\. |```|~~~)", line)
+
+
 def unwrap(lines):
-    """Join a Checks/Spawn-when line with the lines it wraps onto, up to the
-    end of its sentence, a blank line, or the next bold, heading or list line."""
+    """Join each Checks/Spawn-when line with the lines it wraps onto."""
     out = []
     for line in lines:
-        prev = out[-1] if out else ""
-        if (line.strip() and (CHECKS_RE.match(prev) or SPAWN_RE.match(prev))
-                and not prev.rstrip().endswith((".", "!", "?", ":"))
-                and not re.match(r"\s*(\*\*|#|[-*+] |\d+\. |```|~~~)", line)):
-            out[-1] = f"{prev.rstrip()} {line.strip()}"
+        if out and (CHECKS_RE.match(out[-1]) or SPAWN_RE.match(out[-1])) and continues(out[-1], line):
+            out[-1] = f"{out[-1].rstrip()} {line.strip()}"
         else:
             out.append(line)
     return out
@@ -126,15 +132,15 @@ def contents(body):
 
 def render(name, body, summary="", checks=None, spawn=None, model=None):
     """One reviewer file. summary is an index entry's text (hybrid layouts)."""
-    lines = unwrap(body.strip("\n").splitlines())
+    lines = body.strip("\n").splitlines()
     while lines and not lines[0].strip():
         lines.pop(0)
     if lines and re.match(rf"^#\s+{re.escape(name)}\s*$", lines[0]):
         lines.pop(0)  # an existing title; ours replaces it
     model_line = take(lines, MODEL_RE)
     verify = take(lines, VERIFY_RE)
-    inline_checks = take(lines, CHECKS_RE, limit=8)
-    inline_spawn = take(lines, SPAWN_RE, limit=8)
+    inline_checks = take(lines, CHECKS_RE, limit=8, wrap=True)
+    inline_spawn = take(lines, SPAWN_RE, limit=8, wrap=True)
     checks = checks or (inline_checks and CHECKS_RE.match(inline_checks).group(1))
     spawn = spawn or (inline_spawn and SPAWN_RE.match(inline_spawn).group(1))
     extra = []

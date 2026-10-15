@@ -181,6 +181,36 @@ check "starter header has no frontmatter" '! grep -q "^color:" "$T/s/.reviewers/
 set +e; python3 "$CONVERT" starters --into "$T/s" silent-failure-hunter >/dev/null 2>&1; rc=$?; set -e
 check "refuses to overwrite a starter" '[[ $rc -ne 0 ]]'
 
+echo "=== a wrapped header line stops where its text does ==="
+BAD="$(python3 - "$CONVERT" <<'PYEOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("c", sys.argv[1]); c = importlib.util.module_from_spec(spec); spec.loader.exec_module(c)
+cases = {  # body after "**Checks:** a thing" -> the line that must stay in the body
+    "blank line": "\nkept",
+    "bullet": "- kept",
+    "numbered item": "1. kept",
+    "heading": "### kept",
+    "quote": "> kept",
+    "table": "| kept |",
+    "fence": "```\nkept",
+}
+for name, rest in cases.items():
+    out = c.render("r", "**Checks:** a thing\n" + rest)
+    if "**Checks:** a thing\n" not in out or rest.split("\n")[-1] not in out.split("\n\n", 1)[1]:
+        print(f"{name}: {out!r}")
+for end in "?!:":
+    out = c.render("r", f"**Checks:** a thing{end}\nkept")
+    if f"**Checks:** a thing{end}\n" not in out:
+        print(f"terminator {end}: {out!r}")
+body = "intro\n" * 8 + "**Checks:** late\nkept\n```\n**Checks:** fenced\nkept too\n```"
+if body not in c.render("r", "x\n" + body):
+    print("a Checks line below the header was rewritten")
+if c.contents("### S\n1. **Name (detail)** z\n2. **Other** y") != "S: Name; Other":
+    print("title cut at ' ('")
+PYEOF
+)"
+check "every stop condition holds, and only the header is joined" '[[ -z "$BAD" ]]' || echo "$BAD"
+
 echo "=== every shipped template names all its sections and items ==="
 STALE="$(python3 - "$CONVERT" "$SCRIPT_DIR/../../../agent-reviewer-templates" <<'PYEOF'
 import importlib.util, pathlib, sys
