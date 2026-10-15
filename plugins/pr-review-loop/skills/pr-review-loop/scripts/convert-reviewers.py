@@ -67,12 +67,44 @@ def sections(text):
     return out
 
 
-def take(lines, pattern, limit=5):
-    """Remove and return the first line matching pattern in the first lines."""
+def take(lines, pattern, limit=5, wrap=False):
+    """Remove and return the first line matching pattern in the first lines,
+    with wrap, joined with the lines it wraps onto."""
     for i, line in enumerate(lines[:limit]):
         if pattern.match(line):
-            return lines.pop(i).strip()
+            out = lines.pop(i).strip()
+            while wrap and i < len(lines) and continues(out, lines[i]):
+                out = f"{out} {lines.pop(i).strip()}"
+            return out
     return None
+
+
+def continues(prev, line):
+    """line wraps prev: prev's sentence is unfinished and line is plain prose."""
+    return bool(line.strip()) and not prev.rstrip().rstrip(")\"'*`").endswith((".", "!", "?", ":")) \
+        and not re.match(r"\s*(\*\*|#|[-*+>|] |\d+\. |```|~~~)", line)
+
+
+def unwrap(lines):
+    """Join each Checks/Spawn-when line with the lines it wraps onto."""
+    out = []
+    for line in lines:
+        if out and (CHECKS_RE.match(out[-1]) or SPAWN_RE.match(out[-1])) and continues(out[-1], line):
+            out[-1] = f"{out[-1].rstrip()} {line.strip()}"
+        else:
+            out.append(line)
+    return out
+
+
+def title(text):
+    """An item's title: its text up to a ':' or ' (' outside backticks."""
+    head = ""
+    for part in re.split(r"(`[^`]*`)", text):
+        m = None if part.startswith("`") else re.search(r":|\s\(", part)
+        if m:
+            return head + part[:m.start()]
+        head += part
+    return head
 
 
 def contents(body):
@@ -92,7 +124,7 @@ def contents(body):
             continue
         m = ITEM_RE.match(line)
         if m and secs:
-            secs[-1][1].append(re.split(r":|\s\(", m.group(1))[0].strip().rstrip("."))
+            secs[-1][1].append(title(m.group(1)).strip().rstrip("."))
     if len(secs) + sum(len(i) for _, i in secs) < 2:
         return None
     return " · ".join(s + (": " + "; ".join(i) if i else "") for s, i in secs)
@@ -107,12 +139,12 @@ def render(name, body, summary="", checks=None, spawn=None, model=None):
         lines.pop(0)  # an existing title; ours replaces it
     model_line = take(lines, MODEL_RE)
     verify = take(lines, VERIFY_RE)
-    inline_checks = take(lines, CHECKS_RE, limit=8)
-    inline_spawn = take(lines, SPAWN_RE, limit=8)
+    inline_checks = take(lines, CHECKS_RE, limit=8, wrap=True)
+    inline_spawn = take(lines, SPAWN_RE, limit=8, wrap=True)
     checks = checks or (inline_checks and CHECKS_RE.match(inline_checks).group(1))
     spawn = spawn or (inline_spawn and SPAWN_RE.match(inline_spawn).group(1))
     extra = []
-    for line in summary.splitlines():
+    for line in unwrap(summary.splitlines()):
         if MODEL_RE.match(line):
             model_line = line.strip()
         elif CHECKS_RE.match(line):

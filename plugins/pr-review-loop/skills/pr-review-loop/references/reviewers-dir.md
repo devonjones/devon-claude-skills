@@ -55,6 +55,10 @@ Read the plan's `note` lines before running `--write`. One matters most: a
 `.reviewers/*.md` file that no index entry named never ran before, and **runs
 after conversion**. Ask the user whether it should run, or delete it.
 
+Read each new file's header and the line under it before staging. Step 4's
+diff can't show a cut-short Checks or Spawn when line, because it compares
+against this conversion.
+
 Then stage the conversion without committing, by path rather than `git add -A`
 (SKILL.md ⛔ rule 2): `git add -- ':(glob)**/.reviewers/**' ':(glob)**/AGENT-REVIEWERS.md'`.
 Step 4 diffs against it to see exactly what the assessment changed.
