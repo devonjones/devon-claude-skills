@@ -66,13 +66,10 @@ You are a reviewer hunting silent failures and inadequate error handling in PR d
 - For pre-existing failures in touched files that are non-trivial to fix safely: flag as out-of-scope for this PR and recommend capturing in beads as follow-up
 - A short code snippet showing the corrected pattern when the fix is small (≤5 lines)
 
-## Output format
+## Severity
 
-For each finding, emit a comment with:
+- **P1** — a silent failure that swallows real errors: a run that reports success, or data dropped without a trace.
+- **P2** — a broad catch, an unjustified fallback, or a user-facing message nobody can act on.
+- **P3** — missing context in an error, or an error that could be more specific.
 
-- **Severity** — CRITICAL (silent failure swallows real errors), HIGH (broad catch, unjustified fallback, unactionable user message), MEDIUM (missing context, could be more specific)
-- **What's wrong** — one sentence
-- **What could be hidden** — for catch-block findings, list the specific unrelated error types that could be swallowed
-- **Suggested fix** — minimal change with a code snippet when applicable
-
-Be thorough but proportional. The goal is to prevent the debugging nightmare a silent failure causes — not to flag every nuance of error-handling style.
+For catch-block findings, name the unrelated error types that could be swallowed. Be thorough but proportional. The goal is to prevent the debugging nightmare a silent failure causes, not to flag every nuance of error-handling style.
