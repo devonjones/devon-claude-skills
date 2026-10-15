@@ -75,6 +75,32 @@ def take(lines, pattern, limit=5):
     return None
 
 
+def unwrap(lines):
+    """Join a Checks/Spawn-when line with the lines it wraps onto, up to the
+    end of its sentence, a blank line, or the next bold, heading or list line."""
+    out = []
+    for line in lines:
+        prev = out[-1] if out else ""
+        if (line.strip() and (CHECKS_RE.match(prev) or SPAWN_RE.match(prev))
+                and not prev.rstrip().endswith((".", "!", "?", ":"))
+                and not re.match(r"\s*(\*\*|#|[-*+] |\d+\. |```|~~~)", line)):
+            out[-1] = f"{prev.rstrip()} {line.strip()}"
+        else:
+            out.append(line)
+    return out
+
+
+def title(text):
+    """An item's title: its text up to a ':' or ' (' outside backticks."""
+    head = ""
+    for part in re.split(r"(`[^`]*`)", text):
+        m = None if part.startswith("`") else re.search(r":|\s\(", part)
+        if m:
+            return head + part[:m.start()]
+        head += part
+    return head
+
+
 def contents(body):
     """Sections, each followed by its numbered items: 'A · B: x; y · C'."""
     secs, fence = [], False
@@ -92,7 +118,7 @@ def contents(body):
             continue
         m = ITEM_RE.match(line)
         if m and secs:
-            secs[-1][1].append(re.split(r":|\s\(", m.group(1))[0].strip().rstrip("."))
+            secs[-1][1].append(title(m.group(1)).strip().rstrip("."))
     if len(secs) + sum(len(i) for _, i in secs) < 2:
         return None
     return " · ".join(s + (": " + "; ".join(i) if i else "") for s, i in secs)
@@ -100,7 +126,7 @@ def contents(body):
 
 def render(name, body, summary="", checks=None, spawn=None, model=None):
     """One reviewer file. summary is an index entry's text (hybrid layouts)."""
-    lines = body.strip("\n").splitlines()
+    lines = unwrap(body.strip("\n").splitlines())
     while lines and not lines[0].strip():
         lines.pop(0)
     if lines and re.match(rf"^#\s+{re.escape(name)}\s*$", lines[0]):
@@ -112,7 +138,7 @@ def render(name, body, summary="", checks=None, spawn=None, model=None):
     checks = checks or (inline_checks and CHECKS_RE.match(inline_checks).group(1))
     spawn = spawn or (inline_spawn and SPAWN_RE.match(inline_spawn).group(1))
     extra = []
-    for line in summary.splitlines():
+    for line in unwrap(summary.splitlines()):
         if MODEL_RE.match(line):
             model_line = line.strip()
         elif CHECKS_RE.match(line):

@@ -51,6 +51,29 @@ Other things.
 
 Read `.reviewers/indexed-reviewer.md` and follow it as your complete review specification.
 
+## wrapped-reviewer
+
+**Checks:** that the router cannot feed itself. No subscription may
+target `actions`; fan-out stays bounded
+**Spawn when:** PR touches `subscriptions.py` or
+adds an enqueue target.
+Body line one.
+
+### Flag
+
+1. **`# type: ignore` without a reason:** x
+2. **Bare `except:`** y
+3. **Plain title: detail** z
+
+## wrapped-indexed
+
+**What it checks:** wrapped index text that
+continues here.
+**When to spawn:** the diff touches
+`wi/`.
+
+Read `.reviewers/wrapped-indexed.md` and follow it as your complete review specification.
+
 ## my_pci_auditor
 
 Underscore name, still a reviewer.
@@ -64,6 +87,7 @@ old-reviewer was retired.
 Use parameterized queries.
 EOF
   printf 'verification: judgement\nThe indexed spec body.\n' > .reviewers/indexed-reviewer.md
+  printf 'Indexed body.\n' > .reviewers/wrapped-indexed.md
   printf 'Nobody indexed this one.\n' > .reviewers/stray-reviewer.md
   cat > svc/AGENT-REVIEWERS.md <<'EOF'
 # Agents
@@ -97,6 +121,15 @@ check "header: TODO where the source had no checks/spawn text" '[[ "$H" == *"**S
 check "model line not left in the body" '[[ "$(grep -c "^model:" .reviewers/inline-reviewer.md)" == 1 ]]'
 H="$(head -n 12 .reviewers/indexed-reviewer.md)"
 check "index text becomes Checks / Spawn when" '[[ "$H" == *"**Checks:** the indexed things."* && "$H" == *"**Spawn when:** the diff touches \`idx/\`."* ]]'
+W="$(cat .reviewers/wrapped-reviewer.md)"
+check "a wrapped Checks line is joined whole" '[[ "$W" == *$'"'"'\n**Checks:** that the router cannot feed itself. No subscription may target `actions`; fan-out stays bounded\n'"'"'* ]]'
+check "a wrapped Spawn when line is joined whole" '[[ "$W" == *"**Spawn when:** PR touches \`subscriptions.py\` or adds an enqueue target."* ]]'
+check "no wrapped fragment is left in the body" '[[ "$(grep -c "^target \|^adds an" <<< "$W")" == 0 ]]'
+check "the body after the sentence ends is kept" '[[ "$W" == *$'"'"'\n\nBody line one.'"'"'* ]]'
+check "a colon inside backticks stays in the item title" '[[ "$W" == *"**Contents:** Flag: \`# type: ignore\` without a reason; Bare \`except:\`; Plain title"$'"'"'\n'"'"'* ]]'
+W="$(cat .reviewers/wrapped-indexed.md)"
+check "wrapped index text is joined whole" '[[ "$W" == *"**Checks:** wrapped index text that continues here."* && "$W" == *"**Spawn when:** the diff touches \`wi/\`."* ]]'
+check "and no fragment of it reaches the body" '[[ "$W" != *$'"'"'\ncontinues here.'"'"'* && "$W" != *$'"'"'\n`wi/`.'"'"'* ]]'
 check "pointer line dropped" '! grep -q "Read \`.reviewers" .reviewers/indexed-reviewer.md'
 check "existing spec body kept" 'grep -q "The indexed spec body." .reviewers/indexed-reviewer.md'
 check "subtree index converts beside itself" '[[ -f svc/.reviewers/svc-reviewer.md ]]'
