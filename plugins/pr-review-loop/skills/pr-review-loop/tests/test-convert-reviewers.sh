@@ -51,6 +51,29 @@ Other things.
 
 Read `.reviewers/indexed-reviewer.md` and follow it as your complete review specification.
 
+## wrapped-reviewer
+
+**Checks:** that the router cannot feed itself. No subscription may
+target `actions`; fan-out stays bounded
+**Spawn when:** PR touches `subscriptions.py` or
+adds an enqueue target.
+Body line one.
+
+### Flag
+
+1. **`# type: ignore` without a reason:** x
+2. **Bare `except:`** y
+3. **Plain title: detail** z
+
+## wrapped-indexed
+
+**What it checks:** wrapped index text that
+continues here.
+**When to spawn:** the diff touches
+`wi/`.
+
+Read `.reviewers/wrapped-indexed.md` and follow it as your complete review specification.
+
 ## my_pci_auditor
 
 Underscore name, still a reviewer.
@@ -64,6 +87,7 @@ old-reviewer was retired.
 Use parameterized queries.
 EOF
   printf 'verification: judgement\nThe indexed spec body.\n' > .reviewers/indexed-reviewer.md
+  printf 'Indexed body.\n' > .reviewers/wrapped-indexed.md
   printf 'Nobody indexed this one.\n' > .reviewers/stray-reviewer.md
   cat > svc/AGENT-REVIEWERS.md <<'EOF'
 # Agents
@@ -97,6 +121,15 @@ check "header: TODO where the source had no checks/spawn text" '[[ "$H" == *"**S
 check "model line not left in the body" '[[ "$(grep -c "^model:" .reviewers/inline-reviewer.md)" == 1 ]]'
 H="$(head -n 12 .reviewers/indexed-reviewer.md)"
 check "index text becomes Checks / Spawn when" '[[ "$H" == *"**Checks:** the indexed things."* && "$H" == *"**Spawn when:** the diff touches \`idx/\`."* ]]'
+W="$(cat .reviewers/wrapped-reviewer.md)"
+check "a wrapped Checks line is joined whole" '[[ "$W" == *$'"'"'\n**Checks:** that the router cannot feed itself. No subscription may target `actions`; fan-out stays bounded\n'"'"'* ]]'
+check "a wrapped Spawn when line is joined whole" '[[ "$W" == *"**Spawn when:** PR touches \`subscriptions.py\` or adds an enqueue target."* ]]'
+check "no wrapped fragment is left in the body" '[[ "$(grep -c "^target \|^adds an" <<< "$W")" == 0 ]]'
+check "the body after the sentence ends is kept" '[[ "$W" == *$'"'"'\n\nBody line one.'"'"'* ]]'
+check "a colon inside backticks stays in the item title" '[[ "$W" == *"**Contents:** Flag: \`# type: ignore\` without a reason; Bare \`except:\`; Plain title"$'"'"'\n'"'"'* ]]'
+W="$(cat .reviewers/wrapped-indexed.md)"
+check "wrapped index text is joined whole" '[[ "$W" == *"**Checks:** wrapped index text that continues here."* && "$W" == *"**Spawn when:** the diff touches \`wi/\`."* ]]'
+check "and no fragment of it reaches the body" '[[ "$W" != *$'"'"'\ncontinues here.'"'"'* && "$W" != *$'"'"'\n`wi/`.'"'"'* ]]'
 check "pointer line dropped" '! grep -q "Read \`.reviewers" .reviewers/indexed-reviewer.md'
 check "existing spec body kept" 'grep -q "The indexed spec body." .reviewers/indexed-reviewer.md'
 check "subtree index converts beside itself" '[[ -f svc/.reviewers/svc-reviewer.md ]]'
@@ -147,6 +180,39 @@ check "starter header has its model and checks" '[[ "$H" == *"model: sonnet"* &&
 check "starter header has no frontmatter" '! grep -q "^color:" "$T/s/.reviewers/silent-failure-hunter.md"'
 set +e; python3 "$CONVERT" starters --into "$T/s" silent-failure-hunter >/dev/null 2>&1; rc=$?; set -e
 check "refuses to overwrite a starter" '[[ $rc -ne 0 ]]'
+
+echo "=== a wrapped header line stops where its text does ==="
+BAD="$(python3 - "$CONVERT" <<'PYEOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("c", sys.argv[1]); c = importlib.util.module_from_spec(spec); spec.loader.exec_module(c)
+cases = {  # body after "**Checks:** a thing" -> the line that must stay in the body
+    "blank line": "\nkept",
+    "bullet": "- kept",
+    "numbered item": "1. kept",
+    "heading": "### kept",
+    "quote": "> kept",
+    "table": "| kept |",
+    "fence": "```\nkept",
+}
+for name, rest in cases.items():
+    out = c.render("r", "**Checks:** a thing\n" + rest)
+    if "**Checks:** a thing\n" not in out or rest.split("\n")[-1] not in out.split("\n\n", 1)[1]:
+        print(f"{name}: {out!r}")
+out = c.render("r", "**Checks:** one\ntwo\nthree.\nkept")
+if "**Checks:** one two three.\n" not in out:
+    print(f"three-line wrap: {out!r}")
+for end in ["?", "!", ":", " (e.g. foo.)", ' "done."']:
+    out = c.render("r", f"**Checks:** a thing{end}\nkept")
+    if f"**Checks:** a thing{end}\n" not in out:
+        print(f"terminator {end}: {out!r}")
+body = "intro\n" * 8 + "**Checks:** late\nkept\n```\n**Checks:** fenced\nkept too\n```"
+if body not in c.render("r", "x\n" + body):
+    print("a Checks line below the header was rewritten")
+if c.contents("### S\n1. **Name (detail)** z\n2. **Other** y") != "S: Name; Other":
+    print("title cut at ' ('")
+PYEOF
+)"
+check "every stop condition holds, and only the header is joined" '[[ -z "$BAD" ]]' || echo "$BAD"
 
 echo "=== every shipped template names all its sections and items ==="
 STALE="$(python3 - "$CONVERT" "$SCRIPT_DIR/../../../agent-reviewer-templates" <<'PYEOF'

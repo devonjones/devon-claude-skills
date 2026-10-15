@@ -90,10 +90,19 @@ REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
 SHA=$(gh pr view "$PR" -R "$REPO" --json headRefOid --jq .headRefOid)
 [[ -n "$SHA" ]] || { echo "Error: could not read head SHA of PR #$PR" >&2; exit 1; }
 
+# A file the PR deletes has no RIGHT side; its findings cite the old file.
+REMOVED=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | select(.status == "removed") | .filename' \
+    | jq -Rsc 'split("\n") | map(select(. != ""))') || {
+    echo "Warning: could not list the PR's files; findings on deleted files will be rejected" >&2
+    REMOVED='[]'
+}
+GROUPS_JSON=$(jq --argjson removed "$REMOVED" \
+    'map(.side = (if (.path | IN($removed[])) then "LEFT" else "RIGHT" end))' <<< "$GROUPS_JSON")
+
 REVIEW=$(jq --arg sha "$SHA" --arg n "$FINDINGS" '{
     commit_id: $sha, event: "COMMENT",
     body: "pr-review-loop: \($n) finding(s) in \(length) thread(s).",
-    comments: map({path, line, side: "RIGHT", body})
+    comments: map({path, line, side, body})
 }' <<< "$GROUPS_JSON")
 
 pace_github
@@ -114,7 +123,7 @@ FAILED_FINDINGS=""
 for i in $(seq 0 $((COUNT - 1))); do
     G=$(jq -c ".[$i]" <<< "$GROUPS_JSON")
     pace_github
-    if OUT=$(jq --arg sha "$SHA" '{commit_id: $sha, path, line, side: "RIGHT", body}' <<< "$G" \
+    if OUT=$(jq --arg sha "$SHA" '{commit_id: $sha, path, line, side, body}' <<< "$G" \
             | gh api --method POST "repos/$REPO/pulls/$PR/comments" --input - 2>"$ERR"); then
         echo "$(jq -r '.id' <<< "$OUT") $(jq -r '"\(.path):\(.line)"' <<< "$G")"
     else
