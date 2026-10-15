@@ -28,6 +28,10 @@ case "$*" in
       body=$(cat); jq -c . <<< "$body" >> "$T/comments.jsonl"
       [[ -n "${FAKE_FAIL_PATH:-}" && "$(jq -r .path <<< "$body")" == "$FAKE_FAIL_PATH" ]] && { echo '{"message":"line not in diff"}'; exit 1; }
       echo '{"id":9}' ;;
+  *pulls/42/files*)
+      [[ -n "${FAKE_FILES_FAIL:-}" ]] && { echo "HTTP 502" >&2; exit 1; }
+      while [[ $# -gt 0 && "$1" != --jq ]]; do shift; done
+      jq -r "$2" <<< '[{"filename": "a.py", "status": "modified"}, {"filename": "b.py", "status": "removed"}]' ;;
   *pulls/42/comments*--jq*)
       [[ -n "${FAKE_LIST_FAIL:-}" ]] && { echo "HTTP 502" >&2; exit 1; }
       # Run the caller's real --jq over a listing that mixes reviews and line fields.
@@ -100,6 +104,15 @@ check "P3 roll-up names both P3 flaggers" \
 check "review is pinned to the PR head" '[[ "$(jq -r .commit_id "$T/review.json")" == abc123 ]]'
 check "no per-comment POSTs when the review lands" '[[ ! -e "$T/comments.jsonl" ]]'
 run 42 --check; check "store consumed after posting" '[[ $RC -eq 0 ]]'
+
+echo "=== a deleted file's thread goes on the old side ==="
+check "deleted b.py is LEFT" '[[ "$(jq -r ".comments[] | select(.path==\"b.py\") | .side" "$T/review.json")" == LEFT ]]'
+check "modified a.py is RIGHT" '[[ "$(jq -r ".comments[] | select(.path==\"a.py\") | .side" "$T/review.json")" == RIGHT ]]'
+repo; seed; FAKE_REVIEW_FAIL=1 run 42
+check "the one-at-a-time fallback keeps LEFT" '[[ "$(jq -r "select(.path==\"b.py\") | .side" "$T/comments.jsonl")" == LEFT ]]'
+repo; seed; FAKE_FILES_FAIL=1 run 42
+check "an unreadable file list still posts, all RIGHT" '[[ $RC -eq 0 && "$(jq -r "[.comments[].side] | unique | join(\",\")" "$T/review.json")" == RIGHT ]]'
+check "and warns" '[[ "$OUT" == *"could not list the PR'"'"'s files"* ]]'
 
 echo "=== previewing a real PR keeps its findings ==="
 repo; seed; run 42 --local
