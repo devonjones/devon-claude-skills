@@ -1442,6 +1442,7 @@ Task tool:
        ```bash
        scripts/record-finding.sh <PR> <file> <line> <agent-name> <P1|P2|P3> "Issue description and suggestion"
        ```
+       On a file the PR deletes, `<line>` is a line of the old file.
        Do not post to GitHub yourself. The orchestrator posts every
        reviewer's findings in one review, merging findings on the same line
        and rolling P3s into one thread. Your `<!-- Agent: <agent-name> -->`
