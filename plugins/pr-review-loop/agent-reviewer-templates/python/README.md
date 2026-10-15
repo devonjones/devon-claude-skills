@@ -50,7 +50,7 @@ Every finding must be tagged with a beads-style priority:
 
 | Priority | Disposition | Examples |
 |----------|-------------|----------|
-| **P1** | Blocking — must fix before merge | Silent exception swallow, new `threading.Lock` without justification, missing `@dataclass` on a class using `field()`, leaked DB connection, command injection via `shell=True` |
+| **P1** | Blocking — must fix before merge | Silent exception swallow, shared state written from several threads without synchronization, missing `@dataclass` on a class using `field()`, leaked DB connection, command injection via `shell=True` |
 | **P2** | Should fix in this PR | Missing `raise ... from`, missing `subprocess` timeout, missing tests for new branches, mccabe complexity floor violation, function-level import |
 | **P3** | Advisory — deferrable with a beads ticket | Complexity heuristic findings, dead code, clarity nits, markdown structural suggestions |
 
@@ -86,21 +86,18 @@ Reason (optional): <only if not obvious>
 Example:
 
 ```
-[concurrency-reviewer] [P1] New threading.Lock without justification
+[concurrency-reviewer] [P1] Shared dict written from worker threads without a lock
 
 File: cache/store.py:18
 Quote:
-    class Cache:
-        def __init__(self):
-            self._lock = threading.Lock()
-            self._data: dict[str, Any] = {}
+    _CACHE: dict[str, Any] = {}
+    def worker(key):
+        _CACHE[key] = compute(key)
 
-Issue: New threading.Lock protects mutable shared state. Per the pack's design
-philosophy, threading locks are flagged by default — move the data into a worker
-process behind a queue, or into an asyncio task that owns the state, unless this
-falls into "Tolerated uses" in concurrency-reviewer.
-Suggested fix: Use multiprocessing.Process + queue.Queue for cross-process shared
-state, or an asyncio task that owns the dict and exposes async methods.
+Issue: worker() runs on a ThreadPoolExecutor, so several threads write _CACHE
+concurrently with nothing ordering the read-modify-write in compute's callers.
+Suggested fix: guard _CACHE with a threading.Lock held only for the write, or
+give each thread its own cache with threading.local().
 ```
 
 Structured findings are diff-able, easy to triage, and easy to deduplicate when multiple reviewers flag the same line.

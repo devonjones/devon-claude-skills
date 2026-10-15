@@ -1,49 +1,12 @@
 # concurrency-reviewer
 verification: judgement — findings come from reading the diff against the listed patterns; no command is asked for.
-**Checks:** New threading locks/shared mutable state, races, deadlocks, blocking calls in async code, and process/asyncio misuse; prefers processes and queues over locks.
+**Checks:** Unsynchronized shared mutable state, lock ordering and locks held across blocking I/O, blocking calls in async code, and process/asyncio misuse.
 **Spawn when:** Diff in .py files imports or uses threading, multiprocessing, asyncio, concurrent.futures, async def, or module-level mutable globals.
-**Contents:** Top-priority pattern to FLAG — any new `threading.Lock` / `threading.RLock` · Other patterns to FLAG: CPU-bound work in `ThreadPoolExecutor`; Fire-and-forget `asyncio.create_task` without a reference; `asyncio.gather` swallowing exception context; Blocking `subprocess` calls in `async def`; Missing `asyncio.timeout` / `asyncio.wait_for` on async I/O; Mutable shared global written from multiple threads; Daemon threads that write data; `multiprocessing.Pool` constructed at module level; `queue.Queue.get()` without `timeout=`; Non-pickleable objects passed to `multiprocessing`; Mixing `asyncio` and `threading` without `run_in_executor`; `nest_asyncio`; `asyncio.run()` called from anywhere except the entry point · Tolerated uses of `threading` / sync primitives · Do NOT flag · Required tooling · Review approach
+**Contents:** Patterns to FLAG: CPU-bound work in `ThreadPoolExecutor`; Fire-and-forget `asyncio.create_task` without a reference; `asyncio.gather` swallowing exception context; Blocking `subprocess` calls in `async def`; Missing `asyncio.timeout` / `asyncio.wait_for` on async I/O; Mutable shared global written from multiple threads; Daemon threads that write data; `multiprocessing.Pool` constructed at module level; `queue.Queue.get()` without `timeout=`; Non-pickleable objects passed to `multiprocessing`; Mixing `asyncio` and `threading` without `run_in_executor`; `nest_asyncio`; `asyncio.run()` called from anywhere except the entry point; Locks taken in inconsistent order; A lock held across blocking I/O · Do NOT flag · Required tooling · Review approach
 
 Review Python code for **concurrency correctness**: threads, processes, asyncio, and shared state. Python's concurrency model is messy (GIL, threading-vs-multiprocessing trade-offs, async/await coloring), and the dominant failure mode is silent data corruption from shared mutable state.
 
-**Design philosophy: "Processes over threads. Queues over locks. Async message passing over shared state."** Threads with locks are a code smell — they look correct in single-function examples and almost always grow into race conditions, deadlocks, and GIL-bound work pretending to scale. **Empirical position of this reviewer:** developers using threading primitives get the concurrent code wrong approximately 100% of the time. The bugs are subtle, survive code review, pass tests, and surface as rare data corruption and hangs under production load. **Any new `threading.Lock` / `threading.RLock` / shared mutable global is a code smell** and must clear a high bar — not "is there a simpler alternative" but "would I defend this design choice in a postmortem."
-
-**Top-priority pattern to FLAG — any new `threading.Lock` / `threading.RLock`:**
-
-```python
-# BAD — protecting shared state with a lock
-class Cache:
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._data: dict[str, Any] = {}
-
-    def get(self, key):
-        with self._lock:
-            return self._data.get(key)
-```
-
-```python
-# GOOD — a worker process owns the data; the queue is the only interface
-class Cache:
-    def __init__(self):
-        self._ops: queue.Queue = queue.Queue()
-        threading.Thread(target=self._run, daemon=False).start()
-    def _run(self):
-        data = {}
-        while (op := self._ops.get()) is not None:
-            op(data)
-
-# OR — an asyncio task owns the state; no lock needed (single event loop = no race)
-class Cache:
-    def __init__(self):
-        self._data: dict[str, Any] = {}  # safe: only the cache task touches it
-    async def get(self, key):
-        return self._data.get(key)
-```
-
-Flag every new `threading.Lock`, `threading.RLock`, `threading.Semaphore` (used as mutex), `threading.Condition`, or any shared mutable global written from multiple threads. The author must justify why a process boundary + queue, or an asyncio task that owns the state, doesn't work for this case. Acceptable answers fall into "Tolerated uses" below; everything else should be rewritten.
-
-**Other patterns to FLAG:**
+**Patterns to FLAG:**
 
 1. **CPU-bound work in `ThreadPoolExecutor` (GIL trap):**
 
@@ -117,7 +80,7 @@ Flag every new `threading.Lock`, `threading.RLock`, `threading.Semaphore` (used 
        _CACHE[key] = compute(key)  # concurrent writers race
    ```
 
-   Move the cache into a worker process behind a queue, use `threading.local()` for per-thread state, or use `functools.lru_cache` (thread-safe).
+   Guard it with a `threading.Lock`, use `threading.local()` for per-thread state, or move it into a worker behind a queue.
 
 7. **Daemon threads that write data:**
 
@@ -180,20 +143,33 @@ Flag every new `threading.Lock`, `threading.RLock`, `threading.Semaphore` (used 
 
     `asyncio.run()` creates and tears down an event loop. It belongs at the top of `main()` (or the test harness), not deep in library code. Multiple `asyncio.run()` calls in a call tree is a smell — each one is a fresh loop, defeats any connection pooling tied to the loop, and breaks if the caller is already inside an event loop.
 
-**Tolerated uses of `threading` / sync primitives** (the reviewer should still verify the constraint actually holds — and lean toward "rewrite it" when in doubt):
+14. **Locks taken in inconsistent order:**
 
-- `threading.local()` — thread-local storage, no sharing at all.
-- `queue.Queue` / `multiprocessing.Queue` — the recommended communication primitives, not flagged.
-- `threading.Event` for one-shot startup/shutdown signaling (single transition, set-once semantics). Subject to flag #7 (daemon-thread cleanup).
-- `concurrent.futures.ThreadPoolExecutor` for I/O-bound work where async isn't feasible (e.g., a sync library with no async equivalent that's deep in the call tree).
-- `asyncio.Lock` / `asyncio.Semaphore` inside a single event loop. Safer than `threading.Lock` (no preemption between awaits) but still flagged when a queue or task-owned state would do.
-- `asyncio.Semaphore` for rate-limiting external API calls — this is the right tool.
-- `multiprocessing.Manager` for genuinely shared state across processes — it's the supported API and Manager mediates serialization correctly.
+    ```python
+    # BAD — thread 1 holds a and waits for b; thread 2 holds b and waits for a
+    def transfer(src, dst):
+        with src.lock:
+            with dst.lock:
+                ...
+    ```
 
-Each tolerated use must have a comment explaining *why* it's not a queue or process boundary. "Was simpler" is not an acceptable answer.
+    Two locks acquired in different orders on different paths can deadlock. Acquire them in one fixed order (e.g., by id), or restructure so one lock suffices.
+
+15. **A lock held across blocking I/O:**
+
+    ```python
+    # BAD — every other thread waits on the network
+    with self._lock:
+        resp = requests.get(url)
+        self._data[url] = resp.json()
+    ```
+
+    Do the I/O outside the lock and hold it only for the shared-state update.
 
 **Do NOT flag:**
 
+- A `threading.Lock` / `RLock` guarding genuinely shared mutable state, held briefly. That is ordinary Python.
+- `threading.local()`, `queue.Queue` / `multiprocessing.Queue`, and `threading.Event` for one-shot signaling.
 - `asyncio.Lock` / `asyncio.Semaphore` for rate-limiting external API calls (semaphore is the right tool there).
 - `multiprocessing.Manager` for genuinely shared state across processes (it's the supported API).
 - `concurrent.futures` for I/O-bound parallelism in code that can't be ported to async.
@@ -207,11 +183,11 @@ Each tolerated use must have a comment explaining *why* it's not a queue or proc
 **Review approach:**
 
 1. Search the diff for `import threading`, `import multiprocessing`, `import asyncio`, `import concurrent.futures`, `import queue`.
-2. For each `threading.Lock` / `RLock`: flag P1.
+2. For each lock: check acquisition order across call sites, and that no blocking I/O runs while it is held.
 3. For each `asyncio.create_task`: confirm a reference is kept (or `TaskGroup` is used).
 4. For each `asyncio.gather`: confirm the exception-handling mode is deliberate.
 5. For each `subprocess.*` inside an `async def`: flag.
 6. For each external I/O in async: confirm there's a timeout.
-7. For each mutable module-level dict/set/list written from multiple threads: flag.
+7. For each mutable module-level dict/set/list written from multiple threads: flag it if no lock or queue guards it.
 
 ---
