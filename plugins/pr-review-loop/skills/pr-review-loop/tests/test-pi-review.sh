@@ -94,7 +94,13 @@ cat > "$CURL_LOG.stdin"; printf '%s\n' "$*" > "$CURL_LOG"
 [[ -n "${FAKE_ZAI_QUOTA:-}" ]] || exit 7
 printf '%s' "$FAKE_ZAI_QUOTA"
 CURL
-chmod +x "$T/bin/gh" "$T/bin/docker" "$T/bin/curl"
+# Qwen Token Plan CLI: answers $FAKE_BL, or a lapsed console login.
+cat > "$T/bin/bl" <<'BL'
+#!/usr/bin/env bash
+[[ -n "${FAKE_BL:-}" ]] || { printf '{"error": {"code": 3, "message": "Console session is not logged in or has expired."}}'; exit 1; }
+printf '%s' "$FAKE_BL"
+BL
+chmod +x "$T/bin/gh" "$T/bin/docker" "$T/bin/curl" "$T/bin/bl"
 
 # says <model> <report json>: Pi ran and reported that through the tools.
 # A non-JSON second argument means it answered in prose and never reported.
@@ -123,7 +129,7 @@ run(){ : > "$T/gh.log"; rm -f "$T/gh.log.headread"; : > "$T/docker.log"; : > "$T
         FAKE_PI_SILENT="${FAKE_PI_SILENT:-}" FAKE_PI_TRICKLE="${FAKE_PI_TRICKLE:-}" \
         PI_REVIEW_IDLE_TIMEOUT="${PI_REVIEW_IDLE_TIMEOUT:-600}" PI_REVIEW_SANDBOX="${PI_REVIEW_SANDBOX:-docker}" \
         PRIOR_SEEN="${PRIOR_SEEN:-/dev/null}" CLAUDE_LOG="${CLAUDE_LOG:-/dev/null}" FAKE_CLAUDE_NOREPORT="${FAKE_CLAUDE_NOREPORT:-}" FAKE_CLAUDE_LIMIT="${FAKE_CLAUDE_LIMIT:-}" FAKE_CLAUDE_ERR="${FAKE_CLAUDE_ERR:-}" \
-        CURL_LOG="$T/curl.log" FAKE_ZAI_QUOTA="${FAKE_ZAI_QUOTA:-}" \
+        CURL_LOG="$T/curl.log" FAKE_ZAI_QUOTA="${FAKE_ZAI_QUOTA:-}" FAKE_BL="${FAKE_BL:-}" QWEN_TOKEN_PLAN_API_KEY=k \
         ZAI_API_KEY="${TEST_ZAI_KEY-k}" GEMINI_API_KEY="${TEST_GEMINI_KEY-k}" DEEPSEEK_API_KEY=k \
         bash "$PI_REVIEW" 42 "$1" "$SHA" "${@:2}" 2>"$T/err"); RC=$?; set -e; }
 ran(){ paste -sd' ' "$T/docker.log"; }
@@ -185,30 +191,70 @@ run pi-agent
 [[ "$(ran)" == "zai/glm-5.1" ]] && ok "after the TTL zai is tried again" || bad "ran: $(ran)"
 rm -rf "$T/cache"
 
-echo "=== Z.ai plan pacing ==="
+echo "=== plan pacing ==="
 week(){ jq -nc --argjson p "$1" --argjson d "$2" '{data: {limits: [
     {unit: 3, number: 5, percentage: 0},
     {unit: 6, number: 1, percentage: $p, nextResetTime: ((now + $d * 86400) * 1000 | floor)}]}}'; }
+# chain <json list>: pi-agent's chain, edited in place so later seds still match.
+chain(){ local c; c="$(jq -c . <<<"$1" | sed 's/,/, /g')"; (cd "$REPO" && sed -i "s|\"pi-agent\": \[[^]]*\]|\"pi-agent\": ${c}|" AGENT-REVIEWERS.md); rm -rf "$T/cache/quota"; }
 says zai/glm-5.1 "$(report "$EMPTY")"; says google/gemini-2.5-flash "$(report "$EMPTY")"
 FAKE_ZAI_QUOTA="$(week 95 3)" run pi-agent
-[[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && jq -e '.tried[0] == "zai/glm-5.1:plan-cap"' <<<"$OUT" >/dev/null \
-    && ok "a window at 95% skips zai (past the limit the key bills)" || bad "rc=$RC ran=$(ran) out=$OUT"
+[[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && ok "95% used with 3 days left: zai goes behind gemini" || bad "rc=$RC ran=$(ran) out=$OUT"
 grep -q 'Bearer k' "$T/curl.log.stdin" && ! grep -q 'Bearer' "$T/curl.log" \
     && ok "the key reaches curl on stdin, not argv" || bad "curl argv: $(cat "$T/curl.log")"
 FAKE_ZAI_QUOTA="$(week 0 3)" run pi-agent
 [[ "$(ran)" == "google/gemini-2.5-flash" ]] && ok "the reading is cached, not re-fetched each run" || bad "ran: $(ran)"
-rm -rf "$T/cache/quota"
-(cd "$REPO" && sed -i 's|"pi-agent": \["zai/glm-5.1", "google/gemini-2.5-flash"\]|"pi-agent": ["google/gemini-2.5-flash", "zai/glm-5.1"]|' AGENT-REVIEWERS.md)
+fails google/gemini-2.5-flash "429 rate limit"; rm -rf "$T/cache/quota"
+FAKE_ZAI_QUOTA="$(week 120 3)" run pi-agent
+[[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash zai/glm-5.1" ]] \
+    && ok "a plan past its limit is not skipped: it runs (as overage) when the models ahead fail" || bad "rc=$RC ran=$(ran)"
+says google/gemini-2.5-flash "$(report "$EMPTY")"; rm -rf "$T/cache"
+chain '["google/gemini-2.5-flash", "zai/glm-5.1"]'
 FAKE_ZAI_QUOTA="$(week 20 1)" run pi-agent
 [[ "$(ran)" == "zai/glm-5.1" ]] && ok "80% left with 1 day to reset: zai goes first" || bad "ran: $(ran)"
-rm -rf "$T/cache/quota"
-FAKE_ZAI_QUOTA="$(week 80 2)" run pi-agent
-[[ "$(ran)" == "google/gemini-2.5-flash" ]] && ok "80% used with 2 days left is on pace: configured order stands" || bad "ran: $(ran)"
-rm -rf "$T/cache/quota"
+grep -q 'Plan pacing reordered the chain: zai/glm-5.1 google/gemini-2.5-flash' "$T/err" && ok "a reorder is logged" || bad "err: $(cat "$T/err")"
+chain '["google/gemini-2.5-flash", "zai/glm-5.1"]'
+FAKE_ZAI_QUOTA="$(week 0 0.01)" run pi-agent
+[[ "$(ran)" == "zai/glm-5.1" ]] && ok "unused quota resetting within the hour goes first" || bad "ran: $(ran)"
+chain '["google/gemini-2.5-flash", "zai/glm-5.1"]'
 run pi-agent
-[[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && ok "no quota reading: no pacing" || bad "rc=$RC ran=$(ran)"
-grep -q 'no Z.ai quota reading' "$T/err" && ok "no quota reading: says so" || bad "no warning: $(cat "$T/err")"
-(cd "$REPO" && sed -i 's|"pi-agent": \["google/gemini-2.5-flash", "zai/glm-5.1"\]|"pi-agent": ["zai/glm-5.1", "google/gemini-2.5-flash"]|' AGENT-REVIEWERS.md)
+[[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && ok "no quota reading: configured order" || bad "rc=$RC ran=$(ran)"
+grep -q 'no zai quota reading' "$T/err" && ok "no quota reading: says so" || bad "no warning: $(cat "$T/err")"
+chain '["zai/glm-5.1", "google/gemini-2.5-flash"]'
+run pi-agent
+[[ "$(ran)" == "zai/glm-5.1" ]] && ok "equal slack keeps the configured order, not alphabetical" || bad "ran: $(ran)"
+chain '["zai/glm-5.1", "claude", "google/gemini-2.5-flash"]'
+FAKE_ZAI_QUOTA="$(week 95 3)" run pi-agent
+[[ "$RC" -eq 0 && "$(ran)" == "zai/glm-5.1" ]] && ok "the chain is paced only up to claude: gemini after it never moves ahead" || bad "rc=$RC ran=$(ran)"
+echo "=== Qwen Token Plan pacing ==="
+says qwen-token-plan/qwen3.8-max "$(report "$EMPTY")"
+month(){ jq -nc --argjson u "$1" --argjson d "$2" '{data: {per1MonthPercentage: $u, per1MonthResetTime: ((now + $d * 86400) * 1000 | floor)}}'; }
+chain '["google/gemini-2.5-flash", "qwen-token-plan/qwen3.8-max"]'
+FAKE_BL="$(month 0.2 5)" run pi-agent
+[[ "$(ran)" == "qwen-token-plan/qwen3.8-max" ]] && ok "qwen 20% used with 5 of 30 days left: qwen goes first" || bad "ran: $(ran) err: $(cat "$T/err")"
+chain '["qwen-token-plan/qwen3.8-max", "google/gemini-2.5-flash"]'
+FAKE_BL="$(month 0.9 25)" run pi-agent
+[[ "$(ran)" == "google/gemini-2.5-flash" ]] && ok "qwen 90% used with 25 days left: qwen goes back" || bad "ran: $(ran)"
+chain '["google/gemini-2.5-flash", "qwen-token-plan/qwen3.8-max"]'
+FAKE_BL="$(jq -nc '{data: {per1MonthPercentage: 0.1, per1MonthResetTime: (now + 5 * 86400 | floor)}}')" run pi-agent
+[[ "$(ran)" == "google/gemini-2.5-flash" ]] && grep -q 'implausible qwen-token-plan quota reading' "$T/err" \
+    && ok "a reset time in seconds, not ms, is ignored with a warning" || bad "ran: $(ran) err: $(cat "$T/err")"
+chain '["qwen-token-plan/qwen3.8-max", "google/gemini-2.5-flash"]'
+FAKE_BL="$(month 50 25)" run pi-agent
+[[ "$(ran)" == "qwen-token-plan/qwen3.8-max" ]] && grep -q 'implausible qwen-token-plan quota reading' "$T/err" \
+    && ok "a percent where a ratio belongs is ignored with a warning" || bad "ran: $(ran) err: $(cat "$T/err")"
+chain '["google/gemini-2.5-flash", "qwen-token-plan/qwen3.8-max"]'
+NOBL="$(tr ':' '\n' <<<"$PATH" | while read -r d; do [[ -x "$d/bl" ]] || echo "$d"; done | paste -sd:)"
+mv -f "$T/bin/bl" "$T/bin/bl.off"
+PATH="$NOBL" run pi-agent
+mv -f "$T/bin/bl.off" "$T/bin/bl"
+[[ "$(ran)" == "google/gemini-2.5-flash" ]] && grep -q 'npm install -g bailian-cli' "$T/err" \
+    && ok "bl missing: configured order, and says how to install it" || bad "ran: $(ran) err: $(cat "$T/err")"
+chain '["google/gemini-2.5-flash", "qwen-token-plan/qwen3.8-max"]'
+run pi-agent
+[[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && grep -q 'bl auth login --console' "$T/err" \
+    && ok "lapsed bl login: configured order, and says how to log in" || bad "rc=$RC ran=$(ran) err: $(cat "$T/err")"
+chain '["zai/glm-5.1", "google/gemini-2.5-flash"]'
 rm -rf "$T/cache"
 
 echo "=== chain endings ==="
