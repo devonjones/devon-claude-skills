@@ -1380,7 +1380,18 @@ assert_jq "a repo true runs on the repo .pi.model, not the user chain" "$um2" \
     '.agents[] | select(.name == "silent-failure-hunter") | .pi_models == ["deepseek/deepseek-chat"]'
 assert_jq "an agent the repo does not name still takes the user chain" "$um2" \
     '.agents[] | select(.name == "type-design-analyzer") | .pi_models == ["zai/glm-5.1", "claude"]'
-for bad in '{"agents": {"x": "glm"}}' '{"agents": {"x": []}}' '{"agents": {"x": "claude:gpt"}}' '{"agents": ["a/b"]}' 'not json'; do
+printf '%s' '{"agents": {"*": ["zai/glm-5.1", "claude"]}}' > "$um"
+cat > "$repo/AGENT-REVIEWERS.md" <<'MD'
+# Configuration
+
+```json
+{"defaults_version_checked": "99.0.0", "pi": {"all": true, "model": "deepseek/deepseek-chat"}}
+```
+MD
+PR_REVIEW_LOOP_MODELS="$um" run_discover "$repo" "src/foo.py" um4
+assert_jq "a repo .pi.all runs every agent on the repo .pi.model, not the user chain" "$um4" \
+    '[.agents[] | .pi_models] | all(. == ["deepseek/deepseek-chat"])'
+for bad in '{"agents": {"x": "glm"}}' '{"agents": {"x": []}}' '{"agents": {"x": "claude:gpt"}}' '{"agents": ["a/b"]}' '{"agents": false}' 'not json' '' ' '; do
     printf '%s' "$bad" > "$um"
     PR_REVIEW_LOOP_MODELS="$um" run_discover "$repo" "src/foo.py" um3
     assert_exit "invalid user models.json is an error: $bad" "$um3_exit" "1"

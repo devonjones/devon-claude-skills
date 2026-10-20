@@ -198,6 +198,17 @@ jq -e '.agents.x[0] == "cheap/a"' "$T/new/models.json" >/dev/null && ok "creates
 printf 'not json' > "$T/models.json"
 PR_REVIEW_LOOP_MODELS="$T/models.json" run assign --user
 [[ "$RC" -eq 1 && "$(cat "$T/models.json")" == "not json" ]] && ok "an unreadable file is an error and is left untouched" || bad "rc=$RC"
+ln -sf "$T/real-models.json" "$T/link-models.json"; printf '{}' > "$T/real-models.json"
+PR_REVIEW_LOOP_MODELS="$T/link-models.json" run assign --user
+[[ -L "$T/link-models.json" ]] && jq -e '.agents.x[0] == "cheap/a"' "$T/real-models.json" >/dev/null \
+    && ok "a symlinked models.json stays a symlink and its target gets the chains" || bad "rc=$RC"
+mkdir -p "$T/held/x" "$T/held/y" "$D/z"; mv -f "$D/x/result.json" "$T/held/x/"; mv -f "$D/y/result.json" "$T/held/y/"
+jq -n '{agent: "z", candidates: [{model: "cheap/a", pass: false, subscription: "cheap", usd_per_review: 0.001, tokens: {input: 1, output: 1, cacheRead: 0}}]}' > "$D/z/result.json"
+printf '%s' '{"agents": {"z": "old/model"}}' > "$T/models.json"
+PR_REVIEW_LOOP_MODELS="$T/models.json" run assign --user
+[[ "$RC" -eq 1 ]] && jq -e '.agents.z == "old/model"' "$T/models.json" >/dev/null && grep -q 'no evaluated agent has a passing model' "$T/err" \
+    && ok "no passing agent: an error, and the file is left unchanged" || bad "rc=$RC file: $(cat "$T/models.json")"
+rm -rf "$D/z"; mv -f "$T/held/x/result.json" "$D/x/"; mv -f "$T/held/y/result.json" "$D/y/"
 run assign --bogus
 [[ "$RC" -eq 1 ]] && ok "an unknown assign flag is a usage error" || bad "rc=$RC"
 

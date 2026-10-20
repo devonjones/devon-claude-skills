@@ -416,9 +416,9 @@ if [[ -f "$USER_MODELS" ]]; then
     USER_CHAINS="$(jq -c '
         def entry: type == "string" and (test("^[^/\\s]+/\\S+$") or test("^claude(:(sonnet|haiku|opus))?$"));
         def chain: entry or (type == "array" and length > 0 and all(.[]; entry));
-        if type == "object" and ((.agents // {}) | type) == "object"
+        if type == "object" and ((has("agents") | not) or (.agents | type) == "object")
            and all((.agents // {})[]; . == false or chain)
-        then .agents // {} else error("bad") end' "$USER_MODELS" 2>/dev/null)" \
+        then .agents // {} else error("bad") end' "$USER_MODELS" 2>/dev/null)" && [[ -n "$USER_CHAINS" ]] \
         || { echo "Error: $USER_MODELS: .agents must map agent names (or \"*\") to provider/id, claude[:sonnet|haiku|opus], a non-empty list of them, or false" >&2; exit 1; }
 fi
 

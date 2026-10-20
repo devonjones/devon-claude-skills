@@ -338,7 +338,10 @@ assign() {
 assign_user() {
     local f="${PR_REVIEW_LOOP_MODELS:-$HOME/.config/pr-review-loop/models.json}" block
     block="$(assign)"
+    jq -e '.pi.agents | length > 0' <<<"$block" >/dev/null \
+        || { echo "Error: no evaluated agent has a passing model; $f left unchanged" >&2; exit 1; }
     mkdir -p "$(dirname "$f")"
+    f="$(readlink -f "$f")"   # a dotfiles symlink stays a symlink
     [[ -s "$f" ]] || echo '{}' > "$f"
     jq --argjson b "$block" '.agents = ((.agents // {}) + $b.pi.agents)' "$f" > "$f.$$" \
         || { rm -f "$f.$$"; echo "Error: cannot merge into $f (not JSON?)" >&2; exit 1; }
