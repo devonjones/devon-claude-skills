@@ -34,12 +34,12 @@ used at all. The broker only changes the order.
   ```json
   {
     "agents": {
-      "*":            ["zai/glm-4.6", "qwen/qwen3-coder-plus", "claude"],
+      "*":            ["zai/glm-4.6", "qwen-token-plan/qwen3.8-max", "claude"],
       "code-reviewer": ["zai/glm-4.6", "claude:sonnet"]
     },
     "plans": {
       "zai":    {"models": "^zai/",    "reader": "zai"},
-      "qwen":   {"models": "^qwen/",   "reader": "qwen"},
+      "qwen":   {"models": "^qwen-token-plan/", "reader": "qwen"},
       "claude": {"models": "^claude(:|$)", "reader": "claude", "shared": true}
     }
   }
@@ -87,9 +87,12 @@ Nothing is ever removed from the chain (decision c). A plan past 100% simply
 sorts behind every plan that still has quota. `PI_REVIEW_PLAN_CAP` and
 `near_cap` are deleted.
 
-`pi-review.sh` logs the chosen order and each plan's slack to stderr, and adds
-it to the `reviewer-fired` dream marker (`order=`), so pacing decisions can be
-audited later.
+Until the Claude reader lands, only the part of the chain before its first
+`claude` entry is sorted. Nothing after that entry runs anyway, because reaching
+it hands the review to the Claude Task.
+
+`pi-review.sh` logs a reorder to stderr. The `reviewer-fired` dream marker's
+`tried=` already records the order the models were tried in.
 
 ### 4. Tests
 
