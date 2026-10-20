@@ -20,11 +20,13 @@
 # reports exhausted quota is skipped for PI_REVIEW_EXHAUSTED_TTL seconds
 # (default 600) by every later run, via ~/.cache/pr-review-loop/exhausted/.
 #
-# Z.ai plan pacing: past the plan limit the same key bills per token, so zai/*
-# is skipped once any plan window reaches PI_REVIEW_PLAN_CAP percent (default
-# 90). Unused weekly quota is wasted at reset, so while the week has more quota
-# left than time left, a configured chain tries its zai/* models first. No
-# quota reading (API down, no key) means neither.
+# Plan pacing: unused plan quota is wasted at reset, so the chain (up to its
+# first claude entry) is sorted by each plan's slack - share of its longest
+# window elapsed minus share used. Behind pace goes first, ahead of pace goes
+# back, and a model with no plan or no reading counts as on pace; ties keep the
+# configured order. Nothing is skipped for being near or past the limit: past
+# it the plan bills overage, and the model just sorts last. Plans read: zai
+# (weekly window, Z.ai quota API) and qwen-token-plan (monthly, bl CLI).
 #
 # --replay: review a historical commit for eval-reviewer.sh. No head check; the
 # diff is the PR's base..<sha>, computed locally. Prior comments come from
@@ -50,7 +52,7 @@
 # PI_REVIEW_MODELS_JSON (a Pi models.json that replaces the image's; default:
 # your own Pi config, ${PI_CODING_AGENT_DIR:-~/.pi/agent}/models.json, when it
 # exists, so host Pi and the reviewers share one provider list),
-# PI_REVIEW_EXHAUSTED_TTL, PI_REVIEW_PLAN_CAP, PI_REVIEW_CACHE_DIR (default ~/.cache/pr-review-loop),
+# PI_REVIEW_EXHAUSTED_TTL, PI_REVIEW_CACHE_DIR (default ~/.cache/pr-review-loop),
 # PI_REVIEW_SANDBOX (docker (default) | host). host runs your installed pi
 # directly - the host's toolchains for proofs, your ~/.pi/agent config - with a
 # stripped environment (HOME, PATH, the one model key), but WITHOUT the
@@ -93,7 +95,6 @@ IDLE_TIMEOUT="${PI_REVIEW_IDLE_TIMEOUT:-600}"
 EXHAUSTED_DIR="${PI_REVIEW_CACHE_DIR:-$HOME/.cache/pr-review-loop}/exhausted"
 EXHAUSTED_TTL="${PI_REVIEW_EXHAUSTED_TTL:-600}"
 QUOTA_DIR="${PI_REVIEW_CACHE_DIR:-$HOME/.cache/pr-review-loop}/quota"
-PLAN_CAP="${PI_REVIEW_PLAN_CAP:-90}"
 
 T="$(mktemp -d)"
 RUNS_DIR="${PI_REVIEW_CACHE_DIR:-$HOME/.cache/pr-review-loop}/runs"
@@ -136,26 +137,48 @@ else
     have_commit "$SHA" || git fetch -q origin "$SHA" || { echo "Error: cannot fetch $SHA" >&2; exit 1; }
 fi
 
-# Z.ai plan quota, cached 5 minutes: {pct: fullest window, behind: the weekly
-# window has more quota left than time left}, or {} when it cannot be read.
-# Window unit codes (3 = hours, 6 = weeks) are inferred, not documented.
-zai_quota() {
-    local f="$QUOTA_DIR/zai.json"
+# Plan readers print {used, elapsed} (0..1) for the plan's longest window - the
+# one whose unused quota is lost at reset - or fail.
+# Z.ai window unit 6 = weeks is inferred, not documented.
+zai_pace() {
+    printf 'Authorization: Bearer %s\n' "${ZAI_API_KEY:-}" \
+        | curl -sf --max-time 5 -H @- https://api.z.ai/api/monitor/usage/quota/limit \
+        | jq -c '(now * 1000) as $now | [.data.limits[] | select(.unit == 6 and .nextResetTime != null)][0]
+                 | {used: (.percentage / 100), elapsed: (1 - (.nextResetTime - $now) / (7 * 86400000))}' 2>/dev/null
+}
+# ponytail: a month is taken as 30 days; off by up to a day in elapsed share.
+qwen_pace() {
+    local out
+    out="$(bl usage token-plan --output json 2>/dev/null)" || true
+    if jq -e '.error' <<<"$out" >/dev/null 2>&1; then
+        echo "Warning: Qwen Token Plan reading failed ($(jq -r .error.message <<<"$out")); run: bl auth login --console" >&2
+        return 1
+    fi
+    jq -c '(now * 1000) as $now | first(.. | objects | select(has("per1MonthPercentage")))
+           | {used: .per1MonthPercentage, elapsed: (1 - (.per1MonthResetTime - $now) / (30 * 86400000))}' <<<"$out" 2>/dev/null
+}
+# The provider's plan reading, cached 5 minutes; {} for no plan or no reading.
+plan_pace() {
+    local reader out f="$QUOTA_DIR/$1.json"
+    case "$1" in zai) reader=zai_pace ;; qwen-token-plan) reader=qwen_pace ;; *) echo '{}'; return ;; esac
     if [[ ! -s "$f" ]] || (( $(date +%s) - $(stat -c %Y "$f") > 300 )); then
         mkdir -p "$QUOTA_DIR"
-        { printf 'Authorization: Bearer %s\n' "${ZAI_API_KEY:-}" \
-              | curl -sf --max-time 5 -H @- https://api.z.ai/api/monitor/usage/quota/limit \
-              | jq -c '(now * 1000) as $now | [.data.limits[]] as $l | if ($l | length) == 0 then {} else
-                  {pct: ([$l[].percentage // 0] | max),
-                   behind: ([$l[] | select(.unit == 6 and .nextResetTime != null)
-                            | (100 - .percentage) / 100 > (.nextResetTime - $now) / (7 * 86400000)] | any)} end' \
-              || echo '{}'; } > "$f.$$" 2>/dev/null
-        mv -f "$f.$$" "$f"
-        [[ "$(cat "$f")" != "{}" ]] || echo "Warning: no Z.ai quota reading; plan pacing and the plan cap are off for 5 minutes" >&2
+        out="$("$reader")" && jq -e 'has("used") and has("elapsed")' <<<"$out" >/dev/null 2>&1 || out='{}'
+        printf '%s\n' "$out" > "$f.$$" && mv -f "$f.$$" "$f"
+        [[ "$out" != "{}" ]] || echo "Warning: no $1 quota reading; its models keep their configured place for 5 minutes" >&2
     fi
     cat "$f"
 }
-near_cap() { [[ "$1" == zai ]] && jq -e --argjson cap "$PLAN_CAP" '(.pct // 0) >= $cap' <<<"$(zai_quota)" >/dev/null; }
+# Sort the chain by plan slack (see the header); from the first claude entry on
+# it is left as is - the chain ends there.
+pace_chain() {
+    local c=("$@") n=0 i
+    while (( n < ${#c[@]} )) && ! [[ "${c[n]}" =~ ^claude(:|$) ]]; do n=$((n + 1)); done
+    for (( i = 0; i < n; i++ )); do
+        printf '%s\t%s\t%s\n' "$(plan_pace "${c[i]%%/*}" | jq -r 'if has("used") then .elapsed - .used else 0 end')" "$i" "${c[i]}"
+    done | sort -t$'\t' -k1,1gr -k2,2n | cut -f3
+    (( n == ${#c[@]} )) || printf '%s\n' "${c[@]:n}"
+}
 
 # ---- roster: the same agent definition a Task would get ----
 AGENT_JSON="$("$SCRIPT_DIR/discover-agents.sh" "$PR" | jq -c --arg n "$AGENT" '.agents[] | select(.name == $n)')"
@@ -166,10 +189,9 @@ else
     [[ "$(jq -r .engine <<<"$AGENT_JSON")" == "pi" ]] \
         || { echo "Error: agent '$AGENT' is not configured for the pi engine (# Configuration .pi)" >&2; exit 1; }
     mapfile -t CHAIN < <(jq -r '.pi_models[]' <<<"$AGENT_JSON")
-    if [[ " ${CHAIN[*]} " == *" zai/"* ]] && jq -e '.behind' <<<"$(zai_quota)" >/dev/null; then
-        mapfile -t CHAIN < <(printf '%s\n' "${CHAIN[@]}" | grep '^zai/'; printf '%s\n' "${CHAIN[@]}" | grep -v '^zai/')
-        echo "Z.ai plan is behind its weekly pace: trying zai first" >&2
-    fi
+    PACED="$(pace_chain "${CHAIN[@]}")"
+    [[ "$PACED" == "$(printf '%s\n' "${CHAIN[@]}")" ]] || echo "Plan pacing reordered the chain: $(paste -sd' ' <<<"$PACED")" >&2
+    mapfile -t CHAIN <<<"$PACED"
 fi
 SCOPE_JSON="$(jq -c .changed_files <<<"$AGENT_JSON")"
 
@@ -345,10 +367,6 @@ for MODEL in "${CHAIN[@]}"; do
     if exhausted "$PROVIDER"; then
         echo "Skipping $MODEL: $PROVIDER marked exhausted ($EXHAUSTED_DIR/$PROVIDER)" >&2
         TRIED+=("$MODEL:skipped"); continue
-    fi
-    if near_cap "$PROVIDER"; then
-        echo "Skipping $MODEL: Z.ai plan at ${PLAN_CAP}%+ of a window; past the limit it bills" >&2
-        TRIED+=("$MODEL:plan-cap"); continue
     fi
     DOCKER_ENV=()
     if [[ -n "${PI_REVIEW_ENV_FILE:-}" ]]; then
