@@ -342,8 +342,9 @@ assign_user() {
         || { echo "Error: no evaluated agent has a passing model; $f left unchanged" >&2; exit 1; }
     mkdir -p "$(dirname "$f")"
     f="$(readlink -f "$f")"   # a dotfiles symlink stays a symlink
-    [[ -s "$f" ]] || echo '{}' > "$f"
-    jq --argjson b "$block" '.agents = ((.agents // {}) + $b.pi.agents)' "$f" > "$f.$$" \
+    [[ -e "$f" ]] || echo '{}' > "$f"
+    jq -s --argjson b "$block" 'if length == 0 then {} elif length == 1 then .[0] else error("several JSON values") end
+        | .agents = ((.agents // {}) + $b.pi.agents)' "$f" > "$f.$$" \
         || { rm -f "$f.$$"; echo "Error: cannot merge into $f (not JSON?)" >&2; exit 1; }
     mv -f "$f.$$" "$f"
     echo "Wrote $(jq -r '.pi.agents | keys | join(", ")' <<<"$block") to $f" >&2

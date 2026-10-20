@@ -1491,7 +1491,7 @@ so a bad call goes back to the model to fix, then `finish_review`. A run that
 never calls `finish_review` did not report. The script **posts nothing**. It
 prints the report as JSON, so no GitHub token enters the container.
 
-Turn it on in `# Configuration`:
+Turn it on in `# Configuration`, or for every repo in your per-user `models.json` (below):
 
 ```json
 { "pi": { "all": true, "model": ["zai/glm-5.1", "claude"],
@@ -1503,7 +1503,7 @@ Turn it on in `# Configuration`:
 - **`model`**: the default chain. Required when `all` or any `true` entry routes an agent to Pi.
 - **`agents`**: per agent. `true` uses `model`, a chain routes the agent on that chain, and `false` keeps it on Claude even under `all`. Default agents can be routed this way too, without overriding their prompts.
 - **A chain** is a model (`provider/id`) or an ordered list of them. The script moves to the next model only when the provider fails: quota or credits used up, rate limit, auth or access denied, unreachable. A model that ran and gave no valid report is a strike, not a reason to try another. `"claude"` in a chain means "from here, use the normal Claude Task", and `"claude:sonnet"`, `"claude:haiku"` or `"claude:opus"` names the Task's model. A chain that starts with a Claude entry is just a Claude agent, so `"code-simplifier": "claude:haiku"` downshifts that agent to Haiku. A provider that reports exhausted quota is skipped by every run for 10 minutes (`PI_REVIEW_EXHAUSTED_TTL`, marker in `~/.cache/pr-review-loop/exhausted/<provider>`). Z.ai plan pacing reorders and skips too: a chain tries its `zai/*` models first while the weekly window has more quota left than time left, and skips them once any window reaches `PI_REVIEW_PLAN_CAP` percent (default 90). Pacing reads the Z.ai quota API with `curl` and `ZAI_API_KEY` from your environment; without a reading it is off, and the script says so.
-- **Per-user chains** live in `~/.config/pr-review-loop/models.json` (`PR_REVIEW_LOOP_MODELS`): `{"agents": {"code-reviewer": [...], "*": [...], "comment-analyzer": false}}`. A chain there routes that agent to Pi in every repo, and `"*"` covers agents the file doesn't name. The repo's `pi` setting for an agent wins over the file. `eval-reviewer.sh assign --user` writes the evaluated agents' chains into this file. An invalid file stops discovery with an error naming it.
+- **Per-user chains** live in `~/.config/pr-review-loop/models.json` (`PR_REVIEW_LOOP_MODELS`): `{"agents": {"code-reviewer": [...], "*": [...], "comment-analyzer": false}}`. A chain there routes that agent to Pi in every repo, and `"*"` covers agents the file doesn't name. The repo's `pi` setting for an agent wins over the file. An invalid file stops discovery with an error naming it.
 
 `configuration.pi_agents_unknown` lists `agents` entries that name nothing on the
 roster. Treat it like `disabled_defaults_unknown`.
@@ -1818,7 +1818,7 @@ Bash(scripts/pi-watch.sh:*)
   Install with: `apt install jq` (Ubuntu/Debian) or `brew install jq` (macOS)
 - `python3` - `convert-reviewers.py`, `install-template.sh` and `eval-reviewer.sh` (standard library only)
 - `pre-commit` (optional) - its hooks run on `git commit` once installed with `pre-commit install`
-- Docker and a model provider API key (optional) - only for agents routed to the Pi engine (`# Configuration .pi`).
+- Docker and a model provider API key (optional) - only for agents routed to the Pi engine (`# Configuration .pi` or your per-user `models.json`).
   `PI_REVIEW_SANDBOX=host` runs your own `pi` instead: `npm install -g @mariozechner/pi-coding-agent` (the image pins the version in `pi/Dockerfile`).
 - `claude` CLI (optional) - `eval-reviewer.sh` (judge and grader) and `--replay` with a `claude` entry.
 - `bd` (beads) (optional) - Issue tracker for capturing out-of-scope suggestions as tickets.

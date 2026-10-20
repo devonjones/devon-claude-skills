@@ -1391,12 +1391,21 @@ MD
 PR_REVIEW_LOOP_MODELS="$um" run_discover "$repo" "src/foo.py" um4
 assert_jq "a repo .pi.all runs every agent on the repo .pi.model, not the user chain" "$um4" \
     '[.agents[] | .pi_models] | all(. == ["deepseek/deepseek-chat"])'
-for bad in '{"agents": {"x": "glm"}}' '{"agents": {"x": []}}' '{"agents": {"x": "claude:gpt"}}' '{"agents": ["a/b"]}' '{"agents": false}' 'not json' '' ' '; do
+for ok_file in '{}' '{"note": "x"}'; do
+    printf '%s' "$ok_file" > "$um"
+    PR_REVIEW_LOOP_MODELS="$um" run_discover "$repo" "src/foo.py" um5
+    assert_exit "a user models.json with no agents key is valid: $ok_file" "$um5_exit" "0"
+done
+for bad in '{"agents": {"x": "a/b"}} {"agents": {"y": "a/c"}}' '{"agents": {"x": "glm"}}' '{"agents": {"x": []}}' '{"agents": {"x": "claude:gpt"}}' '{"agents": ["a/b"]}' '{"agents": false}' 'not json' '' ' '; do
     printf '%s' "$bad" > "$um"
     PR_REVIEW_LOOP_MODELS="$um" run_discover "$repo" "src/foo.py" um3
     assert_exit "invalid user models.json is an error: $bad" "$um3_exit" "1"
 done
 assert_stderr_contains "the error names the file" "$um3_err" "$um"
+rm -f "$um"; mkdir "$um"
+PR_REVIEW_LOOP_MODELS="$um" run_discover "$repo" "src/foo.py" um6
+assert_exit "a directory where models.json belongs is an error, not a silent skip" "$um6_exit" "1"
+rmdir "$um"
 
 # Summary
 # ---------------------------------------------------------------------------

@@ -209,6 +209,12 @@ PR_REVIEW_LOOP_MODELS="$T/models.json" run assign --user
 [[ "$RC" -eq 1 ]] && jq -e '.agents.z == "old/model"' "$T/models.json" >/dev/null && grep -q 'no evaluated agent has a passing model' "$T/err" \
     && ok "no passing agent: an error, and the file is left unchanged" || bad "rc=$RC file: $(cat "$T/models.json")"
 rm -rf "$D/z"; mv -f "$T/held/x/result.json" "$D/x/"; mv -f "$T/held/y/result.json" "$D/y/"
+printf '  \n' > "$T/models.json"
+PR_REVIEW_LOOP_MODELS="$T/models.json" run assign --user
+jq -e '.agents.x[0] == "cheap/a"' "$T/models.json" >/dev/null && ok "a whitespace-only file is treated as empty, not emptied" || bad "rc=$RC file: $(cat "$T/models.json")"
+printf '{} {}' > "$T/models.json"
+PR_REVIEW_LOOP_MODELS="$T/models.json" run assign --user
+[[ "$RC" -eq 1 && "$(cat "$T/models.json")" == "{} {}" ]] && ok "several JSON values: an error, file untouched" || bad "rc=$RC"
 run assign --bogus
 [[ "$RC" -eq 1 ]] && ok "an unknown assign flag is a usage error" || bad "rc=$RC"
 

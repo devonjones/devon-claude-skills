@@ -412,14 +412,14 @@ fi
 # false, or .all), and "*" covers agents the file does not name.
 USER_MODELS="${PR_REVIEW_LOOP_MODELS:-$HOME/.config/pr-review-loop/models.json}"
 USER_CHAINS='{}'
-if [[ -f "$USER_MODELS" ]]; then
-    USER_CHAINS="$(jq -c '
+if [[ -e "$USER_MODELS" || -L "$USER_MODELS" ]]; then
+    USER_CHAINS="$(jq -cs '
         def entry: type == "string" and (test("^[^/\\s]+/\\S+$") or test("^claude(:(sonnet|haiku|opus))?$"));
         def chain: entry or (type == "array" and length > 0 and all(.[]; entry));
-        if type == "object" and ((has("agents") | not) or (.agents | type) == "object")
-           and all((.agents // {})[]; . == false or chain)
-        then .agents // {} else error("bad") end' "$USER_MODELS" 2>/dev/null)" && [[ -n "$USER_CHAINS" ]] \
-        || { echo "Error: $USER_MODELS: .agents must map agent names (or \"*\") to provider/id, claude[:sonnet|haiku|opus], a non-empty list of them, or false" >&2; exit 1; }
+        if length == 1 and (.[0] | type == "object" and ((has("agents") | not) or (.agents | type) == "object")
+           and all((.agents // {})[]; . == false or chain))
+        then .[0].agents // {} else error("bad") end' "$USER_MODELS" 2>/dev/null)" \
+        || { echo "Error: $USER_MODELS: not one readable JSON object, or .agents does not map agent names (or \"*\") to provider/id, claude[:sonnet|haiku|opus], a non-empty list of them, or false" >&2; exit 1; }
 fi
 
 # 98b: language detection. Only fires when NO AGENT-REVIEWERS.md exists
