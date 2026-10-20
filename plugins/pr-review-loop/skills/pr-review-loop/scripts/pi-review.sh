@@ -165,7 +165,8 @@ plan_pace() {
         mkdir -p "$QUOTA_DIR"
         out="$("$reader")" && jq -e 'has("used") and has("elapsed")' <<<"$out" >/dev/null 2>&1 || out='{}'
         # A unit change upstream (seconds for ms, percent for ratio) would sort a plan to one end forever.
-        if [[ "$out" != "{}" ]] && ! jq -e '.used >= 0 and .elapsed >= -0.05 and .elapsed <= 1.05' <<<"$out" >/dev/null; then
+        # ponytail: used is capped at 2 (200% of quota), so a percent reading under 2% still slips through.
+        if [[ "$out" != "{}" ]] && ! jq -e '.used >= 0 and .used <= 2 and .elapsed >= -0.05 and .elapsed <= 1.05' <<<"$out" >/dev/null; then
             echo "Warning: implausible $1 quota reading $out; ignoring it" >&2; out='{}'
         fi
         printf '%s\n' "$out" > "$f.$$" && mv -f "$f.$$" "$f"

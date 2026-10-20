@@ -238,6 +238,17 @@ chain '["google/gemini-2.5-flash", "qwen-token-plan/qwen3.8-max"]'
 FAKE_BL="$(jq -nc '{data: {per1MonthPercentage: 0.1, per1MonthResetTime: (now + 5 * 86400 | floor)}}')" run pi-agent
 [[ "$(ran)" == "google/gemini-2.5-flash" ]] && grep -q 'implausible qwen-token-plan quota reading' "$T/err" \
     && ok "a reset time in seconds, not ms, is ignored with a warning" || bad "ran: $(ran) err: $(cat "$T/err")"
+chain '["qwen-token-plan/qwen3.8-max", "google/gemini-2.5-flash"]'
+FAKE_BL="$(month 50 25)" run pi-agent
+[[ "$(ran)" == "qwen-token-plan/qwen3.8-max" ]] && grep -q 'implausible qwen-token-plan quota reading' "$T/err" \
+    && ok "a percent where a ratio belongs is ignored with a warning" || bad "ran: $(ran) err: $(cat "$T/err")"
+chain '["google/gemini-2.5-flash", "qwen-token-plan/qwen3.8-max"]'
+NOBL="$(tr ':' '\n' <<<"$PATH" | while read -r d; do [[ -x "$d/bl" ]] || echo "$d"; done | paste -sd:)"
+mv -f "$T/bin/bl" "$T/bin/bl.off"
+PATH="$NOBL" run pi-agent
+mv -f "$T/bin/bl.off" "$T/bin/bl"
+[[ "$(ran)" == "google/gemini-2.5-flash" ]] && grep -q 'npm install -g bailian-cli' "$T/err" \
+    && ok "bl missing: configured order, and says how to install it" || bad "ran: $(ran) err: $(cat "$T/err")"
 chain '["google/gemini-2.5-flash", "qwen-token-plan/qwen3.8-max"]'
 run pi-agent
 [[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && grep -q 'bl auth login --console' "$T/err" \
