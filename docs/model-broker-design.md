@@ -51,9 +51,17 @@ used at all. The broker only changes the order.
   where they are: `.pi.all` / `true` / `false`.
 - `eval-reviewer.sh assign` takes `--user` and writes `agents` into the user
   file. Without the flag it prints the repo block, as it does today.
-- `discover-agents.sh` resolves the chain in this order: repo `.pi.agents.<agent>`,
-  user `agents.<agent>`, user `agents."*"`, repo `.pi.model`. It emits the
-  result as `pi_models` with no change to the output shape.
+- `discover-agents.sh` resolves each agent the same way every time:
+  - The repo decides first when it names the agent or routes everything:
+    - its `.pi.agents.<agent>` chain is used as is;
+    - `true`, or `.pi.all` with no entry for the agent, means the repo's
+      `.pi.model`;
+    - `false` keeps the agent on Claude.
+  - Otherwise the user's `agents.<agent>` decides, then the user's
+    `agents."*"`. A user `false` keeps the agent on Claude.
+
+  A user chain routes the agent to Pi in every repo. The result is emitted as
+  `pi_models`, and the output shape doesn't change.
 
 ### 2. Plan state: readers
 
