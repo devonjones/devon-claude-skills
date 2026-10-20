@@ -1405,7 +1405,10 @@ assert_stderr_contains "the error names the file" "$um3_err" "$um"
 rm -f "$um"; mkdir "$um"
 PR_REVIEW_LOOP_MODELS="$um" run_discover "$repo" "src/foo.py" um6
 assert_exit "a directory where models.json belongs is an error, not a silent skip" "$um6_exit" "1"
-rmdir "$um"
+rmdir "$um"; ln -s "$um.missing" "$um"
+PR_REVIEW_LOOP_MODELS="$um" run_discover "$repo" "src/foo.py" um7
+assert_exit "a dangling symlink where models.json belongs is an error, not a silent skip" "$um7_exit" "1"
+rm -f "$um"
 
 # Summary
 # ---------------------------------------------------------------------------
