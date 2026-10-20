@@ -19,7 +19,7 @@ no pacing at all.
 |---|---|---|
 | a | Scope | Reviewers only. The broker lives inside `pi-review.sh`; we split it out only if another tool needs it. |
 | b | Where suitability lives | Per user in `~/.config/pr-review-loop/models.json`. A repo's `.reviewers/config.json` `.pi.agents` overrides it per agent. |
-| c | A plan past its quota | Keep using it and pay the overage. A plan is never skipped for being nearly full; it only drops behind plans that still have quota. |
+| c | A plan past its quota (Qwen in particular) | Keep using it and pay the overage: Qwen stays in the chain at paid rates once its quota is gone, and so does Z.ai. A plan is never skipped for being full; it only drops behind plans that still have quota. The exhausted-TTL fallthrough still applies only when the provider itself rejects a request. |
 | d | Judging suitability | `eval-reviewer.sh` replays now. Planted-bug test PRs later (bead `ua1`). |
 
 ## Design
