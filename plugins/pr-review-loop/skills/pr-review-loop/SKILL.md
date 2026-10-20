@@ -1818,6 +1818,7 @@ Bash(scripts/pi-watch.sh:*)
 - `pre-commit` (optional) - its hooks run on `git commit` once installed with `pre-commit install`
 - Docker and a model provider API key (optional) - only for agents routed to the Pi engine (`# Configuration .pi`).
   `PI_REVIEW_SANDBOX=host` runs your own `pi` instead: `npm install -g @mariozechner/pi-coding-agent` (the image pins the version in `pi/Dockerfile`).
+- `bl` (optional) - Qwen Token Plan pacing in `pi-review.sh`: `npm install -g bailian-cli`, then `bl auth login --console`.
 - `claude` CLI (optional) - `eval-reviewer.sh` (judge and grader) and `--replay` with a `claude` entry.
 - `bd` (beads) (optional) - Issue tracker for capturing out-of-scope suggestions as tickets.
   If not installed, out-of-scope suggestions are handled with "Out of scope for this PR" replies.

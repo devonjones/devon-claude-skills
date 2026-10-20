@@ -149,6 +149,7 @@ zai_pace() {
 # ponytail: a month is taken as 30 days; off by up to a day in elapsed share.
 qwen_pace() {
     local out
+    command -v bl >/dev/null || { echo "Warning: bl not found; for Qwen Token Plan pacing: npm install -g bailian-cli && bl auth login --console" >&2; return 1; }
     out="$(bl usage token-plan --output json 2>/dev/null)" || true
     if jq -e '.error' <<<"$out" >/dev/null 2>&1; then
         echo "Warning: Qwen Token Plan reading failed ($(jq -r .error.message <<<"$out")); run: bl auth login --console" >&2
@@ -157,26 +158,27 @@ qwen_pace() {
     jq -c '(now * 1000) as $now | first(.. | objects | select(has("per1MonthPercentage")))
            | {used: .per1MonthPercentage, elapsed: (1 - (.per1MonthResetTime - $now) / (30 * 86400000))}' <<<"$out" 2>/dev/null
 }
-# The provider's plan reading, cached 5 minutes; {} for no plan or no reading.
 plan_pace() {
     local reader out f="$QUOTA_DIR/$1.json"
     case "$1" in zai) reader=zai_pace ;; qwen-token-plan) reader=qwen_pace ;; *) echo '{}'; return ;; esac
     if [[ ! -s "$f" ]] || (( $(date +%s) - $(stat -c %Y "$f") > 300 )); then
         mkdir -p "$QUOTA_DIR"
         out="$("$reader")" && jq -e 'has("used") and has("elapsed")' <<<"$out" >/dev/null 2>&1 || out='{}'
+        # A unit change upstream (seconds for ms, percent for ratio) would sort a plan to one end forever.
+        if [[ "$out" != "{}" ]] && ! jq -e '.used >= 0 and .elapsed >= -0.05 and .elapsed <= 1.05' <<<"$out" >/dev/null; then
+            echo "Warning: implausible $1 quota reading $out; ignoring it" >&2; out='{}'
+        fi
         printf '%s\n' "$out" > "$f.$$" && mv -f "$f.$$" "$f"
         [[ "$out" != "{}" ]] || echo "Warning: no $1 quota reading; its models keep their configured place for 5 minutes" >&2
     fi
     cat "$f"
 }
-# Sort the chain by plan slack (see the header); from the first claude entry on
-# it is left as is - the chain ends there.
 pace_chain() {
     local c=("$@") n=0 i
     while (( n < ${#c[@]} )) && ! [[ "${c[n]}" =~ ^claude(:|$) ]]; do n=$((n + 1)); done
     for (( i = 0; i < n; i++ )); do
         printf '%s\t%s\t%s\n' "$(plan_pace "${c[i]%%/*}" | jq -r 'if has("used") then .elapsed - .used else 0 end')" "$i" "${c[i]}"
-    done | sort -t$'\t' -k1,1gr -k2,2n | cut -f3
+    done | LC_ALL=C sort -t$'\t' -k1,1gr -k2,2n | cut -f3
     (( n == ${#c[@]} )) || printf '%s\n' "${c[@]:n}"
 }
 

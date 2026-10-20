@@ -219,6 +219,9 @@ chain '["google/gemini-2.5-flash", "zai/glm-5.1"]'
 run pi-agent
 [[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && ok "no quota reading: configured order" || bad "rc=$RC ran=$(ran)"
 grep -q 'no zai quota reading' "$T/err" && ok "no quota reading: says so" || bad "no warning: $(cat "$T/err")"
+chain '["zai/glm-5.1", "google/gemini-2.5-flash"]'
+run pi-agent
+[[ "$(ran)" == "zai/glm-5.1" ]] && ok "equal slack keeps the configured order, not alphabetical" || bad "ran: $(ran)"
 chain '["zai/glm-5.1", "claude", "google/gemini-2.5-flash"]'
 FAKE_ZAI_QUOTA="$(week 95 3)" run pi-agent
 [[ "$RC" -eq 0 && "$(ran)" == "zai/glm-5.1" ]] && ok "the chain is paced only up to claude: gemini after it never moves ahead" || bad "rc=$RC ran=$(ran)"
@@ -231,6 +234,10 @@ FAKE_BL="$(month 0.2 5)" run pi-agent
 chain '["qwen-token-plan/qwen3.8-max", "google/gemini-2.5-flash"]'
 FAKE_BL="$(month 0.9 25)" run pi-agent
 [[ "$(ran)" == "google/gemini-2.5-flash" ]] && ok "qwen 90% used with 25 days left: qwen goes back" || bad "ran: $(ran)"
+chain '["google/gemini-2.5-flash", "qwen-token-plan/qwen3.8-max"]'
+FAKE_BL="$(jq -nc '{data: {per1MonthPercentage: 0.1, per1MonthResetTime: (now + 5 * 86400 | floor)}}')" run pi-agent
+[[ "$(ran)" == "google/gemini-2.5-flash" ]] && grep -q 'implausible qwen-token-plan quota reading' "$T/err" \
+    && ok "a reset time in seconds, not ms, is ignored with a warning" || bad "ran: $(ran) err: $(cat "$T/err")"
 chain '["google/gemini-2.5-flash", "qwen-token-plan/qwen3.8-max"]'
 run pi-agent
 [[ "$RC" -eq 0 && "$(ran)" == "google/gemini-2.5-flash" ]] && grep -q 'bl auth login --console' "$T/err" \
