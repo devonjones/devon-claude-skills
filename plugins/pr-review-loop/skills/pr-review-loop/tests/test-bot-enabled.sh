@@ -11,6 +11,7 @@
 # Exit code: 0 if all pass, 1 if any fail.
 
 set -euo pipefail
+export PR_REVIEW_LOOP_MODELS=/nonexistent   # no real ~/.config/pr-review-loop/models.json
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOT_ENABLED="$SCRIPT_DIR/../scripts/bot-enabled.sh"

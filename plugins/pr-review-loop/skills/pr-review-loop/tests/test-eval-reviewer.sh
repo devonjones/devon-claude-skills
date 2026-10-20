@@ -9,6 +9,7 @@
 # Usage: tests/test-eval-reviewer.sh
 
 set -euo pipefail
+export PR_REVIEW_LOOP_MODELS=/nonexistent   # no real ~/.config/pr-review-loop/models.json
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EVAL="$SCRIPT_DIR/../scripts/eval-reviewer.sh"
 T="$(mktemp -d)"; trap 'rm -rf -- "$T"' EXIT
@@ -184,6 +185,21 @@ jq -e '[.pi.agents.y[] | select(startswith("anthropic/"))] == [] and (.pi.agents
     && ok "an Anthropic winner becomes claude:haiku" || bad "y: $(jq -c .pi.agents.y <<<"$OUT")"
 jq -e '.pi.agents.y | (map(select(. == "claude" or startswith("claude:"))) | length) <= 2 and .[-1] == "claude"' <<<"$OUT" >/dev/null \
     && ok "chain ends in claude" || bad "y: $(jq -c .pi.agents.y <<<"$OUT")"
+
+echo "=== assign --user merges into the per-user models.json ==="
+printf '%s' '{"agents": {"other-agent": "zai/glm-5.1", "x": "old/model"}, "note": "kept"}' > "$T/models.json"
+PR_REVIEW_LOOP_MODELS="$T/models.json" run assign --user
+[[ "$RC" -eq 0 ]] && jq -e '.agents.x == ["cheap/a", "pricey/b", "claude"] and .agents["other-agent"] == "zai/glm-5.1"
+    and (.agents.y | length) > 0 and .note == "kept"' "$T/models.json" >/dev/null \
+    && ok "replaces the evaluated agents, keeps the rest of the file" || bad "rc=$RC file: $(cat "$T/models.json")"
+rm -f "$T/models.json"
+PR_REVIEW_LOOP_MODELS="$T/new/models.json" run assign --user
+jq -e '.agents.x[0] == "cheap/a"' "$T/new/models.json" >/dev/null && ok "creates the file when missing" || bad "rc=$RC"
+printf 'not json' > "$T/models.json"
+PR_REVIEW_LOOP_MODELS="$T/models.json" run assign --user
+[[ "$RC" -eq 1 && "$(cat "$T/models.json")" == "not json" ]] && ok "an unreadable file is an error and is left untouched" || bad "rc=$RC"
+run assign --bogus
+[[ "$RC" -eq 1 ]] && ok "an unknown assign flag is a usage error" || bad "rc=$RC"
 
 echo "=== harvest ==="
 run harvest h

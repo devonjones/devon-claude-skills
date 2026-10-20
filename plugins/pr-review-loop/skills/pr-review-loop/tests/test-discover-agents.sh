@@ -13,6 +13,7 @@
 # Exit code: 0 if all pass, 1 if any fail.
 
 set -euo pipefail
+export PR_REVIEW_LOOP_MODELS=/nonexistent   # no real ~/.config/pr-review-loop/models.json
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DISCOVER="$SCRIPT_DIR/../scripts/discover-agents.sh"
@@ -1347,6 +1348,44 @@ assert_jq "override_count == 1" "$ts3" '.configuration.override_count == 1'
 assert_jq "overridden_default_names lists the name once" "$ts3" '.configuration.overridden_default_names == ["code-reviewer"]'
 assert_jq "user_count counts foo-reviewer once" "$ts3" '.configuration.user_count == 1'
 assert_jq "no default code-reviewer when root override claims the rest" "$ts3" '[.agents[] | select(.name == "code-reviewer") | .kind] == ["user-override", "user-override"]'
+
+echo
+echo "=== Per-user models.json chains ==="
+repo="$(make_temp_repo)"
+um="$(mktemp)"; TEMP_PATHS+=("$um")
+printf '%s' '{"agents": {"*": ["zai/glm-5.1", "claude"], "code-simplifier": "claude:haiku", "comment-analyzer": false, "silent-failure-hunter": "zai/glm-5.1"}}' > "$um"
+PR_REVIEW_LOOP_MODELS="$um" run_discover "$repo" "src/foo.py" um1
+assert_exit "user models.json: exit 0" "$um1_exit" "0"
+assert_jq "a user * chain routes an agent with no repo config to pi" "$um1" \
+    '.agents[] | select(.name == "code-reviewer") | .engine == "pi" and .pi_models == ["zai/glm-5.1", "claude"]'
+assert_jq "a named user chain beats *" "$um1" \
+    '.agents[] | select(.name == "code-simplifier") | .engine == "claude" and .model == "haiku"'
+assert_jq "a user false keeps that agent on claude" "$um1" \
+    '.agents[] | select(.name == "comment-analyzer") | .engine == "claude" and .pi_models == null'
+cat > "$repo/AGENT-REVIEWERS.md" <<'MD'
+# Configuration
+
+```json
+{"defaults_version_checked": "99.0.0",
+ "pi": {"model": "deepseek/deepseek-chat",
+        "agents": {"code-reviewer": "google/gemini-2.5-flash", "pr-test-analyzer": false, "silent-failure-hunter": true}}}
+```
+MD
+PR_REVIEW_LOOP_MODELS="$um" run_discover "$repo" "src/foo.py" um2
+assert_jq "a repo chain beats the user chain" "$um2" \
+    '.agents[] | select(.name == "code-reviewer") | .pi_models == ["google/gemini-2.5-flash"]'
+assert_jq "a repo false beats the user chain" "$um2" \
+    '.agents[] | select(.name == "pr-test-analyzer") | .engine == "claude"'
+assert_jq "a repo true runs on the repo .pi.model, not the user chain" "$um2" \
+    '.agents[] | select(.name == "silent-failure-hunter") | .pi_models == ["deepseek/deepseek-chat"]'
+assert_jq "an agent the repo does not name still takes the user chain" "$um2" \
+    '.agents[] | select(.name == "type-design-analyzer") | .pi_models == ["zai/glm-5.1", "claude"]'
+for bad in '{"agents": {"x": "glm"}}' '{"agents": {"x": []}}' '{"agents": {"x": "claude:gpt"}}' '{"agents": ["a/b"]}' 'not json'; do
+    printf '%s' "$bad" > "$um"
+    PR_REVIEW_LOOP_MODELS="$um" run_discover "$repo" "src/foo.py" um3
+    assert_exit "invalid user models.json is an error: $bad" "$um3_exit" "1"
+done
+assert_stderr_contains "the error names the file" "$um3_err" "$um"
 
 # Summary
 # ---------------------------------------------------------------------------

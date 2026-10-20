@@ -5,6 +5,7 @@
 # Usage: tests/test-convert-reviewers.sh
 
 set -euo pipefail
+export PR_REVIEW_LOOP_MODELS=/nonexistent   # no real ~/.config/pr-review-loop/models.json
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONVERT="$SCRIPT_DIR/../scripts/convert-reviewers.py"
 DISCOVER="$SCRIPT_DIR/../scripts/discover-agents.sh"

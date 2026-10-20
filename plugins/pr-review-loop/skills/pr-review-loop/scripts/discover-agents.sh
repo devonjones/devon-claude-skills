@@ -405,6 +405,23 @@ else
     CONFIGURATION_JSON='{}'
 fi
 
+# Per-user model chains, ~/.config/pr-review-loop/models.json:
+#   {"agents": {"<agent>" | "*": <chain> | false}}
+# A chain is validated as in # Configuration .pi. It routes the agent to pi in
+# every repo; the repo's .pi beats it agent by agent (a repo chain, true,
+# false, or .all), and "*" covers agents the file does not name.
+USER_MODELS="${PR_REVIEW_LOOP_MODELS:-$HOME/.config/pr-review-loop/models.json}"
+USER_CHAINS='{}'
+if [[ -f "$USER_MODELS" ]]; then
+    USER_CHAINS="$(jq -c '
+        def entry: type == "string" and (test("^[^/\\s]+/\\S+$") or test("^claude(:(sonnet|haiku|opus))?$"));
+        def chain: entry or (type == "array" and length > 0 and all(.[]; entry));
+        if type == "object" and ((.agents // {}) | type) == "object"
+           and all((.agents // {})[]; . == false or chain)
+        then .agents // {} else error("bad") end' "$USER_MODELS" 2>/dev/null)" \
+        || { echo "Error: $USER_MODELS: .agents must map agent names (or \"*\") to provider/id, claude[:sonnet|haiku|opus], a non-empty list of them, or false" >&2; exit 1; }
+fi
+
 # 98b: language detection. Only fires when NO AGENT-REVIEWERS.md exists
 # (neither at root nor discovered via the changed-file walk-up). When the
 # repo already has config, the user has clearly opted into manual setup
@@ -491,6 +508,7 @@ JQ_INPUT=$(
     printf '%s' "$SECTIONS_JSON" |
     DEFAULTS_JSON="$DEFAULTS_JSON" \
     CONFIGURATION_JSON="$CONFIGURATION_JSON" \
+    USER_CHAINS_JSON="$USER_CHAINS" \
     FILES_JSON="$CHANGED_FILES_JSON" \
     EXCLUDED_JSON="$EXCLUDED_FILES_JSON" \
     LANGUAGE_DETECTION_JSON="$LANGUAGE_DETECTION_JSON" \
@@ -500,6 +518,7 @@ JQ_INPUT=$(
             sections: .,
             defaults: (env.DEFAULTS_JSON | fromjson),
             configuration: (env.CONFIGURATION_JSON | fromjson),
+            user_chains: (env.USER_CHAINS_JSON | fromjson),
             files: (env.FILES_JSON | fromjson),
             excluded: (env.EXCLUDED_JSON | fromjson),
             current_version: $current_version,
@@ -517,6 +536,7 @@ echo "$JQ_INPUT" | jq '
     .sections as $sections |
     .defaults as $defaults |
     .configuration as $config |
+    .user_chains as $user_chains |
     .files as $files |
     .excluded as $excluded |
     .current_version as $current_version |
@@ -604,7 +624,8 @@ echo "$JQ_INPUT" | jq '
     # genuinely empty diff, where defaults still run (bfd); a diff that was
     # all generated files spawns nobody.
     # engine "pi" runs the agent through pi-review.sh down its pi_models chain
-    # instead of a Claude Task. Per-agent `pi.agents` entries beat `pi.all`; the
+    # instead of a Claude Task. Per-agent `pi.agents` entries beat `pi.all`, and
+    # both beat the per-user models.json chains; the
     # parser has already rejected a pi route with no model to run on. A chain
     # that starts with "claude" is just a Claude agent; "claude:<model>" also
     # sets the Task model, so config can downshift a Claude agent by cost.
@@ -617,7 +638,8 @@ echo "$JQ_INPUT" | jq '
              elif $v == true then $pi.model
              elif $v == false then null
              elif $pi.all == true then $pi.model
-             else null end | if type == "string" then [.] else . end) as $pm |
+             else (if $user_chains | has($n) then $user_chains[$n] else $user_chains["*"] end) | if . == false then null else . end
+             end | if type == "string" then [.] else . end) as $pm |
             if $pm == null then . + {engine: "claude"}
             elif ($pm[0] | test("^claude(:|$)")) | not then . + {engine: "pi", pi_models: $pm}
             # "claude:haiku" first: a Claude agent, on that model.
