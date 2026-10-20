@@ -47,8 +47,8 @@ used at all. The broker only changes the order.
   `"*"` is the chain for any agent that isn't listed. A model that matches no
   plan is pay-per-token.
 - **Repo override:** `.reviewers/config.json` `.pi.agents.<agent>` (the format
-  that exists today) replaces the user chain for that agent. Routing rules stay
-  where they are: `.pi.all` / `true` / `false`.
+  that exists today), `true`, `false` or `.pi.all` overrides the user's entry
+  for that agent.
 - `eval-reviewer.sh assign` takes `--user` and writes `agents` into the user
   file. Without the flag it prints the repo block, as it does today.
 - `discover-agents.sh` resolves each agent the same way every time:
