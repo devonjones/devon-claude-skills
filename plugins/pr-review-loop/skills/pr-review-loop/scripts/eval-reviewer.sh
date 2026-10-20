@@ -4,7 +4,7 @@
 # Usage:
 #   eval-reviewer.sh harvest <agent> [--prs N]
 #   eval-reviewer.sh run <agent> --models m1,m2[,...] [--baseline M] [--commits N] [--files REGEX]
-#   eval-reviewer.sh assign
+#   eval-reviewer.sh assign [--user]
 #
 # harvest  Reads this repo's PR threads that <agent> started (signed
 #          `<!-- Agent: <agent> -->`) and how each was answered. The first word
@@ -33,6 +33,9 @@
 #          subscriptions, then "claude". Anthropic candidates (tested through Pi
 #          as anthropic/claude-sonnet-4-6 etc.) come out as claude:sonnet /
 #          claude:haiku, which run as the normal Claude Task on that model.
+#          --user merges those chains into your per-user models.json
+#          ($PR_REVIEW_LOOP_MODELS, default ~/.config/pr-review-loop/models.json)
+#          instead, replacing only the agents this repo evaluated.
 #
 # Cost: ~/.config/pr-review-loop/pi-prices.json (see pi/prices.example.json).
 # Every model costs measured tokens x its pay-per-token list price, plan models
@@ -47,7 +50,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-USAGE="Usage: eval-reviewer.sh harvest <agent> [--prs N] | run <agent> --models a,b [--baseline M] [--commits N] | assign"
+USAGE="Usage: eval-reviewer.sh harvest <agent> [--prs N] | run <agent> --models a,b [--baseline M] [--commits N] | assign [--user]"
 CMD="${1:?$USAGE}"; shift
 REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)" || { echo "Error: not in a GitHub repo" >&2; exit 1; }
 BASE_DIR="${PI_REVIEW_CACHE_DIR:-$HOME/.cache/pr-review-loop}/eval/${REPO//\//_}"
@@ -332,6 +335,20 @@ assign() {
               | map(entry) | reduce .[] as $e ([]; if index($e) then . else . + [$e] end)))
       | {pi: {agents: .agents}, projected_tokens_per_round_by_subscription: .load}' "${results[@]}"
 }
+assign_user() {
+    local f="${PR_REVIEW_LOOP_MODELS:-$HOME/.config/pr-review-loop/models.json}" block
+    block="$(assign)"
+    jq -e '.pi.agents | length > 0' <<<"$block" >/dev/null \
+        || { echo "Error: no evaluated agent has a passing model; $f left unchanged" >&2; exit 1; }
+    mkdir -p "$(dirname "$f")"
+    f="$(readlink -f "$f")"   # a dotfiles symlink stays a symlink
+    [[ -e "$f" ]] || echo '{}' > "$f"
+    jq -s --argjson b "$block" 'if length == 0 then {} elif length == 1 then .[0] else error("several JSON values") end
+        | .agents = ((.agents // {}) + $b.pi.agents)' "$f" > "$f.$$" \
+        || { rm -f "$f.$$"; echo "Error: cannot merge into $f (not JSON?)" >&2; exit 1; }
+    mv -f "$f.$$" "$f"
+    echo "Wrote $(jq -r '.pi.agents | keys | join(", ")' <<<"$block") to $f" >&2
+}
 
 case "$CMD" in
     harvest)
@@ -351,6 +368,11 @@ case "$CMD" in
         done
         [[ -n "$MODELS" ]] || { echo "$USAGE" >&2; exit 1; }
         run_eval "$AGENT" "$MODELS" "$BASELINE" "$COMMITS" "$FILES" ;;
-    assign) assign ;;
+    assign)
+        case "${1:-}" in
+            "") assign ;;
+            --user) assign_user ;;
+            *) echo "$USAGE" >&2; exit 1 ;;
+        esac ;;
     *) echo "$USAGE" >&2; exit 1 ;;
 esac

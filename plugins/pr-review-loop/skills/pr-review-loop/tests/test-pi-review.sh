@@ -10,6 +10,7 @@
 # Usage: tests/test-pi-review.sh
 
 set -euo pipefail
+export PR_REVIEW_LOOP_MODELS=/nonexistent   # no real ~/.config/pr-review-loop/models.json
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PI_REVIEW="$SCRIPT_DIR/../scripts/pi-review.sh"
 T="$(mktemp -d)"; trap 'rm -rf -- "$T"' EXIT

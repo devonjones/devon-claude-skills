@@ -1491,7 +1491,7 @@ so a bad call goes back to the model to fix, then `finish_review`. A run that
 never calls `finish_review` did not report. The script **posts nothing**. It
 prints the report as JSON, so no GitHub token enters the container.
 
-Turn it on in `# Configuration`:
+Turn it on in `# Configuration`, or for every repo in your per-user `models.json` (below):
 
 ```json
 { "pi": { "all": true, "model": ["zai/glm-5.1", "claude"],
@@ -1503,6 +1503,7 @@ Turn it on in `# Configuration`:
 - **`model`**: the default chain. Required when `all` or any `true` entry routes an agent to Pi.
 - **`agents`**: per agent. `true` uses `model`, a chain routes the agent on that chain, and `false` keeps it on Claude even under `all`. Default agents can be routed this way too, without overriding their prompts.
 - **A chain** is a model (`provider/id`) or an ordered list of them. The script moves to the next model only when the provider fails: quota or credits used up, rate limit, auth or access denied, unreachable. A model that ran and gave no valid report is a strike, not a reason to try another. `"claude"` in a chain means "from here, use the normal Claude Task", and `"claude:sonnet"`, `"claude:haiku"` or `"claude:opus"` names the Task's model. A chain that starts with a Claude entry is just a Claude agent, so `"code-simplifier": "claude:haiku"` downshifts that agent to Haiku. A provider that reports exhausted quota is skipped by every run for 10 minutes (`PI_REVIEW_EXHAUSTED_TTL`, marker in `~/.cache/pr-review-loop/exhausted/<provider>`). Plan pacing reorders the chain up to its first Claude entry: plans with more quota left than time left in their longest window go first, plans ahead of pace go back, and other models keep their place. No plan is skipped for being near or past its limit; past it the plan bills overage and sorts last. Pacing reads Z.ai (`zai/*`, weekly) from its quota API with `curl` and `ZAI_API_KEY`, and the Qwen Token Plan (`qwen-token-plan/*`, monthly) with `bl usage token-plan`; a plan with no reading keeps its configured place, and the script says so (for Qwen, with the `bl auth login --console` fix).
+- **Per-user chains** live in `~/.config/pr-review-loop/models.json` (`PR_REVIEW_LOOP_MODELS`): `{"agents": {"code-reviewer": [...], "*": [...], "comment-analyzer": false}}`. A chain there routes that agent to Pi in every repo, and `"*"` covers agents the file doesn't name. The repo's `pi` setting for an agent wins over the file. An invalid file stops discovery with an error naming it.
 
 `configuration.pi_agents_unknown` lists `agents` entries that name nothing on the
 roster. Treat it like `disabled_defaults_unknown`.
@@ -1594,6 +1595,7 @@ scripts/eval-reviewer.sh run silent-failure-hunter \
     --models zai/glm-5.1,qwen-token-plan/qwen3.8-max,anthropic/claude-haiku-4-5 \
     --baseline anthropic/claude-sonnet-4-6 --commits 6
 scripts/eval-reviewer.sh assign                                 # all evaluated agents -> one .pi.agents block
+scripts/eval-reviewer.sh assign --user                          # or merge them into your per-user models.json
 ```
 
 - **Ground truth** is the agent's signed threads. The first word of the first reply is the verdict: `Fixed`, `Out of scope` and `Deferred` mean real; `Won't fix` and `Withdrawn` mean noise. `Noted` and other replies are not scored.
@@ -1602,7 +1604,7 @@ scripts/eval-reviewer.sh assign                                 # all evaluated 
 - **Pass**: a failed replay is retried once; the model then fails at most 10% of runs, its severity-weighted catch rate is within 0.10 of the baseline, and its junk rate (declined or implausible findings) is at most 0.10 above the baseline. Without a baseline: catches at least 0.5, junk at most 0.3. Below 8 real findings the result is **inconclusive** and nothing is recommended.
 - **Cost**: measured tokens x price, from `~/.config/pr-review-loop/pi-prices.json` (start from `pi/prices.example.json`). Plan models are priced the same way, at the provider's pay-per-token list price, which is what their quota draw is worth. With no entry, the price the run reported is used (Pi's list price; a Claude replay's API-equivalent cost). Unpriced models rank last.
 - **Ranking**: passing plan models come first, cheapest draw first, then pay-per-token models by cost. Unused plan quota is wasted, so plans rank first.
-- **assign** puts each agent on a passing model whose subscription has the least projected load, follows it with passing models on other subscriptions, and ends with `claude`. Winning Anthropic models become `claude:sonnet` / `claude:haiku`. It prints a block for `# Configuration`; nothing is written until you approve it.
+- **assign** puts each agent on a passing model whose subscription has the least projected load, follows it with passing models on other subscriptions, and ends with `claude`. Winning Anthropic models become `claude:sonnet` / `claude:haiku`. It prints a block for `# Configuration`; nothing is written until you approve it. `assign --user` instead writes the chains straight into your per-user `models.json`, replacing only the agents this repo evaluated.
 
 Replays and judgements are cached under `~/.cache/pr-review-loop/eval/`, so an
 interrupted run picks up where it stopped. A
@@ -1774,7 +1776,7 @@ When detected, the script suggests:
 | `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post one line comment with agent signature (orchestrator fallback only) |
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |
 | `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |
-| `eval-reviewer.sh harvest\|run\|assign ...` | Pick the cheapest model per agent that reviews as well as a baseline, on this repo's own history; build a `.pi.agents` block that spreads load across subscriptions. See "Pi Engine" |
+| `eval-reviewer.sh harvest\|run\|assign [--user] ...` | Pick the cheapest model per agent that reviews as well as a baseline, on this repo's own history; build a `.pi.agents` block that spreads load across subscriptions. See "Pi Engine" |
 | `pi-watch.sh [--latest\|<run.jsonl>] [--once]` | Follow a Pi run live: tool calls, model text, running tokens and cost |
 | `pi-review.sh <PR> <agent> <sha> [--model M] [--replay]` | Run a `pi`-engine agent once in Docker down its model chain. Prints the report as JSON and posts nothing; a Haiku Task posts it. Exit 5 = use the Claude Task. See "Pi Engine" |
 | `emit-dream-marker.sh <kind> key=value ...` | Emit a dream marker (reviewer telemetry) — best-effort, never blocks. See "Dream Markers" |
@@ -1816,7 +1818,7 @@ Bash(scripts/pi-watch.sh:*)
   Install with: `apt install jq` (Ubuntu/Debian) or `brew install jq` (macOS)
 - `python3` - `convert-reviewers.py`, `install-template.sh` and `eval-reviewer.sh` (standard library only)
 - `pre-commit` (optional) - its hooks run on `git commit` once installed with `pre-commit install`
-- Docker and a model provider API key (optional) - only for agents routed to the Pi engine (`# Configuration .pi`).
+- Docker and a model provider API key (optional) - only for agents routed to the Pi engine (`# Configuration .pi` or your per-user `models.json`).
   `PI_REVIEW_SANDBOX=host` runs your own `pi` instead: `npm install -g @mariozechner/pi-coding-agent` (the image pins the version in `pi/Dockerfile`).
 - `bl` (optional) - Qwen Token Plan pacing in `pi-review.sh`: `npm install -g bailian-cli`, then `bl auth login --console`.
 - `claude` CLI (optional) - `eval-reviewer.sh` (judge and grader) and `--replay` with a `claude` entry.

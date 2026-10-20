@@ -9,6 +9,7 @@
 # Usage: tests/test-eval-reviewer.sh
 
 set -euo pipefail
+export PR_REVIEW_LOOP_MODELS=/nonexistent   # no real ~/.config/pr-review-loop/models.json
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EVAL="$SCRIPT_DIR/../scripts/eval-reviewer.sh"
 T="$(mktemp -d)"; trap 'rm -rf -- "$T"' EXIT
@@ -184,6 +185,38 @@ jq -e '[.pi.agents.y[] | select(startswith("anthropic/"))] == [] and (.pi.agents
     && ok "an Anthropic winner becomes claude:haiku" || bad "y: $(jq -c .pi.agents.y <<<"$OUT")"
 jq -e '.pi.agents.y | (map(select(. == "claude" or startswith("claude:"))) | length) <= 2 and .[-1] == "claude"' <<<"$OUT" >/dev/null \
     && ok "chain ends in claude" || bad "y: $(jq -c .pi.agents.y <<<"$OUT")"
+
+echo "=== assign --user merges into the per-user models.json ==="
+printf '%s' '{"agents": {"other-agent": "zai/glm-5.1", "x": "old/model"}, "note": "kept"}' > "$T/models.json"
+PR_REVIEW_LOOP_MODELS="$T/models.json" run assign --user
+[[ "$RC" -eq 0 ]] && jq -e '.agents.x == ["cheap/a", "pricey/b", "claude"] and .agents["other-agent"] == "zai/glm-5.1"
+    and (.agents.y | length) > 0 and .note == "kept"' "$T/models.json" >/dev/null \
+    && ok "replaces the evaluated agents, keeps the rest of the file" || bad "rc=$RC file: $(cat "$T/models.json")"
+rm -f "$T/models.json"
+PR_REVIEW_LOOP_MODELS="$T/new/models.json" run assign --user
+jq -e '.agents.x[0] == "cheap/a"' "$T/new/models.json" >/dev/null && ok "creates the file when missing" || bad "rc=$RC"
+printf 'not json' > "$T/models.json"
+PR_REVIEW_LOOP_MODELS="$T/models.json" run assign --user
+[[ "$RC" -eq 1 && "$(cat "$T/models.json")" == "not json" ]] && ok "an unreadable file is an error and is left untouched" || bad "rc=$RC"
+ln -sf "$T/real-models.json" "$T/link-models.json"; printf '{}' > "$T/real-models.json"
+PR_REVIEW_LOOP_MODELS="$T/link-models.json" run assign --user
+[[ -L "$T/link-models.json" ]] && jq -e '.agents.x[0] == "cheap/a"' "$T/real-models.json" >/dev/null \
+    && ok "a symlinked models.json stays a symlink and its target gets the chains" || bad "rc=$RC"
+mkdir -p "$T/held/x" "$T/held/y" "$D/z"; mv -f "$D/x/result.json" "$T/held/x/"; mv -f "$D/y/result.json" "$T/held/y/"
+jq -n '{agent: "z", candidates: [{model: "cheap/a", pass: false, subscription: "cheap", usd_per_review: 0.001, tokens: {input: 1, output: 1, cacheRead: 0}}]}' > "$D/z/result.json"
+printf '%s' '{"agents": {"z": "old/model"}}' > "$T/models.json"
+PR_REVIEW_LOOP_MODELS="$T/models.json" run assign --user
+[[ "$RC" -eq 1 ]] && jq -e '.agents.z == "old/model"' "$T/models.json" >/dev/null && grep -q 'no evaluated agent has a passing model' "$T/err" \
+    && ok "no passing agent: an error, and the file is left unchanged" || bad "rc=$RC file: $(cat "$T/models.json")"
+rm -rf "$D/z"; mv -f "$T/held/x/result.json" "$D/x/"; mv -f "$T/held/y/result.json" "$D/y/"
+printf '  \n' > "$T/models.json"
+PR_REVIEW_LOOP_MODELS="$T/models.json" run assign --user
+jq -e '.agents.x[0] == "cheap/a"' "$T/models.json" >/dev/null && ok "a whitespace-only file is treated as empty, not emptied" || bad "rc=$RC file: $(cat "$T/models.json")"
+printf '{} {}' > "$T/models.json"
+PR_REVIEW_LOOP_MODELS="$T/models.json" run assign --user
+[[ "$RC" -eq 1 && "$(cat "$T/models.json")" == "{} {}" ]] && ok "several JSON values: an error, file untouched" || bad "rc=$RC"
+run assign --bogus
+[[ "$RC" -eq 1 ]] && ok "an unknown assign flag is a usage error" || bad "rc=$RC"
 
 echo "=== harvest ==="
 run harvest h
