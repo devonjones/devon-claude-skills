@@ -255,7 +255,7 @@ The body is one continuous prose flow per chapter, with images embedded inline a
 
 Before concatenating per-chapter, **adjust each non-final chapter's `end_time` to the nearest sentence-terminator-ending snippet within `[end_time − 5, end_time + 15]`** of the metadata boundary. Chapter markers in YouTube metadata are timed to visual transitions, not sentence ends — using them strictly produces "...the political map draws itself. Chapter / two." mid-clause splits. The next chapter's `start_time` then equals the previous chapter's snapped `end_time`.
 
-Snapping rule: pick the closest snippet whose text ends with `.`, `!`, or `?` and whose timestamp lies in that window. If no such snippet exists in the window, leave the boundary at `end_time`. When the captions are unpunctuated (D.4.c step 3), snap to the nearest sentence end you place there, in the same window.
+Snapping rule: pick the closest snippet whose text ends with `.`, `!`, or `?` and whose timestamp lies in that window. If no such snippet exists in the window, leave the boundary at `end_time`. Unpunctuated captions (D.4.c step 3) have no terminators yet: place the boundary at the sentence end you restore nearest `end_time`, in the same window.
 
 This is also where the spoken "Chapter N." transition lines naturally land: with snapping, "Chapter 3." gets pulled into chapter 2's tail (since the boundary moves to just past it), so chapter 3 starts cleanly with its first content sentence.
 
@@ -265,7 +265,7 @@ For each chapter's snapped `[start_time, end_time)` span (or the full `[0, durat
 
 1. **Concatenate all transcript snippets** whose timestamp falls inside the span.
 2. **Apply soft-corrects** per Phase C.7 to the concatenated text. Append every correction made here to the `transcript_corrections` frontmatter list.
-3. **Restore punctuation if the captions have none.** Some channels' auto-captions carry no punctuation at all; treat the transcript as unpunctuated when it has fewer than one `.`, `?` or `!` per 50 words. Then add sentence punctuation and capitalization as you write the prose: punctuation and letter case only, never a word added, dropped or changed. Set `punctuation_restored: true` in the frontmatter. D.5's fidelity check catches any word that slips.
+3. **Restore punctuation if the captions have none.** Treat the transcript as unpunctuated when it has fewer than one `.`, `?` or `!` per 50 words. Then add sentence punctuation and capitalization as you write the prose: punctuation and letter case only, never a word added, dropped or changed. Set `punctuation_restored: true` in the frontmatter.
 4. **Reflow into paragraphs at sentence boundaries.** Walk the corrected text and break a paragraph every ~3–6 sentences at the next sentence terminator (`. `, `! `, `? `) — choose the break point at a natural feeling pause rather than a fixed sentence count. **Do not change words** beyond the soft-corrects from step 2; do not paraphrase, summarize, or restructure.
 5. **Embed kept frames inline.** For every keep-list entry whose `timestamp` falls inside this chapter's span, inject `![[image-NN.png]]` (on its own line, surrounded by blank lines) at the **nearest sentence boundary** to the timestamp in the reflowed prose. Multiple images in close succession (e.g. an animated-build-step run) appear consecutively, separated only by whatever prose falls between their timestamps if any.
 
@@ -340,7 +340,7 @@ Notes:
 - Image embeds use Obsidian's wikilink form `![[image-NN.png]]` since the file is in the same per-note folder. This renders inline in Obsidian and remains a valid relative reference if the entry is moved.
 - Times in the source line are formatted as `MM:SS` for videos under an hour, `HH:MM:SS` otherwise.
 - Images appear inline at their timestamps inside the chapter prose. They do **not** appear in the consolidated `## Commands & Code` section — that section is text-only.
-- Code blocks attributed to a specific timestamp may appear inline in the prose at that point (its timestamp lead-in is the block's first comment line, per C.5) **and** are also collected in the `## Commands & Code` section at the bottom. Duplication is intentional: inline gives narrative context, the bottom section is the user's quick-reference index.
+- Code blocks attributed to a specific timestamp may appear inline in the prose at that point (lead-in per C.5) **and** are also collected in the `## Commands & Code` section at the bottom. Duplication is intentional: inline gives narrative context, the bottom section is the user's quick-reference index.
 
 ### D.5. Write the file
 
