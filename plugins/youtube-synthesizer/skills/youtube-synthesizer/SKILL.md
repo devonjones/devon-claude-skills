@@ -20,6 +20,7 @@ Optional:
 - **`<vault>`** — absolute path to the target Obsidian vault, **or** a vault name relative to `~/ObsidianVaults/`. The skill writes to `<vault>/sources/videos/<ingested-date>-<sanitized-title>/`. If omitted, see Phase D.1 for the discovery flow.
 - **`--rerun`** — overwrite an existing entry at the target path. Without this flag, the skill refuses to overwrite (Phase D.2).
 - **`--why <reason>`** — populate the `why_ingested` frontmatter field. If omitted, leave it as an empty string; the user can fill it in after.
+- **`--keep-video`** — keep `<work_dir>` (the downloaded video, frames and sheets) after the run, for debugging.
 - **`--no-sync`** — skip the post-write Dropbox sync prompt (Phase D.6). Otherwise the skill asks after a successful write whether to push the new entry to `dropbox:ObsidianVaults/<vault-name>/sources/videos/<channel>/<entry-dir>/`.
 
 If `<URL>` is missing, ask the user before starting work — do not guess. `<vault>` resolution is described in Phase D.1; do not guess that either.
@@ -79,7 +80,7 @@ Produces an ordered list of `(timestamp, frame_path, kind)` triples for the kept
 
 ### A.1. Fetch transcript and metadata
 
-Pick one scratch `<work_dir>` for the run (e.g. `mktemp -d`); every phase below reads and writes there.
+Pick one scratch `<work_dir>` for the run on a real disk, not a tmpfs `/tmp` (a video and its frames run to gigabytes): e.g. `mktemp -d -p ~/.cache`. Every phase below reads and writes there.
 
 - `<youtube-transcript scripts dir>/get_transcript.py "<URL>" -t -o <work_dir>/transcript.txt` → transcript with timestamps (D.5 checks the body against this file)
 - `<youtube-screenshotter scripts dir>/video.py "<URL>" --no-download` → metadata (channel_id, chapter_markers, description, etc.)
@@ -183,6 +184,8 @@ The main agent then applies the audit-agent's decisions to produce the final kee
 Output a sorted list of `(timestamp, frame_path, kind)` triples. This is the input to Phases C and D.
 
 The expected size depends entirely on the video's information density. A 1hr lecture-with-slides might produce 30–50 kept frames; a 20-minute video that's 80% talking-head might produce 4–6. There is no target count — the value-filter rule plus the audit pass set the bar.
+
+Nothing after Phase A reads the video. Unless `--keep-video` was passed, delete it now: `rm -f <video_path>`, with `video_path` from the A.2 manifest.
 
 ---
 
@@ -359,6 +362,8 @@ Then check the body against the transcript:
 ```
 
 It fails on any word in the chapter prose that differs from the transcript and isn't a logged `transcript_corrections` entry; case, punctuation and paragraph breaks don't count. On failure, restore the transcript's words at each reported spot (or log the soft-correct, if it is one under C.7) and re-run until it passes.
+
+Once the check passes, unless `--keep-video` was passed, remove the scratch directory: `rm -rf <work_dir>`.
 
 Print a clear success message with the absolute path to the .md file so the user knows where to open it.
 

@@ -1,7 +1,7 @@
 {
   "name": "youtube-synthesizer",
   "description": "Turn a YouTube video into a faithful-capture literature note in an Obsidian vault (transcript + canonical visual scenes + structured extraction)",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "author": {
     "name": "Devon Jones"
   }
