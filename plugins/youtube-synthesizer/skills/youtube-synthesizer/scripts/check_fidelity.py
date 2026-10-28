@@ -30,7 +30,7 @@ import yaml
 
 NON_PROSE_SECTIONS = {"tl;dr", "key takeaways", "references", "commands & code"}
 TIMESTAMP_RE = re.compile(r"^\[(?:(\d+):)?(\d+):(\d+)\]\s*")
-WORD_RE = re.compile(r"[a-z0-9]+(?:'[a-z0-9]+)*")
+WORD_RE = re.compile(r"[^\W_]+(?:'[^\W_]+)*")
 MAX_REPORTED = 20
 
 
@@ -80,10 +80,22 @@ def body_prose(body: str) -> str:
 
 
 def allowed_changes(frontmatter: dict) -> set[tuple[tuple[str, ...], tuple[str, ...]]]:
-    return {
-        (tuple(words(str(c.get("original", "")))), tuple(words(str(c.get("corrected", "")))))
-        for c in frontmatter.get("transcript_corrections") or []
-    }
+    allowed = set()
+    for n, c in enumerate(frontmatter.get("transcript_corrections") or [], 1):
+        if not isinstance(c, dict):
+            raise ValueError(f"transcript_corrections entry {n} is not an original/corrected mapping")
+        change = (tuple(words(str(c.get("original", "")))), tuple(words(str(c.get("corrected", "")))))
+        if all(change):  # an empty side would excuse any insertion or deletion
+            allowed.add(change)
+    return allowed
+
+
+def explained(src: tuple[str, ...], dst: tuple[str, ...], allowed: set) -> bool:
+    """True if src -> dst is a run of logged corrections; difflib merges adjacent ones."""
+    if not src and not dst:
+        return True
+    return any(src[:len(o)] == o and dst[:len(c)] == c and explained(src[len(o):], dst[len(c):], allowed)
+               for o, c in allowed)
 
 
 def differences(transcript_text: str, entry_text: str) -> tuple[int, list[str]]:
@@ -94,7 +106,7 @@ def differences(transcript_text: str, entry_text: str) -> tuple[int, list[str]]:
     allowed = allowed_changes(frontmatter)
     found = []
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, src, dst, autojunk=False).get_opcodes():
-        if op == "equal" or (tuple(src[i1:i2]), tuple(dst[j1:j2])) in allowed:
+        if op == "equal" or explained(tuple(src[i1:i2]), tuple(dst[j1:j2]), allowed):
             continue
         where = stamps[min(i1, len(stamps) - 1)] if stamps else ""
         found.append(f"{where or 'word ' + str(i1)}: transcript {' '.join(src[i1:i2])!r} "
@@ -111,7 +123,7 @@ def main() -> int:
     try:
         total, found = differences(args.transcript.read_text(encoding="utf-8"),
                                    args.entry.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
+    except (OSError, ValueError, yaml.YAMLError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
