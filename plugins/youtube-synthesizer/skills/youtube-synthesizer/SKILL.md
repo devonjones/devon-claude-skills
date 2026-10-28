@@ -79,7 +79,7 @@ Produces an ordered list of `(timestamp, frame_path, kind)` triples for the kept
 
 ### A.1. Fetch transcript and metadata
 
-- `<youtube-transcript scripts dir>/get_transcript.py "<URL>"` → transcript with timestamps
+- `<youtube-transcript scripts dir>/get_transcript.py "<URL>" -t -o <work_dir>/transcript.txt` → transcript with timestamps (D.5 checks the body against this file)
 - `<youtube-screenshotter scripts dir>/video.py "<URL>" --no-download` → metadata (channel_id, chapter_markers, description, etc.)
 
 If the video has no transcript, error with a clear message and stop. **Do not fabricate one.**
@@ -344,6 +344,14 @@ Notes:
 Write `<entry_dir>/<sanitized-title>.md`, where `<sanitized-title>` is the same sanitization applied to `metadata.source_title` as in D.1.b but **without** the date prefix (the directory carries the date already). For *"The Ox That's Breaking Your Fantasy Map"* in dir `2026-04-29-the-ox-thats-breaking-your-fantasy-map/`, the file is `the-ox-thats-breaking-your-fantasy-map.md`.
 
 After writing, verify the file is non-empty and that the YAML frontmatter parses cleanly (if YAML fails, you have a quoting bug in `source_description` or elsewhere — fix it before declaring success). The block-scalar `|` form on `source_description` handles most cases, but watch for unescaped backticks or trailing whitespace in the description text.
+
+Then check the body against the transcript:
+
+```
+<youtube-synthesizer scripts dir>/check_fidelity.py <work_dir>/transcript.txt <entry_dir>/<sanitized-title>.md
+```
+
+It fails on any word in the chapter prose that differs from the transcript and isn't a logged `transcript_corrections` entry; case, punctuation and paragraph breaks don't count. On failure, restore the transcript's words at each reported spot (or log the soft-correct, if it is one under C.7) and re-run until it passes. A paraphrased body is never done.
 
 Print a clear success message with the absolute path to the .md file so the user knows where to open it.
 
