@@ -108,18 +108,24 @@ Pass the timestamp list from `discover.py`'s `candidates` array. The video file 
 
 ### A.4. Classify every frame by kind
 
-**Delegate this to sub-agents — do not load the frames into your own context.** A 100+ candidate video produces ~50–150 MB of PNG data; loading it inline blows the main agent's context window for no benefit (you only need the classifications back, not the pixels). Use the Agent tool (`subagent_type: general-purpose`) with batches of 10 frames per agent.
+Tile the A.3 manifest into labeled 3×3 contact sheets:
 
-For each batch, the sub-agent's job is:
+```
+<youtube-screenshotter scripts dir>/grid.py <extract-manifest.json> -o <work_dir>/sheets
+```
 
-1. Read each frame image in the batch (Read tool on `frame_path`)
-2. Read the transcript text spoken in a small window around each frame's timestamp (e.g. ±5 seconds — the main agent should pass the relevant transcript snippet to the sub-agent in the prompt so the sub-agent doesn't have to re-derive it)
-3. Pick exactly one kind per frame from the value-filter principle above
-4. Return a JSON array `[{timestamp, frame_path, kind, note}, ...]` covering every frame in the batch — drop-kinds tagged with kind=`drop` plus a brief `drop_reason`, keep-kinds with their kind tag and a one-line `note` describing what the frame shows
+Its JSON lists each `sheet` with its `cells` in reading order; each cell carries a `#<n> <MM:SS>` label plus its `timestamp` and `frame_path`. A sheet is one ~0.1–0.3 MB image read standing in for nine full-resolution frames.
 
-The main agent then collates the per-batch JSON into the running keep-list without ever reading the frames itself.
+**Delegate classification to sub-agents — do not load sheets or frames into your own context.** Use the Agent tool (`subagent_type: general-purpose`) with up to 5 sheets (45 frames) per agent. Inline the kind taxonomy and the value-filter principle in the prompt (the sub-agent has no memory of this SKILL.md), plus the transcript spoken within ±5 seconds of each cell's timestamp, keyed by label.
 
-The sub-agent prompt should inline the kind taxonomy and the value-filter principle (the sub-agent has no memory of the SKILL.md). Keep batches at ≤ 10 frames so each agent stays inside the 32 MB request-size limit on its own image reads (frames at 1280×720 PNG run ~0.5–1.5 MB each, so 20 reads can blow the limit on dense content).
+For each batch, the sub-agent:
+
+1. Reads each sheet (Read tool on `sheet`).
+2. Picks exactly one kind per cell from the value-filter principle above, using the transcript snippet for that label.
+3. Reads a cell's full-resolution `frame_path` only when the cell is too small to call — fine text, a possible `hybrid-with-info-overlay`, a `map-overview` vs `map-with-overlay` question. When still unsure, it keeps the frame.
+4. Returns a JSON array `[{timestamp, frame_path, kind, note}, ...]` covering every cell — drop-kinds tagged `drop` with a brief `drop_reason`, keep-kinds with their kind tag and a one-line `note` describing what the frame shows.
+
+The main agent collates the per-batch JSON into the running keep-list without ever reading the images itself.
 
 **Use the discover.py `source` and `run_duration` hints.** They're informational signals, not classification rules:
 
@@ -161,7 +167,7 @@ When a near-duplicate is detected, **keep the earlier frame** (it's the establis
 
 ### A.7. Whole-list audit pass
 
-Re-read every frame in the keep-list as a curated set and ask, for each one, "is this image actually useful in the entry?" This is a separate pass from per-frame classification (A.4): the per-batch sub-agents in A.4 each see only their own 10 frames, so cross-batch redundancy and accumulated drift are invisible there.
+Re-read every frame in the keep-list as a curated set and ask, for each one, "is this image actually useful in the entry?" This is a separate pass from per-frame classification (A.4): the per-batch sub-agents in A.4 each see only their own batch, so cross-batch redundancy and accumulated drift are invisible there.
 
 **Delegate this to a single audit sub-agent** (Agent tool, `subagent_type: general-purpose`). The main agent passes the audit-agent the full keep-list (timestamp + frame_path + kind + note for every entry) and asks it to re-read the frames and return a JSON `[{timestamp, decision: "keep"|"drop", reason}, ...]`. The audit-agent reads the frames in its own context — the main agent never loads them. If the keep-list is large enough that even one sub-agent can't fit all the frames in 32 MB, partition by chapter or by index range and run several audit-agents in parallel.
 

@@ -71,6 +71,8 @@ scripts/motion.py <video> --start S --end E [--fps 4] [-o DIR]
 
 Whether to sprite a span, pick a single frame, or annotate in text is the caller's decision (`youtube-synthesizer` Phase A.5).
 
+`scripts/grid.py <extract-manifest.json> -o DIR [--cols 3] [--rows 3]` tiles an `extract.py` manifest's frames into labeled contact sheets (`DIR/sheet-NN.jpg`, nine frames each by default, each cell labeled `#<n> <MM:SS>`) and prints `[{sheet, cells: [{label, timestamp, frame_path}]}]`. One sheet read stands in for nine frame reads when triaging candidates. `motion.py` uses the same grid composer for its sprites.
+
 ### Discover manifest shape
 
 ```json
