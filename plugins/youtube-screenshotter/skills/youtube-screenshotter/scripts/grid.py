@@ -42,7 +42,7 @@ def compose_sprite_grid(
 
     Cells keep the first frame's aspect ratio; a short last row is left black.
     `labels`, if given, are drawn in each cell's top-left corner. The output
-    format follows `out_path`'s suffix.
+    format follows `out_path`'s suffix, PNG when it has none.
     """
     if not frame_paths:
         raise ValueError("no frames to compose")
@@ -61,7 +61,7 @@ def compose_sprite_grid(
             box = draw.textbbox((x + 6, y + 6), labels[i], font=font)
             draw.rectangle((box[0] - 4, box[1] - 4, box[2] + 4, box[3] + 4), fill=(0, 0, 0))
             draw.text((x + 6, y + 6), labels[i], fill=(255, 255, 0), font=font)
-    sprite.save(out_path, optimize=True)
+    sprite.save(out_path, format=None if out_path.suffix else "PNG", optimize=True)
 
 
 def format_ts(seconds: float) -> str:
@@ -93,15 +93,18 @@ def main() -> int:
     p.add_argument("--rows", type=int, default=DEFAULT_ROWS)
     p.add_argument("--max-width", type=int, default=DEFAULT_MAX_WIDTH)
     args = p.parse_args()
+    if min(args.cols, args.rows) < 1 or args.max_width < args.cols:
+        p.error("--cols and --rows must be >= 1 and --max-width >= --cols")
 
     try:
-        entries = json.loads(args.manifest.read_text(encoding="utf-8"))["entries"]
-        if not entries:
+        data = json.loads(args.manifest.read_text(encoding="utf-8"))
+        entries = data.get("entries") if isinstance(data, dict) else None
+        if not entries or not isinstance(entries, list):
             raise ValueError(f"no entries in {args.manifest}")
         sheets = contact_sheets(entries, args.output_dir, cols=args.cols, rows=args.rows,
                                 max_width=args.max_width)
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        print(f"error: {'missing key ' if isinstance(exc, KeyError) else ''}{exc}", file=sys.stderr)
+        print(f"error: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(sheets, indent=2))
     return 0
