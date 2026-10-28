@@ -101,7 +101,7 @@ The candidate list is high-recall: every sustained content stretch ≥ 3 seconds
 ### A.3. Extract candidate frames at full resolution
 
 ```
-<youtube-screenshotter scripts dir>/extract.py "<URL>" -t <ts1> -t <ts2> ... -o <work_dir>
+<youtube-screenshotter scripts dir>/extract.py "<URL>" -t <ts1> -t <ts2> ... -o <work_dir> > <work_dir>/extract.json
 ```
 
 Pass the timestamp list from `discover.py`'s `candidates` array. The video file is already cached (discover downloaded it); only the per-timestamp PNG extraction happens here.
@@ -111,10 +111,10 @@ Pass the timestamp list from `discover.py`'s `candidates` array. The video file 
 Tile the A.3 manifest into labeled 3×3 contact sheets:
 
 ```
-<youtube-screenshotter scripts dir>/grid.py <extract-manifest.json> -o <work_dir>/sheets
+<youtube-screenshotter scripts dir>/grid.py <work_dir>/extract.json -o <work_dir>/sheets
 ```
 
-**Delegate classification to sub-agents — do not load sheets or frames into your own context.** Use the Agent tool (`subagent_type: general-purpose`) with up to 5 sheets (45 frames) per agent. Inline the kind taxonomy and the value-filter principle in the prompt (the sub-agent has no memory of this SKILL.md), plus the transcript spoken within ±5 seconds of each cell's timestamp, keyed by label.
+**Delegate classification to sub-agents — do not load sheets or frames into your own context.** Use the Agent tool (`subagent_type: general-purpose`) with up to 5 sheets (45 frames) per agent. Inline in the prompt the kind taxonomy and the value-filter principle (the sub-agent has no memory of this SKILL.md), the batch's entries from `grid.py`'s JSON (each `sheet` path with its cells' `label`, `timestamp` and `frame_path`), and the transcript spoken within ±5 seconds of each cell's timestamp, keyed by label.
 
 For each batch, the sub-agent:
 
