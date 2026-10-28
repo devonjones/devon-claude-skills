@@ -24,12 +24,13 @@ from pathlib import Path
 import yt_dlp
 
 MIN_FREE_BYTES = 3 * 1024**3  # a 720p video plus its frames; a full disk breaks every later step
+MEDIA_SUFFIXES = {".mp4", ".mkv", ".webm"}
 VIDEO_ID_RE = re.compile(r"^([\w-]{11})$|(?:v=|youtu\.be/|/embed/|/shorts/|/v/)([\w-]{11})")
 
 
 def _is_cached(url: str, output_dir: Path) -> bool:
     m = VIDEO_ID_RE.search(url)
-    return bool(m) and any(output_dir.glob(f"{m.group(1) or m.group(2)}.*"))
+    return bool(m) and any((output_dir / f"{m.group(1) or m.group(2)}{s}").is_file() for s in MEDIA_SUFFIXES)
 
 
 @dataclass
@@ -133,7 +134,7 @@ def download(url: str, output_dir: Path, *, skip_download: bool = False) -> Down
 
     # Fallback: post-merge extension can differ from prepare_filename's prediction.
     candidates = sorted(output_dir.glob(f"{metadata.video_id}.*"))
-    media = [p for p in candidates if p.suffix.lower() in {".mp4", ".mkv", ".webm"}]
+    media = [p for p in candidates if p.suffix.lower() in MEDIA_SUFFIXES]
     if not media:
         raise RuntimeError(f"download finished but no media file matches {metadata.video_id}.*")
     return DownloadResult(video_path=media[0], metadata=metadata)

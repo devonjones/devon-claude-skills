@@ -41,6 +41,18 @@ except RuntimeError as e:
     print(f"FAIL low disk still reuses a cached video: {e}"); fail = 1
 (Path(sys.argv[2]) / "dQw4w9WgXcQ.mp4").unlink()
 
+for leftover in ("dQw4w9WgXcQ.f137.mp4.part", "dQw4w9WgXcQ.info.json"):
+    (Path(sys.argv[2]) / leftover).write_bytes(b"x")
+try:
+    video.download("dQw4w9WgXcQ", Path(sys.argv[2]))
+    print("FAIL partial download is not a cached video (no error)"); fail = 1
+except RuntimeError:
+    print("ok   partial download is not a cached video")
+except AssertionError:
+    print("FAIL partial download is not a cached video (guard bypassed)"); fail = 1
+for leftover in ("dQw4w9WgXcQ.f137.mp4.part", "dQw4w9WgXcQ.info.json"):
+    (Path(sys.argv[2]) / leftover).unlink()
+
 video.shutil.disk_usage = lambda p: Usage(10 * 1024**3, 1 * 1024**3, 9 * 1024**3)
 try:
     video.download("dQw4w9WgXcQ", Path(sys.argv[2]))
