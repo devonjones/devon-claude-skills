@@ -16,7 +16,9 @@ from pathlib import Path
 
 try:
     from youtube_transcript_api import YouTubeTranscriptApi
-except ImportError:
+except ModuleNotFoundError as exc:
+    if exc.name != "youtube_transcript_api":
+        raise
     sys.exit("error: youtube-transcript-api is not installed; run this script directly "
              "or with `uv run --script`, not with python3")
 

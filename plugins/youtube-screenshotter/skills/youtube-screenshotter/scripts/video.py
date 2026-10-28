@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --script
+# A 403 with node present means YouTube outran yt-dlp: raise the yt-dlp floor below
+# and in extract.py and discover.py. uv never upgrades an unpinned dep in a cached script env.
 # /// script
 # requires-python = ">=3.10"
 # dependencies = ["yt-dlp[default]>=2026.10.21"]
