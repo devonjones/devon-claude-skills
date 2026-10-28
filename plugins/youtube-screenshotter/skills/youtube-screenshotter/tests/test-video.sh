@@ -41,6 +41,24 @@ except RuntimeError as e:
     print(f"FAIL low disk still reuses a cached video: {e}"); fail = 1
 (Path(sys.argv[2]) / "dQw4w9WgXcQ.mp4").unlink()
 
+(Path(sys.argv[2]) / "dQw4w9WgXcQ.webm").write_bytes(b"cached")
+try:
+    video.download("https://www.youtube.com/live/dQw4w9WgXcQ", Path(sys.argv[2]))
+    print("FAIL a cached .webm from a /live/ URL is reused (no yt-dlp call)"); fail = 1
+except AssertionError:
+    print("ok   a cached .webm from a /live/ URL is reused")
+except RuntimeError as e:
+    print(f"FAIL a cached .webm from a /live/ URL is reused: {e}"); fail = 1
+(Path(sys.argv[2]) / "dQw4w9WgXcQ.webm").unlink()
+
+try:
+    video.download("https://example.com/not-youtube", Path(sys.argv[2]))
+    print("FAIL a URL with no video id still gets the disk check (no error)"); fail = 1
+except RuntimeError:
+    print("ok   a URL with no video id still gets the disk check")
+except Exception as e:
+    print(f"FAIL a URL with no video id still gets the disk check: {e!r}"); fail = 1
+
 for leftover in ("dQw4w9WgXcQ.f137.mp4.part", "dQw4w9WgXcQ.info.json"):
     (Path(sys.argv[2]) / leftover).write_bytes(b"x")
 try:

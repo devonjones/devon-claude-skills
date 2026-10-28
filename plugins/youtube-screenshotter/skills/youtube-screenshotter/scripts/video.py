@@ -25,7 +25,7 @@ import yt_dlp
 
 MIN_FREE_BYTES = 3 * 1024**3  # a 720p video plus its frames; a full disk breaks every later step
 MEDIA_SUFFIXES = {".mp4", ".mkv", ".webm"}
-VIDEO_ID_RE = re.compile(r"^([\w-]{11})$|(?:v=|youtu\.be/|/embed/|/shorts/|/v/)([\w-]{11})")
+VIDEO_ID_RE = re.compile(r"^([\w-]{11})$|(?:v=|youtu\.be/|/embed/|/shorts/|/live/|/v/)([\w-]{11})")
 
 
 def _is_cached(url: str, output_dir: Path) -> bool:
