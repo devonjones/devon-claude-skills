@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["yt-dlp", "imagehash>=4.3", "Pillow>=10"]
+# dependencies = ["yt-dlp[default]>=2026.10.21", "imagehash>=4.3", "Pillow>=10"]
 # ///
 """Discover candidate timestamps for the synthesizer.
 
@@ -235,6 +235,8 @@ def discover(
     if target_path.exists() and target_path.is_file():
         video_path = target_path
         duration = probe_duration(target_path)
+    elif "://" not in target and ("/" in target or target_path.suffix.lower() in {".mp4", ".mkv", ".webm"}):
+        raise RuntimeError(f"no such video file: {target}")
     else:
         result = download(target, work_dir, skip_download=False)
         video_path = result.video_path

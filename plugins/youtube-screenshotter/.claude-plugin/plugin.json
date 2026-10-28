@@ -1,7 +1,7 @@
 {
   "name": "youtube-screenshotter",
   "description": "Download YouTube videos and extract frames at given timestamps with perceptual hashes (mechanical, no LLM)",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": {
     "name": "Devon Jones"
   }

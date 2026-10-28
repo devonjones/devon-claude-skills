@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["yt-dlp", "imagehash>=4.3", "Pillow>=10"]
+# dependencies = ["yt-dlp[default]>=2026.10.21", "imagehash>=4.3", "Pillow>=10"]
 # ///
 """Unified screenshotter extract command.
 

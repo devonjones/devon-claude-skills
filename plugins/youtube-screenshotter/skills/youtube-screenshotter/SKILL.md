@@ -115,4 +115,5 @@ Accepted inputs:
 
 - `uv` — installs Python deps in an ephemeral venv per invocation. `curl -LsSf https://astral.sh/uv/install.sh | sh` or `pip install uv`.
 - `ffmpeg` — required for frame extraction and yt-dlp's video+audio merge. `sudo apt install ffmpeg` (Linux), `brew install ffmpeg` (macOS).
+- `node` or `deno` on PATH — yt-dlp needs a JavaScript runtime for YouTube, or downloads fail with HTTP 403. A 403 with a runtime present usually means YouTube outran yt-dlp: raise the `yt-dlp[default]>=` floor in `video.py`, `extract.py` and `discover.py`. uv never upgrades an unpinned dependency in a script's cached environment.
 - Network access to `youtube.com` and `googlevideo.com` for downloads.

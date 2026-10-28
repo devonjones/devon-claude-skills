@@ -14,7 +14,11 @@ import re
 import sys
 from pathlib import Path
 
-from youtube_transcript_api import YouTubeTranscriptApi
+try:
+    from youtube_transcript_api import YouTubeTranscriptApi
+except ImportError:
+    sys.exit("error: youtube-transcript-api is not installed; run this script directly "
+             "or with `uv run --script`, not with python3")
 
 VIDEO_ID_RE = re.compile(
     r"[?&]v=([a-zA-Z0-9_-]{11})"                                                  # watch?...&v=ID anywhere in the query
