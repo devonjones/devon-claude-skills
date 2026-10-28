@@ -30,10 +30,13 @@ ok = a.size == (1920, 1080) and b.size == (1920, 360)
 print("ok   sheet sizes follow the grid" if ok else f"FAIL sheet sizes {a.size} {b.size}")
 # testsrc has no pure yellow in a cell's top-left corner; the label does.
 px = a.convert("RGB").load()
-yellow = sum(1 for x in range(200) for y in range(60)
-             if px[x, y][0] > 200 and px[x, y][1] > 200 and px[x, y][2] < 80)
-print("ok   labels are drawn" if yellow > 20 else f"FAIL labels are drawn ({yellow} yellow px)")
-sys.exit(0 if ok and yellow > 20 else 1)
+def yellow(x0, y0):
+    return sum(1 for x in range(x0, x0 + 200) for y in range(y0, y0 + 60)
+               if px[x, y][0] > 200 and px[x, y][1] > 200 and px[x, y][2] < 80)
+first, last = yellow(0, 0), yellow(1280, 720)  # cells 1 and 9 of the 3x3 sheet
+drawn = first > 20 and last > 20
+print("ok   labels are drawn in each cell" if drawn else f"FAIL labels are drawn ({first}, {last} yellow px)")
+sys.exit(0 if ok and drawn else 1)
 PY
 
 uv run -q --with 'Pillow>=10.1' python - "$SCRIPTS" "$TMP" <<'PY' || fail=1
