@@ -20,7 +20,7 @@ Optional:
 - **`<vault>`** — absolute path to the target Obsidian vault, **or** a vault name relative to `~/ObsidianVaults/`. The skill writes to `<vault>/sources/videos/<ingested-date>-<sanitized-title>/`. If omitted, see Phase D.1 for the discovery flow.
 - **`--rerun`** — overwrite an existing entry at the target path. Without this flag, the skill refuses to overwrite (Phase D.2).
 - **`--why <reason>`** — populate the `why_ingested` frontmatter field. If omitted, leave it as an empty string; the user can fill it in after.
-- **`--keep-video`** — keep `<work_dir>` (the downloaded video, frames and sheets) after the run, for debugging. Otherwise the skill deletes the video after Phase A and the rest of `<work_dir>` after D.5.
+- **`--keep-video`** — keep `<work_dir>` (the downloaded video, frames and sheets) after the run, for debugging.
 - **`--no-sync`** — skip the post-write Dropbox sync prompt (Phase D.6). Otherwise the skill asks after a successful write whether to push the new entry to `dropbox:ObsidianVaults/<vault-name>/sources/videos/<channel>/<entry-dir>/`.
 
 If `<URL>` is missing, ask the user before starting work — do not guess. `<vault>` resolution is described in Phase D.1; do not guess that either.
@@ -363,7 +363,7 @@ Then check the body against the transcript:
 
 It fails on any word in the chapter prose that differs from the transcript and isn't a logged `transcript_corrections` entry; case, punctuation and paragraph breaks don't count. On failure, restore the transcript's words at each reported spot (or log the soft-correct, if it is one under C.7) and re-run until it passes.
 
-Once the check passes, the kept frames live in `<entry_dir>`. Unless `--keep-video` was passed, remove the scratch directory: `rm -rf <work_dir>`.
+Once the check passes, unless `--keep-video` was passed, remove the scratch directory: `rm -rf <work_dir>`.
 
 Print a clear success message with the absolute path to the .md file so the user knows where to open it.
 

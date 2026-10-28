@@ -32,6 +32,26 @@ except AssertionError:
     print("FAIL low disk refuses to download (yt-dlp was reached)"); fail = 1
 
 try:
+    (Path(sys.argv[2]) / "dQw4w9WgXcQ.mp4").write_bytes(b"cached")
+    video.download("https://youtu.be/dQw4w9WgXcQ", Path(sys.argv[2]))
+    print("FAIL low disk still reuses a cached video (no yt-dlp call)"); fail = 1
+except AssertionError:
+    print("ok   low disk still reuses a cached video")
+except RuntimeError as e:
+    print(f"FAIL low disk still reuses a cached video: {e}"); fail = 1
+(Path(sys.argv[2]) / "dQw4w9WgXcQ.mp4").unlink()
+
+video.shutil.disk_usage = lambda p: Usage(10 * 1024**3, 1 * 1024**3, 9 * 1024**3)
+try:
+    video.download("dQw4w9WgXcQ", Path(sys.argv[2]))
+    print("FAIL ample disk downloads (no yt-dlp call)"); fail = 1
+except AssertionError:
+    print("ok   ample disk downloads")
+except RuntimeError as e:
+    print(f"FAIL ample disk downloads: {e}"); fail = 1
+
+video.shutil.disk_usage = lambda p: Usage(10 * 1024**3, 9 * 1024**3, 1 * 1024**3)
+try:
     video.download("dQw4w9WgXcQ", Path(sys.argv[2]), skip_download=True)
     print("FAIL metadata-only probe skips the disk check (no yt-dlp call)"); fail = 1
 except AssertionError:
