@@ -134,7 +134,7 @@ for x in range(10):
     process(x)
 ```
 
-Each block gets a one-line lead-in noting the timestamp it came from, so the reader can locate the visual context.
+Each block's first line is a comment noting the timestamp it came from, as above, so the reader can locate the visual context. Keep it inside the fence: in chapter prose, `check_fidelity.py` (D.5) checks every line outside a fence against the transcript.
 
 ### C.6. Tags + topics
 
