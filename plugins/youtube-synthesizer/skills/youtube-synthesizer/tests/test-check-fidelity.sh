@@ -22,7 +22,7 @@ CORR='transcript_corrections:
     corrected: "scales"
     timestamp: 5.0'
 
-entry "$CORR" $'## Chapter 1\n\nSo the ox is slow, and it eats a lot. Which means a farm\n\n![[image-01.png]]\n\nneeds scales for measurement.\n\nIt runs:\n\n```sh\nplow --deep\n```\n\n## Chapter 2\n\nChapter two: the wagon.'
+entry "$CORR" $'## Chapter 1\n\nSo the ox is slow, and it eats a lot. Which means a farm\n\n![[image-01.png]]\n\nneeds scales for measurement.\n\nAt 00:05 it runs:\n\n```sh\nplow --deep\n```\n\n## Chapter 2\n\nChapter two: the wagon.'
 check "faithful body with logged correction passes" '[[ $rc -eq 0 && $out == ok* ]]'
 
 entry "transcript_corrections: []" $'## Body\n\nSo the ox is slow and it eats a lot. Which means a farm needs scales for measurement. Chapter two the wagon.'
@@ -105,6 +105,24 @@ seq 1 30 | sed 's/^/a w/' | tr '\n' ' ' > "$TMP/many.txt"
 printf -- '## Body\n\n%s\n' "$(seq 1 30 | sed 's/^/a x/' | tr '\n' ' ')" > "$TMP/m.md"
 out=$("$SCRIPT" "$TMP/many.txt" "$TMP/m.md" 2>&1)
 check "long difference lists are truncated" '[[ $(wc -l <<<"$out") -eq 22 && $out == *"... and 10 more"* ]]'
+
+entry "$CORR" $'## Body\n\nSo the ox is slow and it eats a lot. Which means a farm needs scales for measurement. Chapter two the wagon.\n\nAnd I made this up:\n\n```\nx\n```'
+check "a line ending in : with no timestamp above a fence is checked as prose" '[[ $rc -eq 1 && $out == *"and i made this up"* ]]'
+
+entry 'transcript_corrections:
+  - original: "eats a lot"
+    corrected: ""' $'## Body\n\nSo the ox is slow and it. Which means a farm needs kills for measurement. Chapter two the wagon.'
+check "a deleting correction is an error" '[[ $rc -eq 1 && $out == *"never delete"* ]]'
+
+printf 'the ox kills\nthe cart kills\n' > "$TMP/plain2.txt"
+printf -- '---\ntranscript_corrections:\n  - original: kills\n    corrected: skills\n    timestamp: 40.0\n---\n\n## Body\n\nthe ox skills the cart kills\n' > "$TMP/w.md"
+out=$("$SCRIPT" "$TMP/plain2.txt" "$TMP/w.md" 2>&1); rc=$?
+check "untimestamped transcript with a timestamped correction uses the first occurrence" '[[ $rc -eq 0 ]]'
+
+printf '[00:01] it costs 10 coins\n' > "$TMP/num.txt"
+printf -- '---\ntranscript_corrections:\n  - original: 10\n    corrected: 12\n    timestamp: 1\n---\n\n## Body\n\nIt costs 12 coins.\n' > "$TMP/n.md"
+out=$("$SCRIPT" "$TMP/num.txt" "$TMP/n.md" 2>&1); rc=$?
+check "numeric original/corrected in YAML work" '[[ $rc -eq 0 ]]'
 
 : > "$TMP/empty.txt"
 out=$("$SCRIPT" "$TMP/empty.txt" "$TMP/p.md" 2>&1); rc=$?

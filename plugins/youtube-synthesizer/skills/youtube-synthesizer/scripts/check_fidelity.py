@@ -11,7 +11,8 @@ Case, punctuation, apostrophes and paragraph breaks are ignored. Each
 logged `transcript_corrections` entry is applied to the transcript first, at
 the occurrence of its `original` nearest its `timestamp`; any other
 difference fails. Image embeds, fenced code blocks and a code block's
-one-line lead-in (the line ending in `:` just above the fence) are skipped.
+one-line lead-in (the line just above the fence that ends in `:` and names
+its timestamp, per C.5) are skipped.
 
 Usage:
     check_fidelity.py <transcript.txt> <entry.md>
@@ -32,6 +33,7 @@ import yaml
 NON_PROSE_SECTIONS = {"tl;dr", "key takeaways", "references", "commands & code"}
 TIMESTAMP_RE = re.compile(r"^\[(?:(\d+):)?(\d+):(\d+)\]\s*")
 WORD_RE = re.compile(r"[^\W_]+(?:'[^\W_]+)*")
+LEAD_IN_RE = re.compile(r".*\b\d{1,2}:\d{2}\b.*:\s*$")
 MAX_REPORTED = 20
 
 
@@ -76,7 +78,7 @@ def body_prose(body: str) -> str:
         if stripped.startswith("```"):
             while not in_fence and kept and not kept[-1].strip():
                 kept.pop()
-            if not in_fence and in_prose and kept and kept[-1].rstrip().endswith(":"):
+            if not in_fence and in_prose and kept and LEAD_IN_RE.fullmatch(kept[-1]):
                 kept.pop()  # the code block's lead-in
             in_fence = not in_fence
             continue
@@ -101,10 +103,12 @@ def apply_corrections(src: list[str], stamps: list, frontmatter: dict) -> None:
         at = c.get("timestamp")
         hits = [i for i in range(len(src) - len(orig) + 1)
                 if orig and src[i:i + len(orig)] == orig]
+        if not corr:
+            raise ValueError(f"transcript_corrections entry {n}: soft-corrects replace words, never delete them")
         if not hits:
             raise ValueError(f"transcript_corrections entry {n}: {c.get('original')!r} is not in the transcript")
-        if isinstance(at, (int, float)) and stamps[hits[0]] is not None:
-            hits.sort(key=lambda i: abs(stamps[i] - at))
+        if isinstance(at, (int, float)):
+            hits.sort(key=lambda i: abs(stamps[i] - at) if stamps[i] is not None else float("inf"))
         i, end = hits[0], hits[0] + len(orig)
         src[i:end], stamps[i:end] = corr, [stamps[i]] * len(corr)
 
