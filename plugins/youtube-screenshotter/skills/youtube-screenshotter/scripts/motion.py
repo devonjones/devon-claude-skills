@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["opencv-python-headless>=4.9", "numpy>=1.26", "Pillow>=10"]
+# dependencies = ["opencv-python-headless>=4.9", "numpy>=1.26", "Pillow>=10.1"]
 # ///
 """Motion-bisection primitive: detect progressive animation and score frames by subject-centeredness.
 
@@ -44,11 +44,11 @@ from pathlib import Path
 
 import cv2  # type: ignore
 import numpy as np
-from PIL import Image
 
 # Allow sibling imports when run via `uv run --script` from any cwd.
 sys.path.insert(0, str(Path(__file__).parent))
 from frames import extract_frames as _extract_full_res  # noqa: E402
+from grid import compose_sprite_grid  # noqa: E402
 
 
 DEFAULT_FPS = 4
@@ -373,40 +373,6 @@ def pick_grid_shape(n_frames: int, preferred_cols: int = DEFAULT_SPRITE_COLS) ->
     cols = preferred_cols
     rows = (n_frames + cols - 1) // cols
     return (cols, rows)
-
-
-def compose_sprite_grid(
-    frame_paths: list[Path],
-    out_path: Path,
-    *,
-    cols: int = DEFAULT_SPRITE_COLS,
-    max_width: int = DEFAULT_SPRITE_MAX_WIDTH,
-) -> None:
-    """Composite frames into a Brady-Bunch grid (rows × cols), reading order.
-
-    Each cell is scaled so the total grid width is ≤ `max_width`; the cell
-    height is derived from the source frame's aspect ratio. Frames are
-    pasted in time order, left-to-right then top-to-bottom. If the frame
-    count isn't a perfect multiple of `cols`, the trailing cells in the last
-    row are left black.
-    """
-    if not frame_paths:
-        raise ValueError("no frames to compose")
-    images = [Image.open(p).convert("RGB") for p in frame_paths]
-    rows = (len(images) + cols - 1) // cols
-    src_w, src_h = images[0].size
-    cell_w = max_width // cols
-    # Preserve source aspect ratio in cells.
-    cell_h = round(cell_w * src_h / src_w)
-    total_w = cell_w * cols
-    total_h = cell_h * rows
-    sprite = Image.new("RGB", (total_w, total_h), color=(0, 0, 0))
-    for i, img in enumerate(images):
-        scaled = img.resize((cell_w, cell_h), Image.LANCZOS)
-        col = i % cols
-        row = i // cols
-        sprite.paste(scaled, (col * cell_w, row * cell_h))
-    sprite.save(out_path, format="PNG", optimize=True)
 
 
 def _sample_dict(s: Sample) -> dict:

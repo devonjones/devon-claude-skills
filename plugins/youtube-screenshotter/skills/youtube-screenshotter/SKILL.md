@@ -1,6 +1,6 @@
 ---
 name: youtube-screenshotter
-description: Download a YouTube video and extract frames at specified timestamps with perceptual hashes; also discovers candidate timestamps via ffmpeg scene-detect + per-second pHash run-grouping; analyses optical flow over a sub-range and composes a sprite grid showing a motion arc. Use when capturing specific moments from a video as PNG images, or when a downstream skill (e.g. youtube-synthesizer) needs a high-recall list of where things change in the video. Mechanical only — no LLM calls.
+description: Download a YouTube video and extract frames at specified timestamps with perceptual hashes; also discovers candidate timestamps via ffmpeg scene-detect + per-second pHash run-grouping; analyses optical flow over a sub-range and composes a sprite grid showing a motion arc; tiles extracted frames into labeled 3x3 contact sheets for cheap triage. Use when capturing specific moments from a video as PNG images, or when a downstream skill (e.g. youtube-synthesizer) needs a high-recall list of where things change in the video. Mechanical only — no LLM calls.
 ---
 
 # YouTube Screenshotter
@@ -70,6 +70,8 @@ scripts/motion.py <video> --start S --end E [--fps 4] [-o DIR]
 ```
 
 Whether to sprite a span, pick a single frame, or annotate in text is the caller's decision (`youtube-synthesizer` Phase A.5).
+
+`scripts/grid.py <extract-manifest.json> -o DIR [--cols 3] [--rows 3]` tiles an `extract.py` manifest's frames into labeled contact sheets (`DIR/sheet-NN.jpg`, nine frames each by default, each cell labeled `#<n> <MM:SS>`) and prints `[{sheet, cells: [{label, timestamp, frame_path}]}]`.
 
 ### Discover manifest shape
 
