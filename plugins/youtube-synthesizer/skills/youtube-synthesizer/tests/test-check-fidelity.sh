@@ -22,7 +22,7 @@ CORR='transcript_corrections:
     corrected: "scales"
     timestamp: 5.0'
 
-entry "$CORR" $'## Chapter 1\n\nSo the ox is slow, and it eats a lot. Which means a farm\n\n![[image-01.png]]\n\nneeds scales for measurement.\n\nAt 00:05 it runs:\n\n```sh\nplow --deep\n```\n\n## Chapter 2\n\nChapter two: the wagon.'
+entry "$CORR" $'## Chapter 1\n\nSo the ox is slow, and it eats a lot. Which means a farm\n\n![[image-01.png]]\n\nneeds scales for measurement.\n\n```sh\n# at 00:05\nplow --deep\n```\n\n## Chapter 2\n\nChapter two: the wagon.'
 check "faithful body with logged correction passes" '[[ $rc -eq 0 && $out == ok* ]]'
 
 entry "transcript_corrections: []" $'## Body\n\nSo the ox is slow and it eats a lot. Which means a farm needs scales for measurement. Chapter two the wagon.'
@@ -106,8 +106,8 @@ printf -- '## Body\n\n%s\n' "$(seq 1 30 | sed 's/^/a x/' | tr '\n' ' ')" > "$TMP
 out=$("$SCRIPT" "$TMP/many.txt" "$TMP/m.md" 2>&1)
 check "long difference lists are truncated" '[[ $(wc -l <<<"$out") -eq 22 && $out == *"... and 10 more"* ]]'
 
-entry "$CORR" $'## Body\n\nSo the ox is slow and it eats a lot. Which means a farm needs scales for measurement. Chapter two the wagon.\n\nAnd I made this up:\n\n```\nx\n```'
-check "a line ending in : with no timestamp above a fence is checked as prose" '[[ $rc -eq 1 && $out == *"and i made this up"* ]]'
+entry "$CORR" $'## Body\n\nSo the ox is slow and it eats a lot. Which means a farm needs scales for measurement. Chapter two the wagon.\n\nAt 00:05 I made this up:\n\n```\nx\n```'
+check "text above a fence is checked as prose" '[[ $rc -eq 1 && $out == *"at 00 05 i made this up"* ]]'
 
 entry 'transcript_corrections:
   - original: "eats a lot"
@@ -123,6 +123,28 @@ printf '[00:01] it costs 10 coins\n' > "$TMP/num.txt"
 printf -- '---\ntranscript_corrections:\n  - original: 10\n    corrected: 12\n    timestamp: 1\n---\n\n## Body\n\nIt costs 12 coins.\n' > "$TMP/n.md"
 out=$("$SCRIPT" "$TMP/num.txt" "$TMP/n.md" 2>&1); rc=$?
 check "numeric original/corrected in YAML work" '[[ $rc -eq 0 ]]'
+
+entry "$CORR" $'## Body\n\nSo the ox is slow and it eats a lot. Which means a farm needs scales for measurement.\n\n### My heading\n\nChapter two the wagon.'
+check "a sub-heading's words are checked" '[[ $rc -eq 1 && $out == *"my heading"* ]]'
+
+printf '[59:59] the ox\n[1:02:03] the cart\n' > "$TMP/hour.txt"
+printf -- '## Body\n\nThe ox the wagon.\n' > "$TMP/h.md"
+out=$("$SCRIPT" "$TMP/hour.txt" "$TMP/h.md" 2>&1)
+check "H:MM:SS timestamps are reported with the hour" '[[ $out == *"[01:02:03]"*"cart"* ]]'
+printf -- '---\ntranscript_corrections:\n  - original: the\n    corrected: a\n    timestamp: 3723\n---\n\n## Body\n\nThe ox a cart.\n' > "$TMP/h.md"
+"$SCRIPT" "$TMP/hour.txt" "$TMP/h.md" >/dev/null 2>&1
+check "an hour-long correction timestamp picks the right occurrence" '[[ $? -eq 0 ]]'
+
+printf 'किताब café\n' > "$TMP/marks.txt"
+printf -- '## Body\n\nकाताब cafe\xcc\x81.\n' > "$TMP/k.md"
+out=$("$SCRIPT" "$TMP/marks.txt" "$TMP/k.md" 2>&1); rc=$?
+check "a changed combining mark fails" '[[ $rc -eq 1 && $out == *"किताब"* ]]'
+printf -- '## Body\n\nकिताब cafe\xcc\x81.\n' > "$TMP/k.md"
+"$SCRIPT" "$TMP/marks.txt" "$TMP/k.md" >/dev/null 2>&1
+check "NFD and NFC spellings match" '[[ $? -eq 0 ]]'
+printf -- '## Body\n\nकिताब cafe.\n' > "$TMP/k.md"
+"$SCRIPT" "$TMP/marks.txt" "$TMP/k.md" >/dev/null 2>&1
+check "a dropped accent fails" '[[ $? -eq 1 ]]'
 
 : > "$TMP/empty.txt"
 out=$("$SCRIPT" "$TMP/empty.txt" "$TMP/p.md" 2>&1); rc=$?

@@ -10,9 +10,8 @@ Key takeaways, References and Commands & Code) against the transcript.
 Case, punctuation, apostrophes and paragraph breaks are ignored. Each
 logged `transcript_corrections` entry is applied to the transcript first, at
 the occurrence of its `original` nearest its `timestamp`; any other
-difference fails. Image embeds, fenced code blocks and a code block's
-one-line lead-in (the line just above the fence that ends in `:` and names
-its timestamp, per C.5) are skipped.
+difference fails. Image embeds and fenced code blocks are skipped; anything
+else in the prose, including a code block's lead-in, must be transcript.
 
 Usage:
     check_fidelity.py <transcript.txt> <entry.md>
@@ -26,19 +25,20 @@ import argparse
 import difflib
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 import yaml
 
 NON_PROSE_SECTIONS = {"tl;dr", "key takeaways", "references", "commands & code"}
 TIMESTAMP_RE = re.compile(r"^\[(?:(\d+):)?(\d+):(\d+)\]\s*")
-WORD_RE = re.compile(r"[^\W_]+(?:'[^\W_]+)*")
-LEAD_IN_RE = re.compile(r".*\b\d{1,2}:\d{2}\b.*:\s*$")
 MAX_REPORTED = 20
 
 
 def words(text: str) -> list[str]:
-    return [w.replace("'", "") for w in WORD_RE.findall(text.lower().replace("’", "'"))]
+    """Split on punctuation and whitespace; letters, digits, marks and symbols are word."""
+    text = unicodedata.normalize("NFC", text.lower()).replace("'", "").replace("’", "")
+    return "".join(" " if unicodedata.category(ch)[0] in "PZC" else ch for ch in text).split()
 
 
 def transcript_words(text: str) -> tuple[list[str], list[float | None]]:
@@ -76,10 +76,6 @@ def body_prose(body: str) -> str:
     for line in body.splitlines():
         stripped = line.strip()
         if stripped.startswith("```"):
-            while not in_fence and kept and not kept[-1].strip():
-                kept.pop()
-            if not in_fence and in_prose and kept and LEAD_IN_RE.fullmatch(kept[-1]):
-                kept.pop()  # the code block's lead-in
             in_fence = not in_fence
             continue
         if in_fence:

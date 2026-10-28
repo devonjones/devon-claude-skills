@@ -339,7 +339,7 @@ Notes:
 - Image embeds use Obsidian's wikilink form `![[image-NN.png]]` since the file is in the same per-note folder. This renders inline in Obsidian and remains a valid relative reference if the entry is moved.
 - Times in the source line are formatted as `MM:SS` for videos under an hour, `HH:MM:SS` otherwise.
 - Images appear inline at their timestamps inside the chapter prose. They do **not** appear in the consolidated `## Commands & Code` section — that section is text-only.
-- Code blocks attributed to a specific timestamp may appear inline in the prose at that point (with a one-line lead-in) **and** are also collected in the `## Commands & Code` section at the bottom. Duplication is intentional: inline gives narrative context, the bottom section is the user's quick-reference index.
+- Code blocks attributed to a specific timestamp may appear inline in the prose at that point (its timestamp lead-in is the block's first comment line, per C.5) **and** are also collected in the `## Commands & Code` section at the bottom. Duplication is intentional: inline gives narrative context, the bottom section is the user's quick-reference index.
 
 ### D.5. Write the file
 
