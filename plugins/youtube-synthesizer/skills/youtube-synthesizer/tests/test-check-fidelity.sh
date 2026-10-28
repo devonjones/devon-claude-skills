@@ -44,7 +44,7 @@ check "null transcript_corrections, verbatim body passes" '[[ $rc -eq 0 ]]'
 entry 'transcript_corrections:
   - original: ""
     corrected: "very"' $'## Body\n\nSo the very ox is slow and it eats a lot. Which means a farm needs kills for measurement. Chapter two the wagon.'
-check "correction with an empty side excuses nothing" '[[ $rc -eq 1 ]]'
+check "correction with an empty original is an error" '[[ $rc -eq 1 && $out == error:* ]]'
 
 entry 'transcript_corrections:
   - original: "farm"
@@ -52,6 +52,35 @@ entry 'transcript_corrections:
   - original: "needs"
     corrected: "wants"' $'## Body\n\nSo the ox is slow and it eats a lot. Which means a barn wants kills for measurement. Chapter two the wagon.'
 check "adjacent logged corrections pass" '[[ $rc -eq 0 ]]'
+
+entry 'transcript_corrections:
+  - original: "a farm needs"
+    corrected: "a big farm needs"
+  - original: "eats a"
+    corrected: "eats the"' $'## Body\n\nSo the ox is slow and it eats the lot. Which means a big farm needs kills for measurement. Chapter two the wagon.'
+check "corrections logged with unchanged context words pass" '[[ $rc -eq 0 ]]'
+
+entry 'transcript_corrections:
+  - original: "barn"
+    corrected: "farm"' $'## Body\n\nSo the ox.'
+check "correction whose original is not in the transcript is an error" '[[ $rc -eq 1 && $out == *"not in the transcript"* ]]'
+
+entry "$CORR" $'## Body\n\nSo the ox is slow and it eats a lot. Which means a farm needs scales for measurement. Chapter two the wagon. And then it rained.'
+check "words past the transcript's end fail at its last timestamp" '[[ $rc -eq 1 && $out == *"[01:02]"*"and then it rained"* ]]'
+
+entry "$CORR" $'## Body\n\nSo the ox is slow and it eats a lot. Which means a farm needs scales for measurement. Chapter two the wagon.\n\n```\nmade up words'
+check "unclosed code fence is an error" '[[ $rc -eq 1 && $out == *"unclosed"* ]]'
+
+printf -- '---\n- a list\n---\n\n## Body\n\nSo the ox.\n' > "$TMP/l.md"
+out=$("$SCRIPT" "$TMP/t.txt" "$TMP/l.md" 2>&1); rc=$?
+check "non-mapping frontmatter is an error" '[[ $rc -eq 1 && $out == error:*"not a key"* ]]'
+
+printf '[00:01] the ox kills\n[00:40] the cart kills\n' > "$TMP/twice.txt"
+for body in "the ox kills the cart skills:0" "the ox skills the cart kills:1"; do
+  printf -- '---\ntranscript_corrections:\n  - original: kills\n    corrected: skills\n    timestamp: 40.0\n---\n\n## Body\n\n%s\n' "${body%:*}" > "$TMP/w.md"
+  "$SCRIPT" "$TMP/twice.txt" "$TMP/w.md" >/dev/null 2>&1
+  check "correction applies only at the occurrence nearest its timestamp (${body%:*})" '[[ $? -eq ${body#*:} ]]'
+done
 
 entry 'transcript_corrections:
   - "kills -> scales"' $'## Body\n\nSo the ox.'
