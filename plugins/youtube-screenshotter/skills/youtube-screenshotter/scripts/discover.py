@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["yt-dlp", "imagehash>=4.3", "Pillow>=10"]
+# dependencies = ["yt-dlp[default]>=2026.10.21", "imagehash>=4.3", "Pillow>=10"]
 # ///
 """Discover candidate timestamps for the synthesizer.
 
@@ -53,6 +53,7 @@ from video import download  # noqa: E402
 DEFAULT_SCENE_THRESHOLD = 0.2
 DEFAULT_PHASH_THRESHOLD = 12  # Hamming; ~12 merges talking-head microexpressions
 DEFAULT_MIN_RUN = 3.0  # seconds a run must hold to count as sustained content
+VIDEO_SUFFIXES = {".mp4", ".mkv", ".webm"}
 DEDUP_PROXIMITY = 1.0  # seconds — entries within this window are deduped
 
 
@@ -218,6 +219,11 @@ def union_candidates(
 # --- top-level ------------------------------------------------------------
 
 
+def looks_like_path(target: str) -> bool:
+    """True for a local file path; False for a URL (with or without scheme) or ID."""
+    return target.startswith(("/", "./", "../", "~")) or Path(target).suffix.lower() in VIDEO_SUFFIXES
+
+
 def discover(
     target: str,
     work_dir: Path,
@@ -235,6 +241,8 @@ def discover(
     if target_path.exists() and target_path.is_file():
         video_path = target_path
         duration = probe_duration(target_path)
+    elif looks_like_path(target):
+        raise RuntimeError(f"no such video file: {target}")
     else:
         result = download(target, work_dir, skip_download=False)
         video_path = result.video_path
@@ -313,7 +321,8 @@ def main() -> int:
             min_run=args.min_run,
         )
     except (yt_dlp.utils.DownloadError, RuntimeError, OSError, subprocess.CalledProcessError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        detail = f"\n{exc.stderr.strip()[-2000:]}" if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else ""
+        print(f"error: {exc}{detail}", file=sys.stderr)
         return 1
 
     print(json.dumps(manifest, indent=2))

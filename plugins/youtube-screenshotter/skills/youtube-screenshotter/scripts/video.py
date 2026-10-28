@@ -1,7 +1,9 @@
 #!/usr/bin/env -S uv run --script
+# A 403 with node present means YouTube outran yt-dlp: raise the yt-dlp floor below
+# and in extract.py and discover.py. uv never upgrades an unpinned dep in a cached script env.
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["yt-dlp"]
+# dependencies = ["yt-dlp[default]>=2026.10.21"]
 # ///
 """Download a YouTube video at 720p and emit metadata.
 
@@ -93,7 +95,11 @@ def download(url: str, output_dir: Path, *, skip_download: bool = False) -> Down
         "outtmpl": output_template,
         "merge_output_format": "mp4",
         "quiet": True,
+        "noprogress": True,  # progress bars go to stdout and corrupt the JSON
         "no_warnings": True,
+        # Without a JS runtime YouTube's https formats 403. yt-dlp enables only
+        # deno by default; node is the one most boxes already have.
+        "js_runtimes": {"deno": {}, "node": {}},
         "noplaylist": True,
         "nooverwrites": True,
         "skip_download": skip_download,
