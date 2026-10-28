@@ -48,6 +48,7 @@ chapter_markers:                       # omit when metadata has none (empty or n
     start_time: 0.0
     end_time: 153.0
 transcript_corrections: []  # populated by Phase C / Phase D as soft-corrects are applied
+punctuation_restored: false  # true when D.4.c added sentence punctuation the captions lacked
 ```
 
 `transcript_corrections` is a list of `{original, corrected, timestamp}` entries logging every soft-correct the synthesizer applied to the auto-caption text. Empty list if no corrections were applied.
