@@ -146,6 +146,14 @@ printf -- '## Body\n\nकिताब cafe.\n' > "$TMP/k.md"
 "$SCRIPT" "$TMP/marks.txt" "$TMP/k.md" >/dev/null 2>&1
 check "a dropped accent fails" '[[ $? -eq 1 ]]'
 
+printf 'it costs 5 coins\n' > "$TMP/sym.txt"
+printf -- '## Body\n\nIt costs $5 coins.\n' > "$TMP/s.md"
+"$SCRIPT" "$TMP/sym.txt" "$TMP/s.md" >/dev/null 2>&1
+check "an added symbol counts as a word change" '[[ $? -eq 1 ]]'
+
+entry "$CORR" $'## Body\n\nSo the ox is slow and it eats a lot. Which means a farm needs scales for measurement. Chapter two the wagon.\n\n  ```\n  x y z\n  ```'
+check "an indented code fence is skipped" '[[ $rc -eq 0 ]]'
+
 : > "$TMP/empty.txt"
 out=$("$SCRIPT" "$TMP/empty.txt" "$TMP/p.md" 2>&1); rc=$?
 check "empty transcript is an error" '[[ $rc -eq 1 && $out == *"no words"* ]]'
