@@ -15,11 +15,14 @@ Foundation for the youtube-screenshotter sampling pipeline. Importable as
 
 import argparse
 import json
+import shutil
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import yt_dlp
+
+MIN_FREE_BYTES = 3 * 1024**3  # a 720p video plus its frames; a full disk breaks every later step
 
 
 @dataclass
@@ -88,6 +91,10 @@ def download(url: str, output_dir: Path, *, skip_download: bool = False) -> Down
     for the synthesizer to populate frontmatter before deciding to do frame work.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
+    free = shutil.disk_usage(output_dir).free
+    if not skip_download and free < MIN_FREE_BYTES:
+        raise RuntimeError(f"only {free / 1024**3:.1f} GiB free in {output_dir}; need "
+                           f"{MIN_FREE_BYTES // 1024**3} GiB to download. Point -o at a disk with more room.")
     output_template = str(output_dir / "%(id)s.%(ext)s")
 
     ydl_opts = {
