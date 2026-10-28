@@ -51,6 +51,10 @@ print("ok   unlabeled grid to a suffix-less path is a PNG" if ok else f"FAIL unl
 sys.exit(0 if ok else 1)
 PY
 
+for s in $(grep -l '^from grid import' "$SCRIPTS"/*.py); do
+  check "$(basename "$s") declares the Pillow floor grid.py needs" 'grep -q "\"Pillow>=10.1\"" "$s"'
+done
+
 out=$("$SCRIPTS/grid.py" "$TMP/missing.json" -o "$TMP/x" 2>&1); rc=$?
 check "missing manifest is an error" '[[ $rc -eq 1 && $out == error:* ]]'
 echo '{"entries": []}' > "$TMP/empty.json"

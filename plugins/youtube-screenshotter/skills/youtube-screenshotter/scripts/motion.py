@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["opencv-python-headless>=4.9", "numpy>=1.26", "Pillow>=10"]
+# dependencies = ["opencv-python-headless>=4.9", "numpy>=1.26", "Pillow>=10.1"]
 # ///
 """Motion-bisection primitive: detect progressive animation and score frames by subject-centeredness.
 
