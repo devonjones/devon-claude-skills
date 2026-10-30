@@ -68,3 +68,36 @@ def test_box_skips_tmp_sessions_by_default(tmp_path, monkeypatch):
     _session(logs, "b", "s2", "/home/someone/gone-repo")
     repos = _box(tmp_path, monkeypatch, logs)
     assert list(repos) == ["/home/someone/gone-repo"]
+
+
+def test_box_counts_cached_selfrun_and_unreadable_sessions(tmp_path, monkeypatch, capfd):
+    logs = tmp_path / "logs"
+    _session(logs, "a", "busy1", "/home/someone/busy")
+    _session(logs, "a", "busy2", "/home/someone/busy")
+    _session(logs, "b", "quiet", "/home/someone/quiet")
+    _session(logs, "c", "self", "/home/someone/quiet", text="/dream")
+    (logs / "c" / "broken.jsonl").mkdir()  # globbed, but open() fails
+
+    repos = _box(tmp_path, monkeypatch, logs)
+    assert list(repos) == ["/home/someone/busy", "/home/someone/quiet"]  # busiest first
+    capfd.readouterr()
+    _box(tmp_path, monkeypatch, logs)
+    err = capfd.readouterr().err  # _echo writes fd 2 directly
+    assert "0 distilled, 3 cached, 1 self-runs" in err and "1 failed" in err
+
+
+def test_box_digest_without_session_id_stays_in_the_dream_home(tmp_path, monkeypatch):
+    logs = tmp_path / "logs"
+    d = logs / "a"
+    d.mkdir(parents=True)
+    (d / "nosid.jsonl").write_text(json.dumps(
+        {"type": "user", "cwd": "/home/someone/x", "message": {"role": "user", "content": "hi"}}))
+    repos = _box(tmp_path, monkeypatch, logs)
+    (s,) = repos["/home/someone/x"]["sessions"]
+    assert s["session_id"] == "nosid"
+    assert s["digest"].startswith(str(tmp_path / "home" / ".dream" / "x" / "digests"))
+
+
+def test_box_missing_log_root_is_an_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert cli.main(["box", "--projects", str(tmp_path / "nope")]) == 1

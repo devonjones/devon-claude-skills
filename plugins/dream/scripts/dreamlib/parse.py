@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 
@@ -48,9 +49,9 @@ _NOISE_PREFIXES = (
     "Reply from ",
 )
 # A message another agent typed into this session's pane: "From modules (pfsrd2): ...",
-# "[From hades mission-control, ...". A hyphenated tab name, or a bare one followed by
-# ":", "," or "(", so "From now on, ..." stays human.
-_RELAY = re.compile(r"\[?From (?:[a-z0-9]+-[a-z0-9-]+\b|[a-z0-9]+(?=[:,]| \())")
+# "From mission-control on valid: ...". A hyphenated tab name, or a bare one followed by
+# ":" or " (", so "From now on, ..." and "From scratch, ..." stay human.
+_RELAY = re.compile(r"From (?:[a-z0-9]+-[a-z0-9-]+\b|[a-z0-9]+(?=:| \())")
 
 DENIAL_MARKERS = ("doesn't want to proceed", "tool use was rejected")
 
@@ -204,7 +205,8 @@ def load_session(path: str) -> Session:
         events.append(ev)
 
     return Session(
-        session_id=session_id or path,
+        # Never the path: callers build digest file names from it.
+        session_id=session_id or os.path.splitext(os.path.basename(path))[0],
         path=path,
         input_hash=input_hash,
         git_branch=git_branch,

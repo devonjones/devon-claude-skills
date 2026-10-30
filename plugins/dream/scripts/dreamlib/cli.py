@@ -172,6 +172,9 @@ def cmd_box(args: argparse.Namespace) -> int:
     long-running tabs keep one session open for days."""
     cutoff = time.time() - args.days * 86400
     projects = os.path.expanduser(args.projects)
+    if not os.path.isdir(projects):
+        _echo(f"box: no Claude Code log root at {projects}")
+        return 1
     dream_root = os.path.expanduser("~/.dream")
     files = sorted(
         f for f in glob.glob(os.path.join(projects, "*", "*.jsonl"))
@@ -180,7 +183,7 @@ def cmd_box(args: argparse.Namespace) -> int:
     enrich = _model_enricher(args.model, args.url) if args.with_model else None
 
     repos: dict[str, dict] = {}
-    done = cached = selfrun = tmp = failed = 0
+    done = cached = selfrun = tmp = failed = model_failed = 0
     for i, f in enumerate(files, 1):
         try:
             session = load_session(f)
@@ -209,6 +212,7 @@ def cmd_box(args: argparse.Namespace) -> int:
             digest = _write_digest(session, dpath, enrich, args.model, args.url,
                                    f"[{i}/{len(files)}]")
             done += 1
+            model_failed += "model_error" in digest
         entry = repos.setdefault(repo, {"repo": repo, "slug": slug,
                                         "memory_dirs": [], "sessions": []})
         mem = os.path.join(logdir, "memory")
@@ -239,7 +243,8 @@ def cmd_box(args: argparse.Namespace) -> int:
         print(f"{len(r['sessions']):4d} sessions  {corr:4d} corrections  {r['repo']}")
     _echo(
         f"box: {len(ordered)} repos, {done} distilled, {cached} cached, "
-        f"{selfrun} self-runs, {tmp} under /tmp skipped, {failed} failed -> {manifest}"
+        f"{selfrun} self-runs, {tmp} under /tmp skipped, {failed} failed, "
+        f"{model_failed} model failures -> {manifest}"
     )
     return 0
 

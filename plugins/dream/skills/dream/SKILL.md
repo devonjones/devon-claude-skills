@@ -54,12 +54,12 @@ in `~/.dream/<slug>/digests/` — only new sessions re-distill.
 ```
 
 Distills every session under `~/.claude/projects` modified in the window,
-grouped by repo: worktrees fold into their main checkout, nested repos stay
-separate, and a non-git directory is its own group. Live sessions are
+grouped by repo: a worktree that still exists folds into its main checkout,
+nested repos stay separate, and a non-git directory, or one that no longer
+exists, is its own group. Live sessions are
 included, since long-running tabs keep one session open for days. Sessions
 whose cwd is under `/tmp` are skipped unless `--include-tmp`. The local model
-is off unless `--with-model`; on the first box-wide pilot it added cost and
-found nothing the heuristic digest missed. Writes
+is off unless `--with-model`. Writes
 `~/.dream/box/<YYYYMMDD>-box.json`: each repo with its sessions (digest path,
 human-turn, correction and denial counts) and its memory dirs, the first place
 to dedup against.

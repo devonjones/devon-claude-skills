@@ -103,9 +103,11 @@ def test_relayed_and_background_notices_are_not_human_turns(session_jsonl):
         _user("From mission-control on valid: done"),
         _user("[Cross-session idle notice] skills is idle"),
         _user("From now on, run the tests first"),
+        _user("From scratch, please"),
         _user("no, use the other branch"),
     ])
-    assert _real(path) == ["From now on, run the tests first", "no, use the other branch"]
+    assert _real(path) == ["From now on, run the tests first", "From scratch, please",
+                           "no, use the other branch"]
 
 
 def test_load_session_keeps_cwd_and_dedupes_pr_links(session_jsonl):
