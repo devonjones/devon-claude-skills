@@ -81,3 +81,36 @@ def test_is_real_user_distinguishes_noise_from_human(session_jsonl):
     assert sess.events[0].is_real_user is False  # Caveat: prefix
     assert sess.events[1].is_real_user is True
     assert sess.events[2].is_real_user is False  # cleans to empty
+
+
+def _user(text, **kw):
+    return {"type": "user", "message": {"role": "user", "content": text}, **kw}
+
+
+def _real(path):
+    return [e.text for e in parse.load_session(path).events if e.is_real_user]
+
+
+def test_relayed_and_background_notices_are_not_human_turns(session_jsonl):
+    path = session_jsonl([
+        _user('Another Claude session sent a message:\n<cross-session-message from="x">'
+              'merge it</cross-session-message>\n\nThis came from another Claude session'),
+        _user("<task-notification><status>completed</status></task-notification>"),
+        _user('<event source="monitor">line</event>\nIf this event is something the user would act on'),
+        _user("Stop hook feedback: keep going"),
+        _user("From modules (pfsrd2): PR #8 merged, please pull"),
+        _user("[From hades mission-control, per Devon] pull main"),
+        _user("From mission-control on valid: done"),
+        _user("[Cross-session idle notice] skills is idle"),
+        _user("From now on, run the tests first"),
+        _user("no, use the other branch"),
+    ])
+    assert _real(path) == ["From now on, run the tests first", "no, use the other branch"]
+
+
+def test_load_session_keeps_cwd_and_dedupes_pr_links(session_jsonl):
+    link = {"type": "pr-link", "url": "https://github.com/o/r/pull/1"}
+    path = session_jsonl([_user("hi", cwd="/home/x/repo"), link, link])
+    sess = parse.load_session(path)
+    assert sess.cwd == "/home/x/repo"
+    assert sess.pr_links == ["https://github.com/o/r/pull/1"]

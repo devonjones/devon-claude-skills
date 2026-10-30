@@ -64,7 +64,8 @@ def is_self_run(session: Session) -> bool:
     return False
 
 
-# Caps to keep the model input bounded even for an 85MB session.
+# Caps to keep the model input bounded even for an 85MB session. The digest
+# keeps every human turn; only the model input is capped.
 MAX_USER_TURNS = 50
 MAX_FRICTION = 80
 MAX_DECISIONS = 40
@@ -127,6 +128,14 @@ def heuristic_digest(session: Session) -> dict:
                     return _truncate(ev.text, 100)
         return ""
 
+    def prev_assistant_text(i: int) -> str:
+        """What the assistant last said before i: it tells a correction from
+        an instruction."""
+        for j in range(i - 1, -1, -1):
+            if events[j].type == "assistant" and events[j].text.strip():
+                return _truncate(events[j].text, 300)
+        return ""
+
     for i, ev in enumerate(events):
         # tool usage tally
         for _tid, name, _inp in ev.tool_uses:
@@ -170,7 +179,8 @@ def heuristic_digest(session: Session) -> dict:
                         "user_said": _truncate(ev.text, 400),
                     }
                 )
-            user_turns.append({"ts": ev.ts, "text": _truncate(ev.text, 400)})
+            user_turns.append({"ts": ev.ts, "text": _truncate(ev.text, 400),
+                               "after": prev_assistant_text(i)})
 
     friction = _dedupe_friction(friction)
 
@@ -186,7 +196,7 @@ def heuristic_digest(session: Session) -> dict:
         "started_at": session.started_at,
         "ended_at": session.ended_at,
         "version": session.version,
-        "pr_links": session.pr_links[:20],
+        "pr_links": session.pr_links,
         "stats": {
             "events": len(events),
             "user_turns": len(user_turns),
@@ -199,7 +209,8 @@ def heuristic_digest(session: Session) -> dict:
         "tools_used": dict(
             sorted(tool_counts.items(), key=lambda kv: -kv[1])
         ),
-        "user_turns": user_turns[:MAX_USER_TURNS],
+        "cwd": session.cwd,
+        "user_turns": user_turns,
         "friction": friction[:MAX_FRICTION],
         "decisions_sample": decisions[:MAX_DECISIONS],
     }
@@ -221,7 +232,7 @@ def build_model_input(h: dict) -> str:
     lines.append(f"TOOLS {top_tools}")
 
     lines.append("\nHUMAN TURNS (chronological):")
-    for i, u in enumerate(h["user_turns"], 1):
+    for i, u in enumerate(h["user_turns"][:MAX_USER_TURNS], 1):
         lines.append(f"{i}. {u['text']}")
 
     lines.append("\nFRICTION EVENTS (where things went wrong / got corrected):")

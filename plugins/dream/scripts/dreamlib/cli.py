@@ -3,6 +3,7 @@
     dream distill            # distill the backlog (cached)
     dream distill --no-model # heuristic only (fast, no ollama)
     dream distill --session <uuid>
+    dream box --days 7       # every session on this box from the last 7 days, by repo
     dream stats              # summarize existing digests
     dream gate --check sessions --peek   # see references/SCHEDULING.md
 
@@ -30,6 +31,8 @@ from . import reviews as rv
 from . import config
 
 PROJECT_LOGS = config.project_log_dir()
+# v2: every human turn kept, each with the assistant text before it, plus cwd.
+DIGEST_SCHEMA = "dream.digest.v2"
 DIGEST_DIR = config.subdir("digests")
 
 
@@ -74,11 +77,42 @@ def _cache_fresh(path: str, input_hash: str, want_model: bool) -> bool:
             d = json.load(fh)
     except Exception:
         return False
-    if d.get("input_hash") != input_hash:
+    if d.get("input_hash") != input_hash or d.get("schema") != DIGEST_SCHEMA:
         return False
     if want_model and "model" not in d:
         return False
     return True
+
+
+def _model_enricher(model: str, url: str):
+    from .model import enrich
+
+    # Name the model host up front: with $WYRD_OLLAMA_URL unset it defaults
+    # to localhost, which may be much weaker than the intended host.
+    if not os.environ.get("WYRD_OLLAMA_URL"):
+        _echo(f"WARN: WYRD_OLLAMA_URL unset — distilling against {url}")
+    else:
+        _echo(f"distill model: {model} @ {url}")
+    return enrich
+
+
+def _write_digest(session, dpath: str, enrich, model: str, url: str, label: str) -> dict:
+    h = heuristic_digest(session)
+    digest = {
+        "schema": DIGEST_SCHEMA,
+        "distilled_at": _now(),
+        **h,
+    }
+    if enrich is not None:
+        try:
+            digest["model"] = enrich(build_model_input(h), model=model, url=url)
+            digest["model_name"] = model
+        except Exception as e:  # noqa: BLE001
+            digest["model_error"] = str(e)
+            _echo(f"  {label} model-fail {session.session_id[:8]}: {e}")
+    with open(dpath, "w") as fh:
+        json.dump(digest, fh, indent=2)
+    return digest
 
 
 def cmd_distill(args: argparse.Namespace) -> int:
@@ -92,17 +126,7 @@ def cmd_distill(args: argparse.Namespace) -> int:
         _echo("no session files found")
         return 1
 
-    enrich = None
-    if not args.no_model:
-        from .model import enrich as _enrich
-
-        enrich = _enrich
-        # Name the model host up front: with $WYRD_OLLAMA_URL unset it defaults
-        # to localhost, which may be much weaker than the intended host.
-        if not os.environ.get("WYRD_OLLAMA_URL"):
-            _echo(f"WARN: WYRD_OLLAMA_URL unset — distilling against {args.url}")
-        else:
-            _echo(f"distill model: {args.model} @ {args.url}")
+    enrich = None if args.no_model else _model_enricher(args.model, args.url)
 
     done = skipped = failed = selfrun = 0
     t0 = time.time()
@@ -126,25 +150,7 @@ def cmd_distill(args: argparse.Namespace) -> int:
                                            want_model=enrich is not None):
             skipped += 1
         else:
-            h = heuristic_digest(session)
-            digest = {
-                "schema": "dream.digest.v1",
-                "distilled_at": _now(),
-                **h,
-            }
-            if enrich is not None:
-                try:
-                    digest["model"] = enrich(
-                        build_model_input(h),
-                        model=args.model,
-                        url=args.url,
-                    )
-                    digest["model_name"] = args.model
-                except Exception as e:  # noqa: BLE001
-                    digest["model_error"] = str(e)
-                    _echo(f"  [{i}/{total}] model-fail {session.session_id[:8]}: {e}")
-            with open(dpath, "w") as fh:
-                json.dump(digest, fh, indent=2)
+            _write_digest(session, dpath, enrich, args.model, args.url, f"[{i}/{total}]")
             done += 1
 
         if i % 5 == 0 or i == total:
@@ -156,6 +162,84 @@ def cmd_distill(args: argparse.Namespace) -> int:
     _echo(
         f"distill complete: {done} written, {skipped} cached, "
         f"{selfrun} self-runs skipped, {failed} failed in {time.time()-t0:.0f}s"
+    )
+    return 0
+
+
+def cmd_box(args: argparse.Namespace) -> int:
+    """Distill every session on this box touched in the last --days, grouped by
+    repo, and write a manifest for the dreamer. Live sessions are included:
+    long-running tabs keep one session open for days."""
+    cutoff = time.time() - args.days * 86400
+    projects = os.path.expanduser(args.projects)
+    dream_root = os.path.expanduser("~/.dream")
+    files = sorted(
+        f for f in glob.glob(os.path.join(projects, "*", "*.jsonl"))
+        if os.path.getmtime(f) >= cutoff
+    )
+    enrich = _model_enricher(args.model, args.url) if args.with_model else None
+
+    repos: dict[str, dict] = {}
+    done = cached = selfrun = tmp = failed = 0
+    for i, f in enumerate(files, 1):
+        try:
+            session = load_session(f)
+        except Exception as e:  # noqa: BLE001
+            failed += 1
+            _echo(f"  [{i}/{len(files)}] PARSE-FAIL {f}: {e}")
+            continue
+        if is_self_run(session):
+            selfrun += 1
+            continue
+        if (session.cwd or "").startswith("/tmp/") and not args.include_tmp:
+            tmp += 1
+            continue
+        logdir = os.path.dirname(f)
+        repo = config.repo_of(session.cwd) or os.path.basename(logdir)
+        # ponytail: repos sharing a basename share a digest dir; key on the path if that bites.
+        slug = os.path.basename(repo.rstrip("/")) or "root"
+        ddir = os.path.join(dream_root, slug, "digests")
+        os.makedirs(ddir, exist_ok=True)
+        dpath = os.path.join(ddir, f"{session.session_id}.json")
+        if _cache_fresh(dpath, session.input_hash, want_model=enrich is not None):
+            cached += 1
+            with open(dpath) as fh:
+                digest = json.load(fh)
+        else:
+            digest = _write_digest(session, dpath, enrich, args.model, args.url,
+                                   f"[{i}/{len(files)}]")
+            done += 1
+        entry = repos.setdefault(repo, {"repo": repo, "slug": slug,
+                                        "memory_dirs": [], "sessions": []})
+        mem = os.path.join(logdir, "memory")
+        if os.path.isdir(mem) and mem not in entry["memory_dirs"]:
+            entry["memory_dirs"].append(mem)
+        st = digest["stats"]
+        entry["sessions"].append({
+            "session_id": session.session_id,
+            "cwd": session.cwd,
+            "log": f,
+            "digest": dpath,
+            "ended_at": session.ended_at,
+            "human_turns": st["user_turns"],
+            "corrections": st["corrections"],
+            "denials": st["denials"],
+        })
+
+    ordered = sorted(repos.values(), key=lambda r: -len(r["sessions"]))
+    box_dir = os.path.join(dream_root, "box")
+    os.makedirs(box_dir, exist_ok=True)
+    manifest = os.path.join(box_dir, datetime.now().strftime("%Y%m%d") + "-box.json")
+    with open(manifest, "w") as fh:
+        json.dump({"generated_at": _now(), "days": args.days, "repos": ordered},
+                  fh, indent=2)
+
+    for r in ordered:
+        corr = sum(s["corrections"] for s in r["sessions"])
+        print(f"{len(r['sessions']):4d} sessions  {corr:4d} corrections  {r['repo']}")
+    _echo(
+        f"box: {len(ordered)} repos, {done} distilled, {cached} cached, "
+        f"{selfrun} self-runs, {tmp} under /tmp skipped, {failed} failed -> {manifest}"
     )
     return 0
 
@@ -626,6 +710,18 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--url", default=os.environ.get("WYRD_OLLAMA_URL",
                                                    "http://localhost:11434"))
     d.set_defaults(func=cmd_distill)
+
+    b = sub.add_parser("box", help="distill every recent session on this box, grouped by repo")
+    b.add_argument("--days", type=float, default=7, help="window in days (default 7)")
+    b.add_argument("--projects", default="~/.claude/projects", help="Claude Code log root")
+    b.add_argument("--include-tmp", action="store_true",
+                   help="keep sessions whose cwd is under /tmp (test runs, scratch)")
+    b.add_argument("--with-model", action="store_true",
+                   help="also run the local-model enrichment (off by default)")
+    b.add_argument("--model", default=os.environ.get("DREAM_MODEL", "qwen2.5:7b"))
+    b.add_argument("--url", default=os.environ.get("WYRD_OLLAMA_URL",
+                                                   "http://localhost:11434"))
+    b.set_defaults(func=cmd_box)
 
     s = sub.add_parser("stats", help="summarize existing digests")
     s.set_defaults(func=cmd_stats)
