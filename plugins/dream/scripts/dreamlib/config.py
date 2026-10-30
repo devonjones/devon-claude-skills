@@ -62,6 +62,18 @@ def main_checkout(cwd: str | None = None) -> str:
     return common[:-4] if common.endswith(".git") else common
 
 
+def repo_of(cwd: str | None) -> str | None:
+    """The repo a session belongs to, for grouping a whole box's sessions: the
+    main checkout, so worktrees fold in; git's innermost repo, so a nested repo
+    stays separate from its parent; the cwd itself outside git or when the
+    directory no longer exists."""
+    if not cwd:
+        return None
+    if not os.path.isdir(cwd):
+        return cwd
+    return main_checkout(cwd) or cwd
+
+
 def project_slug(cwd: str | None = None) -> str:
     """Stable per-project key: the MAIN checkout's basename (so a sibling producer
     like pr-review-loop computes the SAME markers path, and every worktree of a repo

@@ -99,3 +99,18 @@ def test_heuristic_digest_routes_error_and_correction(session_jsonl):
     assert h["stats"]["corrections"] == 1  # "no"/"wrong" match _CORRECTION
     assert h["tools_used"].get("Bash") == 1
     assert h["stats"]["denials"] == 0
+
+
+def test_human_turns_carry_preceding_assistant_text_and_are_not_capped(session_jsonl):
+    from dreamlib.distill import MAX_USER_TURNS, build_model_input
+
+    events = []
+    for n in range(MAX_USER_TURNS + 10):
+        events.append({"type": "assistant", "message": {"role": "assistant",
+                       "content": [{"type": "text", "text": f"plan {n}"}]}})
+        events.append({"type": "user", "message": {"role": "user", "content": f"turn {n}"}})
+    h = distill.heuristic_digest(parse.load_session(session_jsonl(events)))
+    assert len(h["user_turns"]) == MAX_USER_TURNS + 10
+    assert h["user_turns"][3] == {"ts": None, "text": "turn 3", "after": "plan 3"}
+    model_in = build_model_input(h)
+    assert f"turn {MAX_USER_TURNS - 1}" in model_in and f"turn {MAX_USER_TURNS}\n" not in model_in

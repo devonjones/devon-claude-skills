@@ -6,7 +6,7 @@ from dreamlib import cli
 
 
 def _digest(tmp_path, **extra):
-    d = {"input_hash": "h1", **extra}
+    d = {"input_hash": "h1", "schema": cli.DIGEST_SCHEMA, **extra}
     p = tmp_path / "d.json"
     p.write_text(json.dumps(d), encoding="utf-8")
     return str(p)
@@ -78,3 +78,8 @@ def test_merge_coverage_extends_span_and_adds_new_reviewers():
     assert a["first_seen"] == "2026-06-01"          # earliest ever seen
     assert a["last_seen"] == "2026-07-01"           # latest ever seen
     assert m["total_spawns"] == 9                   # 7 + 2
+
+
+def test_cache_fresh_older_schema_is_stale(tmp_path):
+    p = _digest(tmp_path, schema="dream.digest.v1")
+    assert cli._cache_fresh(p, "h1", want_model=False) is False

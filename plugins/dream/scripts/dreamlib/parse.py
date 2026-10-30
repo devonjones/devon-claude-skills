@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 
@@ -22,7 +23,11 @@ _TAG_BLOCK = re.compile(
     r"<system-reminder>.*?</system-reminder>"
     r"|<command-[a-z-]+>.*?</command-[a-z-]+>"
     r"|<local-command-[a-z-]+>.*?</local-command-[a-z-]+>"
-    r"|<bash-[a-z-]+>.*?</bash-[a-z-]+>",
+    r"|<bash-[a-z-]+>.*?</bash-[a-z-]+>"
+    # Not human: background-task and Monitor notices, messages relayed from
+    # other Claude sessions, and the compaction tool list.
+    r"|<(task-notification|agent-message|cross-session-message|event"
+    r"|tools-used-before-summary)\b[^>]*>.*?</\1>",
     re.S,
 )
 _STRAY_TAG = re.compile(r"<[^>]{1,40}>")
@@ -32,7 +37,21 @@ _NOISE_PREFIXES = (
     "[Request interrupted",
     "This session is being continued",
     "Your task is to create a detailed summary",
+    "Another Claude session sent a message",
+    "This came from another Claude session",
+    "Stop hook feedback",
+    "If this event is something the user would act",
+    "[Cross-session",
+    "[From ",
+    "Transcript backoff elapsed",
+    "A session-scoped Stop hook",
+    "Hi, this is the Claude session",
+    "Reply from ",
 )
+# A message another agent typed into this session's pane: "From modules (pfsrd2): ...",
+# "From mission-control on valid: ...". The name must be followed by what an attribution
+# uses, so "From now on, ...", "From scratch, ..." and "From re-reading it, ..." stay human.
+_RELAY = re.compile(r"From (?:[a-z0-9]+-[a-z0-9-]+(?=[:,]| \(| on )|[a-z0-9]+(?=:| \())")
 
 DENIAL_MARKERS = ("doesn't want to proceed", "tool use was rejected")
 
@@ -77,6 +96,7 @@ class Session:
     ended_at: str | None
     version: str | None
     events: list = field(default_factory=list)
+    cwd: str | None = None
     tool_names: dict = field(default_factory=dict)  # tool_use_id -> name
     pr_links: list = field(default_factory=list)
 
@@ -101,6 +121,7 @@ def load_session(path: str) -> Session:
     session_id = None
     git_branch = None
     version = None
+    cwd = None
     started = ended = None
     events: list[Event] = []
     tool_names: dict = {}
@@ -119,6 +140,7 @@ def load_session(path: str) -> Session:
         session_id = session_id or d.get("sessionId")
         git_branch = git_branch or d.get("gitBranch")
         version = version or d.get("version")
+        cwd = cwd or d.get("cwd")
         ts = d.get("timestamp")
         if ts:
             started = started or ts
@@ -171,8 +193,10 @@ def load_session(path: str) -> Session:
             if t == "user":
                 cleaned = clean_user_text(content)
                 ev.text = cleaned
-                noise = (not cleaned) or any(
-                    cleaned.startswith(p) for p in _NOISE_PREFIXES
+                noise = (
+                    not cleaned
+                    or any(cleaned.startswith(p) for p in _NOISE_PREFIXES)
+                    or bool(_RELAY.match(cleaned))
                 )
                 ev.is_real_user = not noise
             else:
@@ -181,7 +205,8 @@ def load_session(path: str) -> Session:
         events.append(ev)
 
     return Session(
-        session_id=session_id or path,
+        # Never the path: callers build digest file names from it.
+        session_id=session_id or os.path.splitext(os.path.basename(path))[0],
         path=path,
         input_hash=input_hash,
         git_branch=git_branch,
@@ -189,6 +214,7 @@ def load_session(path: str) -> Session:
         ended_at=ended,
         version=version,
         events=events,
+        cwd=cwd,
         tool_names=tool_names,
-        pr_links=pr_links,
+        pr_links=list(dict.fromkeys(pr_links)),
     )

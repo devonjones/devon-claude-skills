@@ -47,6 +47,27 @@ local ollama model ([install](https://ollama.com), then `ollama pull` the model;
 live (most-recent) session is skipped unless `--include-live`. Digests are cached
 in `~/.dream/<slug>/digests/` — only new sessions re-distill.
 
+### Whole box (`dream box`)
+
+```bash
+<scripts>/dream box --days 7     # every session on this box from the last 7 days
+```
+
+Distills every session under `~/.claude/projects` modified in the window,
+grouped by repo: a worktree that still exists folds into its main checkout,
+nested repos stay separate, and a non-git directory, or one that no longer
+exists, is its own group. Live sessions are
+included. Sessions
+whose cwd is under `/tmp` are skipped unless `--include-tmp`. The local model
+is off unless `--with-model`. Writes
+`~/.dream/box/<YYYYMMDD>-box.json`: each repo with its sessions (digest path,
+human-turn, correction and denial counts) and its memory dirs, the first place
+to dedup against.
+
+In every digest, `user_turns` holds only the human's own words, each with the
+assistant text it answered (`after`). Relayed messages from other sessions,
+task and Monitor notices, and Stop-hook feedback are dropped.
+
 ## 2. Pool (stage 2a — deterministic)
 
 ```bash
