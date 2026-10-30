@@ -49,9 +49,9 @@ _NOISE_PREFIXES = (
     "Reply from ",
 )
 # A message another agent typed into this session's pane: "From modules (pfsrd2): ...",
-# "From mission-control on valid: ...". A hyphenated tab name, or a bare one followed by
-# ":" or " (", so "From now on, ..." and "From scratch, ..." stay human.
-_RELAY = re.compile(r"From (?:[a-z0-9]+-[a-z0-9-]+\b|[a-z0-9]+(?=:| \())")
+# "From mission-control on valid: ...". The name must be followed by what an attribution
+# uses, so "From now on, ...", "From scratch, ..." and "From re-reading it, ..." stay human.
+_RELAY = re.compile(r"From (?:[a-z0-9]+-[a-z0-9-]+(?=[:,]| \(| on )|[a-z0-9]+(?=:| \())")
 
 DENIAL_MARKERS = ("doesn't want to proceed", "tool use was rejected")
 

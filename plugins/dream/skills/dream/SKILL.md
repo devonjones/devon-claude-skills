@@ -57,7 +57,7 @@ Distills every session under `~/.claude/projects` modified in the window,
 grouped by repo: a worktree that still exists folds into its main checkout,
 nested repos stay separate, and a non-git directory, or one that no longer
 exists, is its own group. Live sessions are
-included, since long-running tabs keep one session open for days. Sessions
+included. Sessions
 whose cwd is under `/tmp` are skipped unless `--include-tmp`. The local model
 is off unless `--with-model`. Writes
 `~/.dream/box/<YYYYMMDD>-box.json`: each repo with its sessions (digest path,

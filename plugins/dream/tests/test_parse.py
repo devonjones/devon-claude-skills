@@ -102,11 +102,20 @@ def test_relayed_and_background_notices_are_not_human_turns(session_jsonl):
         _user("[From hades mission-control, per Devon] pull main"),
         _user("From mission-control on valid: done"),
         _user("[Cross-session idle notice] skills is idle"),
+        _user("From skills-athena, per Devon: pull main"),
+        _user("<agent-message from=\"a1\">report</agent-message>"),
+        _user("<tools-used-before-summary>Bash</tools-used-before-summary>"),
+        _user("Transcript backoff elapsed: retrying"),
+        _user("A session-scoped Stop hook is active"),
+        _user("Hi, this is the Claude session 'skills-hades'"),
+        _user("Reply from skills-athena re #53: done"),
+        _user("From re-reading the code, the bug is in parse"),
         _user("From now on, run the tests first"),
         _user("From scratch, please"),
         _user("no, use the other branch"),
     ])
-    assert _real(path) == ["From now on, run the tests first", "From scratch, please",
+    assert _real(path) == ["From re-reading the code, the bug is in parse",
+                           "From now on, run the tests first", "From scratch, please",
                            "no, use the other branch"]
 
 
