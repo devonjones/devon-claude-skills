@@ -6,8 +6,10 @@
 #
 # One review is one GitHub write, where posting comment by comment cost one
 # write per finding. If GitHub rejects the review (usually a line outside the
-# diff), each thread is posted on its own, paced, and any that fail go back into
-# the store so --check keeps failing until they are dealt with.
+# diff), each thread is posted on its own, paced. A thread GitHub will not put on
+# its line goes on its file instead, and one whose file is not in the PR becomes
+# a plain PR comment. Only a thread that fails all three goes back into the
+# store, so --check keeps failing until it is dealt with.
 #
 # Usage: post-findings.sh <pr-number>           # post to the PR
 #        post-findings.sh <pr-number|local> --local   # print the merged report, post nothing
@@ -61,7 +63,7 @@ GROUPS_JSON=$(jq -s '
     | map(select(.severity == "P3")) as $p3
     | ($p3 | map(.agent) | unique) as $p3_agents
     | $inline + (if ($p3 | length) == 0 then [] else [{
-        path: $p3[0].file, line: $p3[0].line, findings: $p3,
+        path: $p3[0].file, line: $p3[0].line, findings: $p3, rollup: true,
         body: ("🤖 **Claude Code** (P3 roll-up: \($p3_agents | join(", "))):\n"
                + ($p3_agents | map(sig(.)) | join("\n"))
                + "\n\nLow-priority findings. One reply covers them all.\n\n"
@@ -91,13 +93,21 @@ SHA=$(gh pr view "$PR" -R "$REPO" --json headRefOid --jq .headRefOid)
 [[ -n "$SHA" ]] || { echo "Error: could not read head SHA of PR #$PR" >&2; exit 1; }
 
 # A file the PR deletes has no RIGHT side; its findings cite the old file.
-REMOVED=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | select(.status == "removed") | .filename' \
-    | jq -Rsc 'split("\n") | map(select(. != ""))') || {
+FILES=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | "\(.status) \(.filename)"' \
+    | jq -Rsc 'split("\n") | map(select(. != "") | capture("^(?<status>\\S+) (?<name>.*)$"))') || {
     echo "Warning: could not list the PR's files; findings on deleted files will be rejected" >&2
-    REMOVED='[]'
+    FILES='[]'
 }
-GROUPS_JSON=$(jq --argjson removed "$REMOVED" \
-    'map(.side = (if (.path | IN($removed[])) then "LEFT" else "RIGHT" end))' <<< "$GROUPS_JSON")
+# The roll-up anchors on a P3 in a file the PR touches, so one P3 elsewhere
+# cannot sink the rest.
+GROUPS_JSON=$(jq --argjson files "$FILES" '
+    ($files | map(.name)) as $names
+    | ($files | map(select(.status == "removed") | .name)) as $removed
+    | map(if .rollup then
+            (first(.findings[] | select(.file | IN($names[]))) // null) as $a
+            | if $a then .path = $a.file | .line = $a.line else . end
+          else . end)
+    | map(.side = (if (.path | IN($removed[])) then "LEFT" else "RIGHT" end))' <<< "$GROUPS_JSON")
 
 REVIEW=$(jq --arg sha "$SHA" --arg n "$FINDINGS" '{
     commit_id: $sha, event: "COMMENT",
@@ -122,14 +132,31 @@ echo "Review rejected, posting threads one at a time: $RESULT $(cat "$ERR")" >&2
 FAILED_FINDINGS=""
 for i in $(seq 0 $((COUNT - 1))); do
     G=$(jq -c ".[$i]" <<< "$GROUPS_JSON")
+    AT=$(jq -r '"\(.path):\(.line)"' <<< "$G")
     pace_github
     if OUT=$(jq --arg sha "$SHA" '{commit_id: $sha, path, line, side, body}' <<< "$G" \
             | gh api --method POST "repos/$REPO/pulls/$PR/comments" --input - 2>"$ERR"); then
-        echo "$(jq -r '.id' <<< "$OUT") $(jq -r '"\(.path):\(.line)"' <<< "$G")"
-    else
-        echo "FAILED $(jq -r '"\(.path):\(.line)"' <<< "$G"): $OUT $(cat "$ERR")" >&2
-        FAILED_FINDINGS+="$(jq -c '.findings[]' <<< "$G")"$'\n'
+        echo "$(jq -r '.id' <<< "$OUT") $AT"
+        continue
     fi
+    echo "Line comment rejected at $AT, trying the file: $OUT $(cat "$ERR")" >&2
+    pace_github
+    if OUT=$(jq --arg sha "$SHA" '{commit_id: $sha, path, subject_type: "file",
+                body: "\(.body)\n\n_Posted on the file: GitHub would not anchor line \(.line)._"}' <<< "$G" \
+            | gh api --method POST "repos/$REPO/pulls/$PR/comments" --input - 2>"$ERR"); then
+        echo "$(jq -r '.id' <<< "$OUT") $AT (on the file)"
+        continue
+    fi
+    echo "File comment rejected at $AT, posting it as a PR comment: $OUT $(cat "$ERR")" >&2
+    pace_github
+    # get-agent-comments.sh reads review threads only, so this one is not deduped next round.
+    if OUT=$(jq '{body: "\(.body)\n\n_Posted unanchored: `\(.path):\(.line)` is not in the diff._"}' <<< "$G" \
+            | gh api --method POST "repos/$REPO/issues/$PR/comments" --input - 2>"$ERR"); then
+        echo "$(jq -r '.id' <<< "$OUT") $AT (unanchored PR comment: reply with gh pr comment, not reply-to-comment.sh)"
+        continue
+    fi
+    echo "FAILED $AT: $OUT $(cat "$ERR")" >&2
+    FAILED_FINDINGS+="$(jq -c '.findings[]' <<< "$G")"$'\n'
 done
 
 archive

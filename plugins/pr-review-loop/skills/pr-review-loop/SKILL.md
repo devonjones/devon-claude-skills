@@ -1474,7 +1474,7 @@ Task tool:
 scripts/post-findings.sh <PR>
 ```
 
-It prints one `<comment-id> <file>:<line> <header>` line per thread. Those ids are what F3 replies to. If GitHub rejects the review, the script posts thread by thread, and any thread that still fails goes back into the store. In that case, fix the anchor (usually a line outside the diff) and re-run until `post-findings.sh <PR> --check` is clean.
+It prints one `<comment-id> <file>:<line> <header>` line per thread. Those ids are what F3 replies to. If GitHub rejects the review (usually a line outside the diff), the script posts thread by thread. A thread GitHub won't put on its line goes on its file, marked `(on the file)`: a normal thread. One whose file isn't in the PR becomes a plain PR comment, marked `(unanchored PR comment)`: answer it with `gh pr comment`, because `reply-to-comment.sh`, `get-agent-comments.sh` and the F4 gate see review threads only. A thread that fails all three goes back into the store; re-run until `post-findings.sh <PR> --check` is clean.
 
 **Spawn all agents in parallel** - use multiple Task tool calls in a single message.
 
