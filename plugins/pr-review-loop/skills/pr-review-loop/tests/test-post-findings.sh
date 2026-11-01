@@ -24,9 +24,16 @@ case "$*" in
       [[ -n "${FAKE_REVIEW_FAIL:-}" ]] && { echo '{"message":"Unprocessable Entity"}'; exit 1; }
       [[ -n "${FAKE_STDERR:-}" ]] && echo "A new release of gh is available" >&2
       echo '{"id":7}' ;;
+  *"--method POST"*issues/42/comments*)
+      cat >> "$T/issues.jsonl"
+      [[ -n "${FAKE_ISSUE_FAIL:-}" ]] && { echo '{"message":"Server Error"}'; exit 1; }
+      echo '{"id":11}' ;;
   *"--method POST"*/comments*)
       body=$(cat); jq -c . <<< "$body" >> "$T/comments.jsonl"
-      [[ -n "${FAKE_FAIL_PATH:-}" && "$(jq -r .path <<< "$body")" == "$FAKE_FAIL_PATH" ]] && { echo '{"message":"line not in diff"}'; exit 1; }
+      path=$(jq -r .path <<< "$body"); on_line=$(jq -r 'has("line")' <<< "$body")
+      [[ -n "${FAKE_FAIL_PATH:-}" && "$path" == "$FAKE_FAIL_PATH" ]] && { echo '{"message":"path not in diff"}'; echo "gh: Unprocessable Entity (HTTP 422)" >&2; exit 1; }
+      [[ -n "${FAKE_FAIL_LINE_PATH:-}" && "$path" == "$FAKE_FAIL_LINE_PATH" && "$on_line" == true ]] && { echo '{"message":"line not in diff"}'; echo "gh: Unprocessable Entity (HTTP 422)" >&2; exit 1; }
+      [[ -n "${FAKE_502_PATH:-}" && "$path" == "$FAKE_502_PATH" ]] && { echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; }
       echo '{"id":9}' ;;
   *pulls/42/files*)
       [[ -n "${FAKE_FILES_FAIL:-}" ]] && { echo "HTTP 502" >&2; exit 1; }
@@ -47,7 +54,7 @@ esac
 GH
 chmod +x "$T/bin/gh"
 
-repo(){ rm -rf "$T/r" "$T"/review.json "$T"/comments.jsonl; git init -q "$T/r"; }
+repo(){ rm -rf "$T/r" "$T"/review.json "$T"/comments.jsonl "$T"/issues.jsonl; git init -q "$T/r"; }
 rec(){ (cd "$T/r" && bash "$RECORD" "$@" >/dev/null); }
 seed(){ local pr="${1:-42}"
   rec $pr a.py 10 error-handling-reviewer P2 "swallows the exit code"
@@ -128,16 +135,48 @@ repo; seed; FAKE_REVIEW_FAIL=1 run 42
 check "exits 0" '[[ $RC -eq 0 ]]'
 run 42 --check; check "store consumed" '[[ $RC -eq 0 ]]'
 
-echo "=== a failed P3 roll-up puts every P3 back ==="
+echo "=== the P3 roll-up anchors on a P3 in a file the PR touches ==="
+repo; seed; rec 42 a.py 3 clarity-reviewer P3 "dead branch"; rec 42 a.py 7 clarity-reviewer P3 "stale name"; run 42
+check "roll-up sits on a.py, not on c.py which the PR does not touch" \
+  '[[ "$(jq -r ".comments[] | select(.body | contains(\"P3 roll-up\")) | \"\(.path):\(.line)\"" "$T/review.json")" == a.py:3 ]]'
+
+echo "=== a line GitHub will not anchor goes on its file ==="
+repo; seed; FAKE_REVIEW_FAIL=1 FAKE_FAIL_LINE_PATH=a.py run 42
+check "exits 0" '[[ $RC -eq 0 ]]'
+check "the retry is a file comment with no line" \
+  '[[ "$(jq -c "select(.path==\"a.py\" and .subject_type==\"file\") | has(\"line\")" "$T/comments.jsonl")" == false ]]'
+check "and still starts with the skill header" \
+  '[[ "$(jq -r "select(.subject_type==\"file\") | .body" "$T/comments.jsonl")" == "🤖 **Claude Code** ("* ]]'
+check "the manifest says it went on the file" '[[ "$OUT" == *"a.py:10 (on the file)"* ]]'
+run 42 --check; check "store consumed" '[[ $RC -eq 0 ]]'
+
+echo "=== a failure other than 422 is not demoted to the file ==="
+repo; seed; FAKE_REVIEW_FAIL=1 FAKE_502_PATH=a.py run 42
+check "exits non-zero" '[[ $RC -ne 0 ]]'
+check "no file comment or PR comment was tried" \
+  '[[ "$(jq -c "select(.subject_type==\"file\")" "$T/comments.jsonl")" == "" && ! -e "$T/issues.jsonl" ]]'
+check "both a.py findings are back in the store" \
+  '[[ "$(jq -r .file "$T/r/.git/pr-review-loop/findings-42.jsonl" | sort -u)" == a.py ]]'
+
+echo "=== a P3 roll-up outside the diff posts as a PR comment ==="
 repo; seed; FAKE_REVIEW_FAIL=1 FAKE_FAIL_PATH=c.py run 42
+check "exits 0" '[[ $RC -eq 0 ]]'
+check "the roll-up is a PR comment naming its anchor" \
+  '[[ "$(jq -r .body "$T/issues.jsonl")" == *"P3 roll-up"*"Posted unanchored: \`c.py:1\`"* ]]'
+check "signatures survive, so the record is attributable" \
+  '[[ "$(jq -r .body "$T/issues.jsonl" | grep -c "<!-- Agent: ")" == 2 ]]'
+run 42 --check; check "store consumed" '[[ $RC -eq 0 ]]'
+
+echo "=== a P3 roll-up that fails every route puts every P3 back ==="
+repo; seed; FAKE_REVIEW_FAIL=1 FAKE_FAIL_PATH=c.py FAKE_ISSUE_FAIL=1 run 42
 check "exits non-zero" '[[ $RC -ne 0 ]]'
 check "both P3 findings are back in the store" \
   '[[ "$(jq -r .severity "$T/r/.git/pr-review-loop/findings-42.jsonl" | sort | uniq -c | tr -s " ")" == " 2 P3" ]]'
 
 echo "=== a rejected review falls back, and failures stay recorded ==="
-repo; seed; FAKE_REVIEW_FAIL=1 FAKE_FAIL_PATH=b.py run 42
+repo; seed; FAKE_REVIEW_FAIL=1 FAKE_FAIL_PATH=b.py FAKE_ISSUE_FAIL=1 run 42
 check "exits non-zero when a thread fails" '[[ $RC -ne 0 ]]'
-check "every thread was attempted on its own" '[[ "$(wc -l < "$T/comments.jsonl")" == 3 ]]'
+check "every thread was attempted, b.py on its line and its file" '[[ "$(wc -l < "$T/comments.jsonl")" == 4 ]]'
 run 42 --check; check "--check still fails" '[[ $RC -eq 1 ]]'
 check "only the failed finding is back in the store" \
   '[[ "$(cat "$T/r/.git/pr-review-loop/findings-42.jsonl" | jq -r .file)" == b.py ]]'
