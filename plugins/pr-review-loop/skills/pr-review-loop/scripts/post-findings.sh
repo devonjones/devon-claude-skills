@@ -6,10 +6,9 @@
 #
 # One review is one GitHub write, where posting comment by comment cost one
 # write per finding. If GitHub rejects the review (usually a line outside the
-# diff), each thread is posted on its own, paced. A thread GitHub will not put on
-# its line goes on its file instead, and one whose file is not in the PR becomes
-# a plain PR comment. Only a thread that fails all three goes back into the
-# store, so --check keeps failing until it is dealt with.
+# diff), each thread is posted on its own, paced, falling back to its file and
+# then to a plain PR comment when GitHub answers 422. Any other failure puts its
+# findings back in the store so --check keeps failing until they are dealt with.
 #
 # Usage: post-findings.sh <pr-number>           # post to the PR
 #        post-findings.sh <pr-number|local> --local   # print the merged report, post nothing
@@ -95,7 +94,7 @@ SHA=$(gh pr view "$PR" -R "$REPO" --json headRefOid --jq .headRefOid)
 # A file the PR deletes has no RIGHT side; its findings cite the old file.
 FILES=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | "\(.status) \(.filename)"' \
     | jq -Rsc 'split("\n") | map(select(. != "") | capture("^(?<status>\\S+) (?<name>.*)$"))') || {
-    echo "Warning: could not list the PR's files; findings on deleted files will be rejected" >&2
+    echo "Warning: could not list the PR's files; findings on deleted files will be rejected and the P3 roll-up keeps its first anchor" >&2
     FILES='[]'
 }
 # The roll-up anchors on a P3 in a file the PR touches, so one P3 elsewhere
@@ -130,6 +129,8 @@ fi
 
 echo "Review rejected, posting threads one at a time: $RESULT $(cat "$ERR")" >&2
 FAILED_FINDINGS=""
+# Only a 422 means GitHub cannot anchor the comment there; a 5xx or rate limit must not demote it.
+unanchorable() { grep -q 'HTTP 422' "$ERR"; }
 for i in $(seq 0 $((COUNT - 1))); do
     G=$(jq -c ".[$i]" <<< "$GROUPS_JSON")
     AT=$(jq -r '"\(.path):\(.line)"' <<< "$G")
@@ -139,21 +140,25 @@ for i in $(seq 0 $((COUNT - 1))); do
         echo "$(jq -r '.id' <<< "$OUT") $AT"
         continue
     fi
-    echo "Line comment rejected at $AT, trying the file: $OUT $(cat "$ERR")" >&2
-    pace_github
-    if OUT=$(jq --arg sha "$SHA" '{commit_id: $sha, path, subject_type: "file",
-                body: "\(.body)\n\n_Posted on the file: GitHub would not anchor line \(.line)._"}' <<< "$G" \
-            | gh api --method POST "repos/$REPO/pulls/$PR/comments" --input - 2>"$ERR"); then
-        echo "$(jq -r '.id' <<< "$OUT") $AT (on the file)"
-        continue
+    if unanchorable; then
+        echo "Line comment rejected at $AT, trying the file: $OUT $(cat "$ERR")" >&2
+        pace_github
+        if OUT=$(jq --arg sha "$SHA" '{commit_id: $sha, path, subject_type: "file",
+                    body: "\(.body)\n\n_Posted on the file: GitHub would not anchor line \(.line)._"}' <<< "$G" \
+                | gh api --method POST "repos/$REPO/pulls/$PR/comments" --input - 2>"$ERR"); then
+            echo "$(jq -r '.id' <<< "$OUT") $AT (on the file)"
+            continue
+        fi
     fi
-    echo "File comment rejected at $AT, posting it as a PR comment: $OUT $(cat "$ERR")" >&2
-    pace_github
-    # get-agent-comments.sh reads review threads only, so this one is not deduped next round.
-    if OUT=$(jq '{body: "\(.body)\n\n_Posted unanchored: `\(.path):\(.line)` is not in the diff._"}' <<< "$G" \
-            | gh api --method POST "repos/$REPO/issues/$PR/comments" --input - 2>"$ERR"); then
-        echo "$(jq -r '.id' <<< "$OUT") $AT (unanchored PR comment: reply with gh pr comment, not reply-to-comment.sh)"
-        continue
+    if unanchorable; then
+        echo "File comment rejected at $AT, posting it as a PR comment: $OUT $(cat "$ERR")" >&2
+        pace_github
+        # get-agent-comments.sh reads review threads only, so this one is not deduped next round.
+        if OUT=$(jq '{body: "\(.body)\n\n_Posted unanchored: `\(.path):\(.line)` is not in the diff._"}' <<< "$G" \
+                | gh api --method POST "repos/$REPO/issues/$PR/comments" --input - 2>"$ERR"); then
+            echo "$(jq -r '.id' <<< "$OUT") $AT (unanchored PR comment: reply with gh pr comment, not reply-to-comment.sh)"
+            continue
+        fi
     fi
     echo "FAILED $AT: $OUT $(cat "$ERR")" >&2
     FAILED_FINDINGS+="$(jq -c '.findings[]' <<< "$G")"$'\n'

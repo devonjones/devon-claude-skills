@@ -31,8 +31,9 @@ case "$*" in
   *"--method POST"*/comments*)
       body=$(cat); jq -c . <<< "$body" >> "$T/comments.jsonl"
       path=$(jq -r .path <<< "$body"); on_line=$(jq -r 'has("line")' <<< "$body")
-      [[ -n "${FAKE_FAIL_PATH:-}" && "$path" == "$FAKE_FAIL_PATH" ]] && { echo '{"message":"path not in diff"}'; exit 1; }
-      [[ -n "${FAKE_FAIL_LINE_PATH:-}" && "$path" == "$FAKE_FAIL_LINE_PATH" && "$on_line" == true ]] && { echo '{"message":"line not in diff"}'; exit 1; }
+      [[ -n "${FAKE_FAIL_PATH:-}" && "$path" == "$FAKE_FAIL_PATH" ]] && { echo '{"message":"path not in diff"}'; echo "gh: Unprocessable Entity (HTTP 422)" >&2; exit 1; }
+      [[ -n "${FAKE_FAIL_LINE_PATH:-}" && "$path" == "$FAKE_FAIL_LINE_PATH" && "$on_line" == true ]] && { echo '{"message":"line not in diff"}'; echo "gh: Unprocessable Entity (HTTP 422)" >&2; exit 1; }
+      [[ -n "${FAKE_502_PATH:-}" && "$path" == "$FAKE_502_PATH" ]] && { echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; }
       echo '{"id":9}' ;;
   *pulls/42/files*)
       [[ -n "${FAKE_FILES_FAIL:-}" ]] && { echo "HTTP 502" >&2; exit 1; }
@@ -135,7 +136,7 @@ check "exits 0" '[[ $RC -eq 0 ]]'
 run 42 --check; check "store consumed" '[[ $RC -eq 0 ]]'
 
 echo "=== the P3 roll-up anchors on a P3 in a file the PR touches ==="
-repo; seed; rec 42 a.py 3 clarity-reviewer P3 "dead branch"; run 42
+repo; seed; rec 42 a.py 3 clarity-reviewer P3 "dead branch"; rec 42 a.py 7 clarity-reviewer P3 "stale name"; run 42
 check "roll-up sits on a.py, not on c.py which the PR does not touch" \
   '[[ "$(jq -r ".comments[] | select(.body | contains(\"P3 roll-up\")) | \"\(.path):\(.line)\"" "$T/review.json")" == a.py:3 ]]'
 
@@ -148,6 +149,14 @@ check "and still starts with the skill header" \
   '[[ "$(jq -r "select(.subject_type==\"file\") | .body" "$T/comments.jsonl")" == "🤖 **Claude Code** ("* ]]'
 check "the manifest says it went on the file" '[[ "$OUT" == *"a.py:10 (on the file)"* ]]'
 run 42 --check; check "store consumed" '[[ $RC -eq 0 ]]'
+
+echo "=== a failure other than 422 is not demoted to the file ==="
+repo; seed; FAKE_REVIEW_FAIL=1 FAKE_502_PATH=a.py run 42
+check "exits non-zero" '[[ $RC -ne 0 ]]'
+check "no file comment or PR comment was tried" \
+  '[[ "$(jq -c "select(.subject_type==\"file\")" "$T/comments.jsonl")" == "" && ! -e "$T/issues.jsonl" ]]'
+check "both a.py findings are back in the store" \
+  '[[ "$(jq -r .file "$T/r/.git/pr-review-loop/findings-42.jsonl" | sort -u)" == a.py ]]'
 
 echo "=== a P3 roll-up outside the diff posts as a PR comment ==="
 repo; seed; FAKE_REVIEW_FAIL=1 FAKE_FAIL_PATH=c.py run 42
