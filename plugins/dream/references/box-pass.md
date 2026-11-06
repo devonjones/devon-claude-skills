@@ -13,6 +13,8 @@ lessons that recur across repos and never spread, so most nights file nothing.
 - Log each delivery in `~/.dream/<slug>/review/delivered.md`, where `<slug>` is
   the repo's `slug` in the box file (date, lesson, owner tab, outcome). Check
   that file before sending, and never resend.
+- Read `~/.dream/box/watch.md` before mining, so a pattern seen again tonight
+  is recognised and sent.
 
 ## Mine
 
