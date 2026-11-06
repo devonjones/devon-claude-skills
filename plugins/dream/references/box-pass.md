@@ -10,8 +10,9 @@ lessons that recur across repos and never spread, so most nights file nothing.
 - Start with `bd dolt pull` in the skills repo.
 - Before filing a bead in a repo, run `bd dolt pull` there, and `bd dolt push`
   after.
-- Log each delivery in `~/.dream/<repo-slug>/review/delivered.md` (date, lesson,
-  owner tab, outcome). Check that file before sending, and never resend.
+- Log each delivery in `~/.dream/<slug>/review/delivered.md`, where `<slug>` is
+  the repo's `slug` in the box file (date, lesson, owner tab, outcome). Check
+  that file before sending, and never resend.
 
 ## Mine
 
@@ -23,8 +24,9 @@ peer text (lines that start like `[from X]`, `[A MC -> B MC]` or
 
 Dedup every lesson against the repo's `memory_dirs`, its CLAUDE.md, AGENTS.md
 and `docs/` (and sibling repos' `docs/`), `bd memories`, `~/.claude/CLAUDE.md`
-and every `~/.claude/projects/*/memory`. Those dirs start with `-`, so grep
-`./*/memory/`: a bare `*/memory/` is read as grep options and matches nothing.
+and every `~/.claude/projects/*/memory`. Those dirs start with `-`, so grep from
+`~/.claude/projects` with `./*/memory/`: a bare `*/memory/` is read as grep
+options and fails.
 
 ## Deliver
 
@@ -36,7 +38,9 @@ and every `~/.claude/projects/*/memory`. Those dirs start with `-`, so grep
 - A lesson seen in 2+ repos goes to mission-control, prefixed `dream:`.
 - A bug in the dream tooling becomes a `-l dream` bead in the skills repo, and
   the box's skills tab hears about it.
-- A pattern seen only once: watch it, don't send it.
+- A pattern seen only once: don't send it. Append it to
+  `~/.dream/box/watch.md` (date, repo, pattern, session id) and send it when a
+  later night sees it again.
 - Finish with a short report to mission-control: repos read, beads filed,
   messages sent.
 
