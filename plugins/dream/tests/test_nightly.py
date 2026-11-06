@@ -6,8 +6,10 @@ import time
 import pytest
 
 SRC = os.path.join(os.path.dirname(__file__), "..", "scripts", "dream-nightly")
-LIST = ('{"result":{"agents":[{"terminal_title_stripped":"dreams-testbox",'
-        '"pane_id":"w9:p1"}]}}')
+LIST = ('{"result":{"agents":['
+        '{"terminal_title_stripped":"dreams-testbox-old","pane_id":"w9:p0"},'
+        '{"terminal_title_stripped":"dreams-testbox","pane_id":"w9:p1"},'
+        '{"terminal_title_stripped":"dreams-testbox","pane_id":"w9:p2"}]}}')
 
 
 def _sh(path, body):
