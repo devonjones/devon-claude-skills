@@ -10,6 +10,48 @@ pending recommendations next time you open the project.
 > `~/.dream/<slug>/` state, and — for the model pass — a reachable ollama). So it
 > must run **on the machine where those live**, not in a cloud scheduler.
 
+## Box-wide nightly pass (one per box, recommended)
+
+Each box runs one timer that covers every repo on it. `scripts/dream-nightly`
+runs `dream box --days 1` and then wakes the box's dreams tab, a herdr Claude
+named `dreams-<hostname>` (lowercase; override it with `DREAM_TAB`). That tab
+mines the lessons and delivers them. Nothing runs headless, so the agent that
+files the beads is the same one everyone can ask. If the tab is missing or
+blocked, the unit fails and the box file waits for a manual pass.
+
+`~/.config/systemd/user/dream-nightly.service`:
+
+```ini
+[Unit]
+Description=Nightly dream box pass, delivered by the dreams tab
+
+[Service]
+Type=oneshot
+# herdr and jq live in linuxbrew on athena; adjust per box.
+Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/Projects/devon-claude-skills/plugins/dream/scripts/dream-nightly
+TimeoutStartSec=600
+```
+
+`~/.config/systemd/user/dream-nightly.timer`:
+
+```ini
+[Unit]
+Description=Run dream-nightly daily
+
+[Timer]
+OnCalendar=*-*-* 04:13:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable it with `systemctl --user daemon-reload && systemctl --user enable --now
+dream-nightly.timer` (plus `loginctl enable-linger "$USER"`). It replaces the
+per-project timers below, so disable any `dream-<project>` timers on that box.
+
 ## The headless command
 
 ```bash
