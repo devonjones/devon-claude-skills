@@ -16,12 +16,19 @@ lessons that recur across repos and never spread, so most nights file nothing.
 ## Mine
 
 Read the box file. In each digest, `user_turns` has the human's words with the
-assistant text they answered (`after`). Dedup every lesson against the repo's
-`memory_dirs`, its CLAUDE.md and AGENTS.md, `bd memories`, `~/.claude/CLAUDE.md`
-and every `~/.claude/projects/*/memory`.
+assistant text they answered (`after`). A digest holds the whole session, so
+read only turns whose `ts` falls inside the run's `--days` window. Skip relayed
+peer text (lines that start like `[from X]`, `[A MC -> B MC]` or
+`cryo-backend:`), which the human pasted but did not write. Dedup every lesson against the repo's `memory_dirs`, its
+CLAUDE.md, AGENTS.md and `docs/` (and sibling repos' `docs/`), `bd memories`,
+`~/.claude/CLAUDE.md` and every `~/.claude/projects/*/memory`. Those dirs start
+with `-`, so grep `./*/memory/`: a bare `*/memory/` is read as grep options and
+matches nothing.
 
 ## Deliver
 
+- If `~/.dream/routing.md` exists, its routes win (for example, a repo group
+  that reports to one coordinator tab).
 - A per-repo lesson becomes a bead in the owner repo (`-l dream`) and a message
   to the owner tab. A repo without beads gets the message only. When several
   tabs share one cwd, message each tab whose area the lesson concerns.
