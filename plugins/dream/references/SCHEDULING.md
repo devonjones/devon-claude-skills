@@ -16,24 +16,24 @@ macOS (launchd) · cron · Staggering dream + dream-reviewers
 ## Box-wide nightly pass (one per box, recommended)
 
 Each box runs one timer that covers every repo on it. `scripts/dream-nightly`
-runs `dream box --days 1` and then wakes the box's dreams tab, a herdr Claude
-named `dreams-<hostname>` (lowercase; override it with `DREAM_TAB`). That tab
-mines the lessons and delivers them. If the tab is missing or blocked, the
-unit fails and the box file waits for a manual pass. It needs `herdr` and `jq`
-on the unit's PATH.
+runs `dream box --days 1`, then a headless `claude -p --permission-mode auto`
+from the skills repo that follows [`box-pass.md`](box-pass.md): dedup, file
+dream beads, message owner tabs, report to mission-control. `claude` must be on
+the unit's PATH (override the binary with `CLAUDE`). If either step fails, the
+unit fails.
 
 `~/.config/systemd/user/dream-nightly.service`:
 
 ```ini
 [Unit]
-Description=Nightly dream box pass, delivered by the dreams tab
+Description=Nightly dream box pass
 
 [Service]
 Type=oneshot
-# athena keeps herdr in linuxbrew; adjust per box.
-Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+# User units start with a minimal PATH; include the dir holding `claude`.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/Projects/devon-claude-skills/plugins/dream/scripts/dream-nightly
-TimeoutStartSec=600
+TimeoutStartSec=2400
 ```
 
 `~/.config/systemd/user/dream-nightly.timer`:

@@ -141,4 +141,4 @@ state and a reachable ollama, so not a cloud scheduler). See
 [`references/SCHEDULING.md`](../../references/SCHEDULING.md) for the headless
 command (`claude -p ... --permission-mode auto`) and systemd, launchd and cron
 setups. For a whole box, use [`scripts/dream-nightly`](../../scripts/dream-nightly), which runs `dream box`
-and hands the result to the box's `dreams-<host>` herdr tab.
+and then a headless lesson pass over the result.

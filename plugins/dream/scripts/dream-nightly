@@ -2,7 +2,6 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-TAB="${DREAM_TAB:-dreams-$(hostname -s | tr '[:upper:]' '[:lower:]')}"
 DAYS="${DREAM_DAYS:-1}"
 
 "$HERE/dream" box --days "$DAYS"
@@ -12,14 +11,5 @@ if [ ! -f "$BOX" ]; then
   exit 1
 fi
 
-pane="$(herdr agent list | jq -r --arg t "$TAB" \
-  '.result.agents[] | select(.terminal_title_stripped == $t) | .pane_id' | head -1)"
-if [ -z "$pane" ]; then
-  echo "dream-nightly: no herdr tab named $TAB; $BOX is ready for a manual pass" >&2
-  exit 1
-fi
-
-out="$(herdr agent prompt "$pane" "Nightly dream pass: $BOX is fresh (dream box --days $DAYS already ran). Do your standing lesson pass on it: dedup, file dream beads, message owners, and report to mission-control.")"
-echo "$out"
-# herdr reports errors in JSON with exit 0.
-jq -e 'has("error") | not' <<<"$out" >/dev/null
+cd "$HERE/../../.."
+exec "${CLAUDE:-claude}" -p "Nightly dream pass: $BOX is fresh (dream box --days $DAYS already ran). Read $HERE/../references/box-pass.md in full and follow it on that file." --permission-mode auto

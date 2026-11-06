@@ -6,10 +6,6 @@ import time
 import pytest
 
 SRC = os.path.join(os.path.dirname(__file__), "..", "scripts", "dream-nightly")
-LIST = ('{"result":{"agents":['
-        '{"terminal_title_stripped":"dreams-testbox-old","pane_id":"w9:p0"},'
-        '{"terminal_title_stripped":"dreams-testbox","pane_id":"w9:p1"},'
-        '{"terminal_title_stripped":"dreams-testbox","pane_id":"w9:p2"}]}}')
 
 
 def _sh(path, body):
@@ -20,7 +16,8 @@ def _sh(path, body):
 
 @pytest.fixture
 def box(tmp_path):
-    scripts, bin_, home = tmp_path / "scripts", tmp_path / "bin", tmp_path / "home"
+    scripts = tmp_path / "repo" / "plugins" / "dream" / "scripts"
+    bin_, home = tmp_path / "bin", tmp_path / "home"
     boxdir = home / ".dream" / "box"
     for d in (scripts, bin_, boxdir):
         d.mkdir(parents=True)
@@ -32,12 +29,9 @@ echo "$@" > {args}
 [ -n "${{DREAM_FAIL:-}}" ] && exit 3
 [ -n "${{DREAM_NOWRITE:-}}" ] || touch "$HOME/.dream/box/$(date +%Y%m%d)-box.json"
 """)
-    _sh(bin_ / "hostname", "echo TestBox\n")
-    _sh(bin_ / "herdr", f"""
-if [ "$2" = list ]; then echo '{LIST}'; exit; fi
-echo "$3|$4" >> {log}
-ok='{{"result":{{}}}}'
-echo "${{HERDR_REPLY:-$ok}}"
+    _sh(bin_ / "claude", f"""
+printf '%s\\n' "$PWD" "$@" > {log}
+exit "${{CLAUDE_EXIT:-0}}"
 """)
 
     def run(**env):
@@ -49,11 +43,14 @@ echo "${{HERDR_REPLY:-$ok}}"
     return run
 
 
-def test_prompts_the_hostname_tab_with_todays_box(box):
+def test_runs_headless_claude_on_todays_box(box, tmp_path):
     r, prompts, args = box()
     assert r.returncode == 0, r.stderr
-    assert prompts.startswith("w9:p1|Nightly dream pass:")
-    assert time.strftime("%Y%m%d") + "-box.json" in prompts
+    cwd, flag, prompt, *rest = prompts.splitlines()
+    assert cwd == str(tmp_path / "repo")
+    assert flag == "-p" and rest == ["--permission-mode", "auto"]
+    assert time.strftime("%Y%m%d") + "-box.json" in prompt
+    assert "references/box-pass.md" in prompt
     assert args.strip() == "box --days 1"
 
 
@@ -62,21 +59,13 @@ def test_days_passes_through(box):
     assert args.strip() == "box --days 3"
 
 
-def test_missing_tab_fails(box):
-    r, prompts, _ = box(DREAM_TAB="dreams-other")
-    assert r.returncode != 0 and "no herdr tab named dreams-other" in r.stderr
-    assert prompts == ""
-
-
 @pytest.mark.parametrize("env", [{"DREAM_FAIL": "1"}, {"DREAM_NOWRITE": "1"}])
-def test_no_fresh_box_fails_without_prompting(box, env):
+def test_no_fresh_box_fails_without_claude(box, env):
     r, prompts, _ = box(**env)
     assert r.returncode != 0
     assert prompts == ""
 
 
-def test_herdr_error_fails(box):
-    reply = '{"error":{"code":"agent_blocked"}}'
-    r, _, _ = box(HERDR_REPLY=reply)
-    assert r.returncode != 0
-    assert reply in r.stdout
+def test_claude_failure_fails(box):
+    r, _, _ = box(CLAUDE_EXIT="2")
+    assert r.returncode == 2
