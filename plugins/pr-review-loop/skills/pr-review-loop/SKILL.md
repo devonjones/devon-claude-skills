@@ -99,7 +99,7 @@ disabled bot is never triggered and never waited for.
 
 ### Priority to Exit-Condition Mapping
 
-The convergence rule (see Convergence) depends on classifying findings as P1/P2 vs P3/nitpick. Use this table:
+The convergence rule (see Convergence) depends on classifying findings as P1/P2 vs P3/nitpick. Use this table. "Blocks convergence" is about a finding left unfixed: fixing a finding at any level makes the round not clean.
 
 | Source label | P-level | Blocks convergence? |
 |---|---|---|
@@ -267,11 +267,12 @@ From round 6 on, a round that wasn't clean must justify the next one, and the
 bar rises each round. Answer these in your reasoning and in the round's commit
 message body:
 
-1. **Was the P1/P2 that blocked convergence genuinely new?** A finding in code
+1. **Was the finding that blocked convergence genuinely new?** A finding in code
    the loop itself wrote, or a re-flag of ground already reviewed, is churn.
 2. **Would it have been a P1/P2 on round 1?** Past round 5, a P2 needs a
    concrete failure scenario (inputs or state leading to a wrong result).
-   Without one, reclassify it to P3 with that reason.
+   Without one, reclassify it to P3 with that reason. Ticket a P3 rather than
+   fix it: a fix of any severity owes another round.
 3. **Are finding counts falling?** Flat or rising counts at the same severity
    mean the reviewers are generating findings, not discovering them.
 
@@ -287,7 +288,8 @@ that distinction — they are not a flat list of equal-force bullets.
 
 | Rule | Why |
 |---|---|
-| **A P1 or P2 fix means the round was NOT clean.** | The next round reviews *different code*. A review that passed did not pass on what would actually ship. Push the fix, run another round. (A P3-only fix is the agent's call — see below.) |
+| **Any fix means the round was NOT clean.** | A README line or one test case counts. The next round reviews *different code*. A review that passed did not pass on what would actually ship. Push the fix, run another round. To keep a low-priority finding from costing a round, ticket it instead of fixing it (see below). |
+| **Every unfiled note needs a disposition.** | A reviewer that says it noticed something but chose not to file it, or rated it too low to file, has handed you a finding without a thread. Give each note one disposition: fixed (which makes the round not clean), ticketed, or declined with a reason. List them in the round report. Notes that get read past come back later as real findings. |
 | **Every dispatched reviewer must have reported.** | A reviewer you chose to skip is named in the round report, not counted (see Choosing the Roster). A reviewer that never reported looks identical to a reviewer with nothing to say. Never infer it from an empty comment list or a zero exit status — see [`references/reviewer-reported.md`](references/reviewer-reported.md). Consequence is the **A reviewer that will not report** row below. |
 | **Every disposition must have reached its thread.** | A reply you sent is not a reply that landed; a failed POST can leave a resolved thread carrying a finding and no disposition. F4's gate is what checks this — the query is in [`references/round-workflow.md`](references/round-workflow.md). |
 | **At least one reviewer must have run.** | An empty roster — every bot disabled, every default disabled, every agent retired — produces a vacuously clean round. Zero reviewers is not convergence; it is a configuration problem. Stop and ask. |
@@ -298,10 +300,6 @@ that distinction — they are not a flat list of equal-force bullets.
 | **A reviewer that will not report stops the loop.** | Re-run it inside the same round. Two failures **in that round** stops the loop and asks the user — whether it failed to report or the check for it failed; one counter, both causes, because alternating them would otherwise trip neither. Nothing crosses a round boundary, so nothing has to survive one. See [`references/reviewer-reported.md`](references/reviewer-reported.md). |
 
 **Agent's judgement — explicitly discretionary:**
-
-- **Only P3s were fixed → the round may be clean.** Not automatically clean, not
-  automatically disqualifying. The agent decides whether a nitpick-level change
-  was material enough that the next round should see it before merge.
 
 - **Findings only ticketed, and low priority → the agent may call the round
   clean.** This is discretion, not a severity cutoff. "All P3" does not
@@ -468,7 +466,7 @@ EACH ROUND — three phases, in order:
                               ▼
   If F6 returned new comments → next COLLECT PHASE (new round).
   Otherwise → apply the convergence rule (see Convergence).
-  Clean round → converged. No round cap.
+  Clean round (nothing fixed) → converged. No round cap.
 ```
 
 **Phase order is mandatory.** Complete all COLLECT steps (C1, C2, C3) before beginning any FIX step (F1–F7). The BATCH POINT between them is what makes Pattern Analysis (`Sweep Before Fixing`) work.
@@ -1456,12 +1454,14 @@ Task tool:
     5. **Return a manifest** - Do NOT fix anything. Your job is review only.
        Your final message is a manifest of what you recorded, one line per finding:
        `<severity> | <file>:<line> | <one-line title>` — nothing else. The
-       orchestrator uses it to dispatch validators and track your round.
+       orchestrator uses it to dispatch validators and track your round. If you
+       noticed something you chose not to record, add one line for it:
+       `NOTED | <file>:<line> | <note>`. The orchestrator must dispose of it.
 
     ## Important:
     - Be thorough but not pedantic - only flag real issues within your focus area
     - Consider project context - not all best practices apply everywhere
-    - If you have no findings and all prior comments have reasonable responses, simply return "No issues found"
+    - If you have no findings and all prior comments have reasonable responses, return "No issues found", followed by any NOTED lines
 
     Available scripts: See pr-review-loop skill documentation for full script reference.
 ```
@@ -1548,6 +1548,7 @@ Task tool:
        `REOPENED | <comment_id>` per reopen,
        `FAILED | <file>:<line> | <title>` per record or reopen that failed,
        `DROPPED | <file>:<line> | <title>` per entry in `dropped`,
+       `NOTED | <file>:<line> | <note>` per thing the report noticed but did not file,
        or `No issues found` when the report was empty.
        First line: `model: <model>`.
 ```

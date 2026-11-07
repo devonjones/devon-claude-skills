@@ -228,7 +228,7 @@ The `--wait` flag polls every 30s for up to 5 minutes waiting for new comments. 
 
 ### F7. Count reporters, then apply the convergence rule
 
-If F6 returned new comments, start the next COLLECT PHASE. Otherwise: count `D` reviewers dispatched against `R` that reported — see [`reviewer-reported.md`](reviewer-reported.md), which is where the per-class definition and the bot check live — then apply the convergence rule. `D` and `R` must match. One clean round converges; there is no round cap. Past round 5, a new round must also pass Escalating Scrutiny in `SKILL.md`.
+If F6 returned new comments, start the next COLLECT PHASE. Otherwise: count `D` reviewers dispatched against `R` that reported — see [`reviewer-reported.md`](reviewer-reported.md), which is where the per-class definition and the bot check live — then apply the convergence rule. `D` and `R` must match. A round with any fix, of any severity, is not clean, and every unfiled note needs a disposition first. One clean round converges; there is no round cap. Past round 5, a new round must also pass Escalating Scrutiny in `SKILL.md`.
 
 ### End-of-round report
 
@@ -241,6 +241,7 @@ Round N: posted X findings across Y agents (A withdrawn by validator);
 replied to Z threads (F fixed / W won't-fix / O out-of-scope).
 Reported: <reviewer>=ok(mutation|evidence-query|judgement|mixed|undeclared)|failed(<reason>), per dispatched reviewer. D dispatched / R reported.
 Roster: disabled=<...|none> retired=<...|none> overridden=<...|none> skipped=<name (reason)...|none>.
+Unfiled notes: <reviewer: note → fixed|<ticket id>|declined (reason)>...|none.
 Dispatched against <head SHA at dispatch>.
 EOF
 )" || { echo "round report did not post - retry before starting the next round" >&2; exit 2; }
