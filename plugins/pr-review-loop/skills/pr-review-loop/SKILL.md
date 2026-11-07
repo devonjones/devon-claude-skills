@@ -287,7 +287,8 @@ that distinction — they are not a flat list of equal-force bullets.
 
 | Rule | Why |
 |---|---|
-| **A P1 or P2 fix means the round was NOT clean.** | The next round reviews *different code*. A review that passed did not pass on what would actually ship. Push the fix, run another round. (A P3-only fix is the agent's call — see below.) |
+| **Any fix means the round was NOT clean.** | Any severity: a README line or one test case counts. The next round reviews *different code*. A review that passed did not pass on what would actually ship. Push the fix, run another round. To keep a low-priority finding from costing a round, ticket it instead of fixing it (see below). |
+| **Every unfiled note needs a disposition.** | A reviewer that says it noticed something but chose not to file it, or rated it too low to file, has handed you a finding without a thread. Give each note one disposition: fixed (which makes the round not clean), ticketed, or declined with a reason. List them in the round report. Notes that get read past come back later as real findings; one became a P2 a round later. |
 | **Every dispatched reviewer must have reported.** | A reviewer you chose to skip is named in the round report, not counted (see Choosing the Roster). A reviewer that never reported looks identical to a reviewer with nothing to say. Never infer it from an empty comment list or a zero exit status — see [`references/reviewer-reported.md`](references/reviewer-reported.md). Consequence is the **A reviewer that will not report** row below. |
 | **Every disposition must have reached its thread.** | A reply you sent is not a reply that landed; a failed POST can leave a resolved thread carrying a finding and no disposition. F4's gate is what checks this — the query is in [`references/round-workflow.md`](references/round-workflow.md). |
 | **At least one reviewer must have run.** | An empty roster — every bot disabled, every default disabled, every agent retired — produces a vacuously clean round. Zero reviewers is not convergence; it is a configuration problem. Stop and ask. |
@@ -298,10 +299,6 @@ that distinction — they are not a flat list of equal-force bullets.
 | **A reviewer that will not report stops the loop.** | Re-run it inside the same round. Two failures **in that round** stops the loop and asks the user — whether it failed to report or the check for it failed; one counter, both causes, because alternating them would otherwise trip neither. Nothing crosses a round boundary, so nothing has to survive one. See [`references/reviewer-reported.md`](references/reviewer-reported.md). |
 
 **Agent's judgement — explicitly discretionary:**
-
-- **Only P3s were fixed → the round may be clean.** Not automatically clean, not
-  automatically disqualifying. The agent decides whether a nitpick-level change
-  was material enough that the next round should see it before merge.
 
 - **Findings only ticketed, and low priority → the agent may call the round
   clean.** This is discretion, not a severity cutoff. "All P3" does not
@@ -468,7 +465,7 @@ EACH ROUND — three phases, in order:
                               ▼
   If F6 returned new comments → next COLLECT PHASE (new round).
   Otherwise → apply the convergence rule (see Convergence).
-  Clean round → converged. No round cap.
+  Clean round (nothing fixed) → converged. No round cap.
 ```
 
 **Phase order is mandatory.** Complete all COLLECT steps (C1, C2, C3) before beginning any FIX step (F1–F7). The BATCH POINT between them is what makes Pattern Analysis (`Sweep Before Fixing`) work.
@@ -1456,7 +1453,9 @@ Task tool:
     5. **Return a manifest** - Do NOT fix anything. Your job is review only.
        Your final message is a manifest of what you recorded, one line per finding:
        `<severity> | <file>:<line> | <one-line title>` — nothing else. The
-       orchestrator uses it to dispatch validators and track your round.
+       orchestrator uses it to dispatch validators and track your round. If you
+       noticed something you chose not to record, add one line for it:
+       `NOTED | <file>:<line> | <note>`. The orchestrator must dispose of it.
 
     ## Important:
     - Be thorough but not pedantic - only flag real issues within your focus area
