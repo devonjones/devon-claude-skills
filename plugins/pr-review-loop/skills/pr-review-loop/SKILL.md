@@ -1438,9 +1438,16 @@ Task tool:
 
     4. **RECORD every new finding** (only issues not already raised, only files in your scope):
        ```bash
-       scripts/record-finding.sh <PR> <file> <line> <agent-name> <P1|P2|P3> "Issue description and suggestion"
+       scripts/record-finding.sh <PR> <file> <line> <agent-name> <P1|P2|P3> - <<'EOF'
+       Issue description and suggestion
+       EOF
        ```
-       On a file the PR deletes, `<line>` is a line of the old file.
+       Run it from the PR's repo, and pass the body on stdin as shown,
+       never through a scratch file: parallel reviewers share a scratchpad
+       and overwrite each other's files. The script prints back what it
+       stored; check that it is your finding. If it refuses a body as
+       already recorded under another label, re-check your body before
+       anything else. On a file the PR deletes, `<line>` is a line of the old file.
        Do not post to GitHub yourself. The orchestrator posts every
        reviewer's findings in one review, merging findings on the same line
        and rolling P3s into one thread. Your `<!-- Agent: <agent-name> -->`
@@ -1468,13 +1475,23 @@ Task tool:
 
 **The orchestrator must never rewrite step 4/5 into "return your findings to me".** Findings go through `record-finding.sh` so that `post-findings.sh` posts every one of them; merging is the script's job, not the orchestrator's judgement (see ⛔ rule 3). If you catch yourself about to spawn an agent with "do not record — return findings", stop: that variant destroys the audit trail and breaks every later round's `get-agent-comments.sh` dedup.
 
+**Before spawning, open the round** in the PR's repo:
+
+```bash
+scripts/post-findings.sh <PR> --open
+```
+
+`record-finding.sh` refuses to record for a PR whose round is not open in
+its own repo, so a reviewer working from a parent or sibling repo fails
+loudly instead of filing findings where `post-findings.sh` never looks.
+
 **After the last manifest, post once:**
 
 ```bash
 scripts/post-findings.sh <PR>
 ```
 
-It prints one `<comment-id> <file>:<line> <header>` line per thread. Those ids are what F3 replies to. If GitHub rejects the review (usually a line outside the diff), the script posts thread by thread. A thread GitHub won't put on its line goes on its file, marked `(on the file)`: a normal thread. One whose file isn't in the PR becomes a plain PR comment, marked `(unanchored PR comment)`: answer it with `gh pr comment`, because `reply-to-comment.sh`, `get-agent-comments.sh` and the F4 gate see review threads only. A thread that fails all three goes back into the store; re-run until `post-findings.sh <PR> --check` is clean.
+It prints one `<comment-id> <file>:<line> <header>` line per thread. Those ids are what F3 replies to. If GitHub rejects the review (usually a line outside the diff), the script posts thread by thread. A thread GitHub won't put on its line goes on its file, marked `(on the file)`: a normal thread. One whose file isn't in the PR becomes a plain PR comment, marked `(unanchored PR comment)`: answer it with `gh pr comment`, because `reply-to-comment.sh`, `get-agent-comments.sh` and the F4 gate see review threads only. Then it reads back what GitHub holds and looks for every recorded finding, by its signature and body, in what posted. It prints `Posted N of M finding(s)`; any finding it cannot find goes back into the store and the script exits 1. Re-run until `post-findings.sh <PR> --check` is clean.
 
 **Spawn all agents in parallel** - use multiple Task tool calls in a single message.
 
@@ -1531,7 +1548,9 @@ Task tool:
        - 0: stdout is JSON. For each `report.reopens` entry run
          scripts/reopen-comment.sh <PR> <comment_id> <agent-name> "<reason>"
          For each `report.findings` entry run
-         scripts/record-finding.sh <PR> <file> <line> <agent-name> <severity> "<body>"
+         scripts/record-finding.sh <PR> <file> <line> <agent-name> <severity> - <<'EOF'
+         <body>
+         EOF
          where <body> is exactly:
            **<title>**
 
@@ -1772,8 +1791,8 @@ When detected, the script suggests:
 | `check-gemini-quota.sh <PR>` | Check if Gemini is rate-limited |
 | `bot-enabled.sh <gemini\|cursor>` | Is this bot on for the repo? Exit 0 = enabled, 1 = explicitly disabled, 2 = undetermined (warns on stderr; callers must treat as enabled, never as the user's choice) |
 | `resolve-comment.sh <node-id> [reason]` | Manually resolve a thread |
-| `record-finding.sh <PR\|local> <file> <line> <agent> <P1\|P2\|P3> "msg"` | Agents: record a finding for this round (no GitHub write) |
-| `post-findings.sh <PR> [--local\|--check]` | Post the round's findings as one review (same-line merged, P3s rolled up); `--local` prints instead; `--check` fails while any are unposted |
+| `record-finding.sh <PR\|local> <file> <line> <agent> <P1\|P2\|P3> - <<'EOF'` | Agents: record a finding for this round, body on stdin (no GitHub write). Refuses without an open round, or a body already recorded |
+| `post-findings.sh <PR> [--open\|--local\|--check]` | Post the round's findings as one review (same-line merged, P3s rolled up) and check each landed; `--open` opens the round; `--local` prints instead; `--check` fails while any are unposted |
 | `post-line-comment.sh <PR> <file> <line> <agent> "msg"` | Post one line comment with agent signature (orchestrator fallback only) |
 | `get-agent-comments.sh <PR> <agent> [--with-replies]` | Fetch agent's own comments and replies |
 | `reopen-comment.sh <PR> <comment-id> <agent> "reason"` | Reply to resolved thread with Claude attribution |

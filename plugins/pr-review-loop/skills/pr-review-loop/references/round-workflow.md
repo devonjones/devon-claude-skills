@@ -70,10 +70,11 @@ pushed head, so an uncommitted change is invisible to them.
 
 The merged default + user agent set comes from pre-loop setup:
 
+- Open the round: `scripts/post-findings.sh <PR> --open`, from the PR's repo. `record-finding.sh` refuses without it.
 - Spawn the chosen roster (see "Choosing the Roster" in `SKILL.md`) as parallel Tasks, using the spawning template from `SKILL.md` VERBATIM on the recording steps. Each agent RECORDS its findings via `record-finding.sh` and returns a manifest (`severity | file:line | title` per finding). Do NOT rewrite the template into "return findings, don't record" (⛔ rule 3: the PR is the system of record; unrecorded findings never get posted, which breaks the audit trail AND next round's `get-agent-comments.sh` dedup).
 - Agents with `engine: "pi"` get a **Haiku recorder Task** instead, in the same parallel batch, with the same description shape: it runs `scripts/pi-review.sh <PR> <agent-name> <SHA recorded above>` and records the report with `record-finding.sh`, so `post-findings.sh` posts it with everyone else's (template in "Pi Engine" in `SKILL.md`). `FALLBACK claude` means spawn that agent's Claude Task now; `NOT REPORTED` is a strike.
 - Wait for all agents to return their manifests
-- **Post once:** `scripts/post-findings.sh <PR>`. Same-line findings become one thread, all P3s become one roll-up thread, and everything goes out as a single review. Keep the printed comment ids for F3
+- **Post once:** `scripts/post-findings.sh <PR>`. Same-line findings become one thread, all P3s become one roll-up thread, and everything goes out as a single review. It then checks each finding landed; a non-zero exit means some are back in the store, so re-run it. Keep the printed comment ids for F3
 - **For each POSTED finding, run the independent validator** against the posted comment (per "Independent Validator Pipeline" in `SKILL.md`). VALID findings flow to the BATCH POINT below; INVALID are withdrawn ON-THREAD (`reply-to-comment.sh <PR> <id> "Withdrawn — validator refuted: <reason>"`) and excluded from the batch; UNCERTAIN handled per `independent_validator.uncertain_action` (default: annotate the thread). Skip validation for any flagger named in `independent_validator.skip_for`. Skip validation entirely unless `independent_validator.enabled` is explicitly true (validation is OPT-IN; the default is off). Validation never deletes or delays posting — refutations are part of the audit trail.
 
 ## BATCH POINT (required before FIX Phase)

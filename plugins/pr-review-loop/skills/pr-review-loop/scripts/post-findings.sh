@@ -7,10 +7,12 @@
 # One review is one GitHub write, where posting comment by comment cost one
 # write per finding. If GitHub rejects the review (usually a line outside the
 # diff), each thread is posted on its own, paced, falling back to its file and
-# then to a plain PR comment when GitHub answers 422. Any other failure puts its
-# findings back in the store so --check keeps failing until they are dealt with.
+# then to a plain PR comment when GitHub answers 422. Afterwards every recorded
+# finding is looked for in what GitHub says was posted; any it cannot find goes
+# back in the store, so --check keeps failing until it is dealt with.
 #
-# Usage: post-findings.sh <pr-number>           # post to the PR
+# Usage: post-findings.sh <pr-number> --open    # open the round: record-finding.sh refuses without it
+#        post-findings.sh <pr-number>           # post to the PR
 #        post-findings.sh <pr-number|local> --local   # print the merged report, post nothing
 #        post-findings.sh <pr-number|local> --check   # exit 1 if findings are still unposted
 
@@ -22,11 +24,18 @@ source "$(dirname "${BASH_SOURCE[0]}")/_pace.sh"
 PR="${1:?Usage: post-findings.sh <pr-number|local> [--local|--check]}"
 MODE="${2:-post}"
 case "$MODE" in
-    post|--local|--check) ;;
-    *) echo "Error: unknown mode '$MODE' (expected --local or --check)" >&2; exit 1 ;;
+    post|--open|--local|--check) ;;
+    *) echo "Error: unknown mode '$MODE' (expected --open, --local or --check)" >&2; exit 1 ;;
 esac
 
 STORE="$(git rev-parse --absolute-git-dir)/pr-review-loop/findings-$PR.jsonl"
+
+if [[ "$MODE" == "--open" ]]; then
+    mkdir -p "$(dirname "$STORE")"
+    git rev-parse --show-toplevel > "${STORE%.jsonl}.open"
+    echo "Round open for PR $PR in $(git rev-parse --show-toplevel): reviewers record from here."
+    exit 0
+fi
 
 if [[ "$MODE" == "--check" ]]; then
     if [[ -s "$STORE" ]]; then
@@ -47,8 +56,28 @@ fi
 exec 9>>"$STORE.lock"
 flock 9
 
-archive() { mv -f "$STORE" "$STORE.$(date +%s).done"; }
+archive() { mv -f "$STORE" "$STORE.$(date +%s%N).done"; }
 ERR=$(mktemp); trap 'rm -f "$ERR"' EXIT
+
+# Archive the store, keeping back each finding that appears, as its thread or
+# the P3 roll-up renders it, in none of the comment bodies GitHub returned ($1,
+# a JSON array). A rendering counts only where it ends, so a short body cannot
+# match inside a longer one.
+settle() {
+    local missing total
+    missing=$(jq -c --argjson posted "$1" '
+        def at($s): any($posted[]; endswith($s) or contains($s + "\n\n"));
+        select((at("<!-- Agent: \(.agent) -->\n\n\(.body)")
+                or at("`\(.file):\(.line)` (\(.agent)): \(.body)")) | not)' "$STORE")
+    total=$(wc -l < "$STORE")
+    archive
+    if [[ -n "$missing" ]]; then
+        printf '%s\n' "$missing" > "$STORE"
+        echo "Posted $((total - $(wc -l < "$STORE"))) of $total finding(s); $(wc -l < "$STORE") are not on the PR and are back in the store." >&2
+        return 1
+    fi
+    echo "Posted $total of $total finding(s) in $COUNT thread(s)."
+}
 
 GROUPS_JSON=$(jq -s '
     def sig(a): "<!-- Agent: \(a) -->";
@@ -117,18 +146,23 @@ REVIEW=$(jq --arg sha "$SHA" --arg n "$FINDINGS" '{
 pace_github
 if RESULT=$(gh api --method POST "repos/$REPO/pulls/$PR/reviews" --input - <<< "$REVIEW" 2>"$ERR"); then
     RID=$(jq -r '.id' <<< "$RESULT")
-    archive
-    echo "Posted review $RID: $FINDINGS finding(s) in $COUNT thread(s)."
+    echo "Posted review $RID."
     # The per-review comments endpoint carries no line numbers; the PR's does.
-    # The post succeeded; a listing failure must not report it as failed.
-    gh api --paginate "repos/$REPO/pulls/$PR/comments" \
-        --jq ".[] | select(.pull_request_review_id == $RID)"' | "\(.id) \(.path):\(.line // .original_line) \(.body | split("\n")[0])"' \
-        || echo "Warning: review $RID is posted, but its comment ids could not be listed; read them with get-agent-comments.sh" >&2
-    exit 0
+    if ! LISTED=$(gh api --paginate "repos/$REPO/pulls/$PR/comments" \
+            --jq "[.[] | select(.pull_request_review_id == $RID)]" | jq -s 'add // []'); then
+        # The review landed whole or not at all, so this is unchecked, not failed.
+        archive
+        echo "Warning: review $RID is posted, but its comments could not be listed or checked; read them with get-agent-comments.sh" >&2
+        exit 0
+    fi
+    jq -r '.[] | "\(.id) \(.path):\(.line // .original_line) \(.body | split("\n")[0])"' <<< "$LISTED"
+    settle "$(jq -c 'map(.body)' <<< "$LISTED")"
+    exit
 fi
 
 echo "Review rejected, posting threads one at a time: $RESULT $(cat "$ERR")" >&2
-FAILED_FINDINGS=""
+POSTED='[]'
+landed() { POSTED=$(jq -c --arg o "$OUT" '. + [($o | fromjson? | .body) // ""]' <<< "$POSTED"); }
 # Only a 422 means GitHub cannot anchor the comment there; a 5xx or rate limit must not demote it.
 unanchorable() { grep -q 'HTTP 422' "$ERR"; }
 for i in $(seq 0 $((COUNT - 1))); do
@@ -138,6 +172,7 @@ for i in $(seq 0 $((COUNT - 1))); do
     if OUT=$(jq --arg sha "$SHA" '{commit_id: $sha, path, line, side, body}' <<< "$G" \
             | gh api --method POST "repos/$REPO/pulls/$PR/comments" --input - 2>"$ERR"); then
         echo "$(jq -r '.id' <<< "$OUT") $AT"
+        landed
         continue
     fi
     if unanchorable; then
@@ -147,6 +182,7 @@ for i in $(seq 0 $((COUNT - 1))); do
                     body: "\(.body)\n\n_Posted on the file: GitHub would not anchor line \(.line)._"}' <<< "$G" \
                 | gh api --method POST "repos/$REPO/pulls/$PR/comments" --input - 2>"$ERR"); then
             echo "$(jq -r '.id' <<< "$OUT") $AT (on the file)"
+            landed
             continue
         fi
     fi
@@ -157,16 +193,11 @@ for i in $(seq 0 $((COUNT - 1))); do
         if OUT=$(jq '{body: "\(.body)\n\n_Posted unanchored: `\(.path):\(.line)` is not in the diff._"}' <<< "$G" \
                 | gh api --method POST "repos/$REPO/issues/$PR/comments" --input - 2>"$ERR"); then
             echo "$(jq -r '.id' <<< "$OUT") $AT (unanchored PR comment: reply with gh pr comment, not reply-to-comment.sh)"
+            landed
             continue
         fi
     fi
     echo "FAILED $AT: $OUT $(cat "$ERR")" >&2
-    FAILED_FINDINGS+="$(jq -c '.findings[]' <<< "$G")"$'\n'
 done
 
-archive
-if [[ -n "$FAILED_FINDINGS" ]]; then
-    printf '%s' "$FAILED_FINDINGS" > "$STORE"
-    echo "$(wc -l < "$STORE") finding(s) did not post and are back in the store." >&2
-    exit 1
-fi
+settle "$POSTED"
