@@ -37,13 +37,19 @@ mkdir -p "$DIR"
 exec 9>>"$STORE.lock"
 flock 9
 
-# The same body under another label is a crossed record, not a second finding.
+# Another agent's body under this agent's name is a crossed record. The same
+# agent may repeat a body at another line; at the same line it is a retry.
 if [[ -s "$STORE" ]]; then
-    MATCH=$(jq -sc --arg body "$BODY" 'map(select(.body == $body))[0] // empty' "$STORE")
+    MATCH=$(jq -sc --arg body "$BODY" --arg agent "$AGENT" \
+        'map(select(.body == $body and .agent != $agent))[0] // empty' "$STORE")
     if [[ -n "$MATCH" ]]; then
-        echo "Error: this body is already recorded as $(jq -r '"\(.severity) from \(.agent) at \(.file):\(.line)"' <<< "$MATCH")." >&2
-        echo "  Same agent and line: a duplicate, nothing to do. Otherwise two records crossed: re-check your body." >&2
+        echo "Error: this body is already recorded as $(jq -r '"\(.severity) from \(.agent) at \(.file):\(.line)"' <<< "$MATCH"), so two records crossed. Re-check your body." >&2
         exit 1
+    fi
+    if jq -se --arg body "$BODY" --arg agent "$AGENT" --arg file "$FILE" --argjson line "$LINE" \
+        'any(.[]; .body == $body and .agent == $agent and .file == $file and .line == $line)' "$STORE" >/dev/null; then
+        echo "Already recorded from $AGENT at $FILE:$LINE; nothing to do."
+        exit 0
     fi
 fi
 

@@ -56,16 +56,19 @@ fi
 exec 9>>"$STORE.lock"
 flock 9
 
-archive() { mv -f "$STORE" "$STORE.$(date +%s).done"; }
+archive() { mv -f "$STORE" "$STORE.$(date +%s%N).done"; }
 ERR=$(mktemp); trap 'rm -f "$ERR"' EXIT
 
-# Archive the store, keeping back each finding whose signature and body appear
-# together in none of the comment bodies GitHub returned ($1, a JSON array).
+# Archive the store, keeping back each finding that appears, as its thread or
+# the P3 roll-up renders it, in none of the comment bodies GitHub returned ($1,
+# a JSON array). A rendering counts only where it ends, so a short body cannot
+# match inside a longer one.
 settle() {
     local missing total
     missing=$(jq -c --argjson posted "$1" '
-        select(.body as $b | "<!-- Agent: \(.agent) -->" as $s
-               | any($posted[]; contains($s) and contains($b)) | not)' "$STORE")
+        def at($s): any($posted[]; endswith($s) or contains($s + "\n\n"));
+        select((at("<!-- Agent: \(.agent) -->\n\n\(.body)")
+                or at("`\(.file):\(.line)` (\(.agent)): \(.body)")) | not)' "$STORE")
     total=$(wc -l < "$STORE")
     archive
     if [[ -n "$missing" ]]; then

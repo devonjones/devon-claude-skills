@@ -195,6 +195,23 @@ check "only the missing finding is back in the store" \
   '[[ "$(jq -r .file "$T/r/.git/pr-review-loop/findings-42.jsonl")" == b.py ]]'
 run 42 --check; check "--check still fails" '[[ $RC -eq 1 ]]'
 
+echo "=== a short body inside a longer posted one is not counted as posted ==="
+repo; open 42; rec 42 a.py 10 x P2 "races the writer and loses the row"; rec 42 b.py 5 x P2 "races the writer"
+FAKE_DROP_PATH=b.py run 42
+check "exits non-zero" '[[ $RC -ne 0 ]]'
+check "the dropped short finding is back" '[[ "$(jq -r .file "$T/r/.git/pr-review-loop/findings-42.jsonl")" == b.py ]]'
+
+echo "=== a body posted under another agent's signature is not counted as posted ==="
+repo; open 42; rec 42 a.py 10 x P2 "races the writer"
+# A crossed record written past record-finding.sh's guard.
+jq -nc '{file: "b.py", line: 5, agent: "y", severity: "P2", body: "races the writer"}' >> "$T/r/.git/pr-review-loop/findings-42.jsonl"
+FAKE_DROP_PATH=b.py run 42
+check "y's finding is back" '[[ "$(jq -r .agent "$T/r/.git/pr-review-loop/findings-42.jsonl")" == y ]]'
+
+echo "=== a P3 posts in the roll-up by its file, line and agent ==="
+repo; open 42; rec 42 a.py 10 x P3 "unused import"; run 42
+check "posted 1 of 1" '[[ $RC -eq 0 && "$OUT" == *"Posted 1 of 1"* ]]'
+
 echo "=== recording needs an open round in this repo ==="
 repo; set +e; E=$(cd "$T/r" && bash "$RECORD" 42 a.py 1 x P1 "y" 2>&1 >/dev/null); rc=$?; set -e
 check "refused without --open" '[[ $rc -ne 0 && ! -s "$T/r/.git/pr-review-loop/findings-42.jsonl" ]]'
@@ -220,5 +237,9 @@ repo; open 42; rec 42 a.py 3 error-handling-reviewer P2 "swallows the exit code"
 set +e; E=$(cd "$T/r" && bash "$RECORD" 42 bot.py 9 llm-output-reviewer P2 "swallows the exit code" 2>&1 >/dev/null); rc=$?; set -e
 check "refused" '[[ $rc -ne 0 && "$(wc -l < "$T/r/.git/pr-review-loop/findings-42.jsonl")" == 1 ]]'
 check "names the earlier record" '[[ "$E" == *"P2 from error-handling-reviewer at a.py:3"* ]]'
+(cd "$T/r" && bash "$RECORD" 42 b.py 9 error-handling-reviewer P2 "swallows the exit code" >/dev/null)
+check "the same agent may repeat a body at another line" '[[ "$(wc -l < "$T/r/.git/pr-review-loop/findings-42.jsonl")" == 2 ]]'
+set +e; O=$(cd "$T/r" && bash "$RECORD" 42 b.py 9 error-handling-reviewer P2 "swallows the exit code" 2>&1); rc=$?; set -e
+check "a retry at the same line exits 0 and records nothing" '[[ $rc -eq 0 && "$O" == *"nothing to do"* && "$(wc -l < "$T/r/.git/pr-review-loop/findings-42.jsonl")" == 2 ]]'
 
 echo ""; echo "Passed: $PASSED  Failed: $FAILED"; [[ "$FAILED" -eq 0 ]]

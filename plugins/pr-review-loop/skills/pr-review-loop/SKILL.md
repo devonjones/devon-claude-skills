@@ -1484,7 +1484,6 @@ scripts/post-findings.sh <PR> --open
 `record-finding.sh` refuses to record for a PR whose round is not open in
 its own repo, so a reviewer working from a parent or sibling repo fails
 loudly instead of filing findings where `post-findings.sh` never looks.
-(Loops started before 1.17.0 hit this refusal once; it names the command.)
 
 **After the last manifest, post once:**
 
