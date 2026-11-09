@@ -59,16 +59,15 @@ flock 9
 archive() { mv -f "$STORE" "$STORE.$(date +%s%N).done"; }
 ERR=$(mktemp); trap 'rm -f "$ERR"' EXIT
 
-# Archive the store, keeping back each finding that appears, as its thread or
-# the P3 roll-up renders it, in none of the comment bodies GitHub returned ($1,
-# a JSON array). A rendering counts only where it ends, so a short body cannot
-# match inside a longer one.
+# Archive the store, keeping back each finding whose marker is in none of the
+# comment bodies GitHub returned ($1, a JSON array). Markers, not bodies: GitHub
+# may store a body altered (it rewrote a literal \u001b), and a posted finding
+# that looks missing gets posted twice.
 settle() {
     local missing total
-    missing=$(jq -c --argjson posted "$1" '
-        def at($s): any($posted[]; endswith($s) or contains($s + "\n\n"));
-        select((at("<!-- Agent: \(.agent) -->\n\n\(.body)")
-                or at("`\(.file):\(.line)` (\(.agent)): \(.body)")) | not)' "$STORE")
+    missing=$(jq -c --argjson posted "$1" 'def mark: "<!-- finding: \(.fid) -->";
+        .[].findings[]
+        | select(mark as $m | any($posted[]; contains($m)) | not) | del(.fid)' <<< "$GROUPS_JSON")
     total=$(wc -l < "$STORE")
     archive
     if [[ -n "$missing" ]]; then
@@ -79,13 +78,15 @@ settle() {
     echo "Posted $total of $total finding(s) in $COUNT thread(s)."
 }
 
-GROUPS_JSON=$(jq -s '
+GROUPS_JSON=$(jq -s --arg run "$(date +%s%N)" '
     def sig(a): "<!-- Agent: \(a) -->";
+    def mark: "<!-- finding: \(.fid) -->";
+    to_entries | map(.value + {fid: "\($run)-\(.key)"}) |
     def rank: {P1: 1, P2: 2, P3: 3}[.severity];
     (map(select(.severity != "P3")) | group_by([.file, .line])
         | map(sort_by(rank) | {
             path: .[0].file, line: .[0].line, findings: .,
-            body: (map("🤖 **Claude Code** (\(.agent)) · \(.severity):\n\(sig(.agent))\n\n\(.body)")
+            body: (map("🤖 **Claude Code** (\(.agent)) · \(.severity):\n\(sig(.agent))\n\(mark)\n\n\(.body)")
                    | join("\n\n---\n\n"))
           })) as $inline
     | map(select(.severity == "P3")) as $p3
@@ -93,7 +94,8 @@ GROUPS_JSON=$(jq -s '
     | $inline + (if ($p3 | length) == 0 then [] else [{
         path: $p3[0].file, line: $p3[0].line, findings: $p3, rollup: true,
         body: ("🤖 **Claude Code** (P3 roll-up: \($p3_agents | join(", "))):\n"
-               + ($p3_agents | map(sig(.)) | join("\n"))
+               + ($p3_agents | map(sig(.)) | join("\n")) + "\n"
+               + ($p3 | map(mark) | join("\n"))
                + "\n\nLow-priority findings. One reply covers them all.\n\n"
                + ($p3 | to_entries
                   | map("\(.key + 1). `\(.value.file):\(.value.line)` (\(.value.agent)): \(.value.body)")
@@ -106,7 +108,7 @@ FINDINGS=$(wc -l < "$STORE")
 
 if [[ "$MODE" == "--local" ]]; then
     echo "$FINDINGS finding(s) in $COUNT thread(s). Nothing posted."
-    jq -r '.[] | "\n=== \(.path):\(.line) ===\n\(.body)"' <<< "$GROUPS_JSON" | grep -v '^<!-- Agent: '
+    jq -r '.[] | "\n=== \(.path):\(.line) ===\n\(.body)"' <<< "$GROUPS_JSON" | grep -v '^<!-- \(Agent\|finding\): '
     # A preview of a real PR's findings must leave them to be posted.
     [[ "$PR" == "local" ]] && archive
     exit 0
