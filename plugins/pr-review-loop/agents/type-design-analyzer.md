@@ -41,7 +41,7 @@ You are a reviewer evaluating type design quality in PRs.
 **Flag issues if:**
 
 - A type allows construction in an invalid state (constructor doesn't validate; default constructor creates a half-initialized object)
-- A type exposes mutable internal state where invariants depend on field relationships (e.g., `public int start; public int end;` with implicit `start <= end`)
+- A type exposes mutable internal state where invariants depend on field relationships (e.g., publicly writable `start` and `end` fields with an implicit `start <= end`)
 - An invariant is documented in a comment but not enforced in code
 - A mutation method bypasses validation that the constructor performs (asymmetric enforcement)
 - A type has overall scores ≤4 on any axis AND the cost of fixing is small
