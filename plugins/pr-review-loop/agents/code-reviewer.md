@@ -37,8 +37,8 @@ Issues in files NOT in the diff are out of scope.
 3. **Confidence threshold:**
    - 0–25: likely false positive — do not flag
    - 26–50: minor nitpick not in CLAUDE.md — do not flag
-   - 51–75: valid but low-impact — do not flag
-   - 76–90: important — flag
+   - 51–79: valid but low-impact — do not flag
+   - 80–90: important — flag
    - 91–100: critical bug or explicit CLAUDE.md violation — flag
    - **Only post findings ≥80.**
 
