@@ -45,11 +45,12 @@ case "$*" in
       while [[ $# -gt 0 && "$1" != --jq ]]; do shift; done
       # What the review posted (b.py outdated, so its line is null), less any
       # comment FAKE_DROP_PATH names, plus another review's comment.
-      jq -r "$2" <<< "$(jq --arg drop "${FAKE_DROP_PATH:-}" '[.comments | to_entries[]
+      jq -r "$2" <<< "$(jq --arg drop "${FAKE_DROP_PATH:-}" --arg mangle "${FAKE_MANGLE:-}" '[.comments | to_entries[]
           | select(.value.path != $drop)
           | {id: (101 + .key), pull_request_review_id: 7, path: .value.path,
              line: (if .value.path == "b.py" then null else .value.line end),
-             original_line: .value.line, body: .value.body}]
+             original_line: .value.line,
+             body: (if $mangle != "" then .value.body | gsub("\\\\u001b"; "\\^[") else .value.body end)}]
           + [{id: 900, pull_request_review_id: 6, path: "z.py", line: 1, original_line: 1, body: "another review"}]' "$T/review.json")"
       ;;
   *) echo '{}' ;;
@@ -211,6 +212,18 @@ check "y's finding is back" '[[ "$(jq -r .agent "$T/r/.git/pr-review-loop/findin
 echo "=== a P3 posts in the roll-up by its file, line and agent ==="
 repo; open 42; rec 42 a.py 10 x P3 "unused import"; run 42
 check "posted 1 of 1" '[[ $RC -eq 0 && "$OUT" == *"Posted 1 of 1"* ]]'
+
+echo "=== a finding GitHub stored altered still counts as posted ==="
+# cryo PR #231: a literal \u001b in a body came back from GitHub as \^[.
+repo; open 42; rec 42 a.py 10 x P2 'gives "x\u001b[2J rest"'
+FAKE_MANGLE=1 run 42
+check "exits 0" '[[ $RC -eq 0 && "$OUT" == *"Posted 1 of 1"* ]]'
+run 42 --check; check "nothing is put back to be posted twice" '[[ $RC -eq 0 ]]'
+
+echo "=== a finding put back keeps its recorded shape ==="
+repo; seed; FAKE_DROP_PATH=b.py run 42
+check "no marker id leaks into the store" '[[ "$(jq -c "keys" "$T/r/.git/pr-review-loop/findings-42.jsonl")" == "[\"agent\",\"body\",\"file\",\"line\",\"severity\"]" ]]'
+check "each thread carries one marker per finding" '[[ "$(jq -r ".comments[].body" "$T/review.json" | grep -c "^<!-- finding: ")" == 5 ]]'
 
 echo "=== recording needs an open round in this repo ==="
 repo; set +e; E=$(cd "$T/r" && bash "$RECORD" 42 a.py 1 x P1 "y" 2>&1 >/dev/null); rc=$?; set -e
