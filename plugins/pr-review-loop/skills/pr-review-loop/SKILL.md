@@ -1790,7 +1790,7 @@ When detected, the script suggests:
 | `watch-pr.sh <PR>` | Background monitor (optional, for long-running watches) |
 | `claude-review.sh <PR>` | Generate Claude agent prompt for code review |
 | `check-gemini-quota.sh <PR>` | Check if Gemini is rate-limited |
-| `bot-enabled.sh <gemini\|cursor>` | Is this bot on for the repo? Exit 0 = enabled, 1 = explicitly disabled, 2 = undetermined (warns on stderr; callers must treat as enabled, never as the user's choice) |
+| `bot-enabled.sh <gemini\|cursor>` | Is this bot on for the repo? Exit 0 = enabled, 1 = disabled (explicit false, or gemini with no entry), 2 = undetermined (warns on stderr; callers must treat as enabled, never as the user's choice) |
 | `resolve-comment.sh <node-id> [reason]` | Manually resolve a thread |
 | `record-finding.sh <PR\|local> <file> <line> <agent> <P1\|P2\|P3> - <<'EOF'` | Agents: record a finding for this round, body on stdin (no GitHub write). Refuses without an open round, or a body already recorded |
 | `post-findings.sh <PR> [--open\|--local\|--check]` | Post the round's findings as one review (same-line merged, P3s rolled up) and check each landed; `--open` opens the round; `--local` prints instead; `--check` fails while any are unposted |

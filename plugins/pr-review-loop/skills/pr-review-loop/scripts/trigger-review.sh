@@ -9,11 +9,12 @@
 # - Cursor Bugbot: Auto-reviews on push (no manual trigger needed)
 # - Claude: Fallback using a Claude agent to review the PR
 #
-# By default, triggers Gemini Code Assist. If Gemini is rate-limited,
+# By default, triggers Gemini Code Assist (skipped unless the repo sets
+# .bots.gemini: true). If Gemini is rate-limited,
 # outputs instructions for Claude fallback.
 #
 # Options:
-#   --gemini    Trigger Gemini Code Assist review (default)
+#   --gemini    Trigger Gemini Code Assist review (default; opt-in per repo)
 #   --cursor    Check for Cursor Bugbot comments (auto-triggered on push)
 #   --claude    Use Claude agent for code review
 #   --wait      Poll for up to 5 minutes waiting for review comments to appear
