@@ -99,10 +99,12 @@ check "both disabled: gemini -> exit 1" "1" "$(bot_status "$repo" gemini)"
 check "both disabled: cursor -> exit 1" "1" "$(bot_status "$repo" cursor)"
 
 repo="$(make_repo '{"disabled": ["pr-test-analyzer"]}')"
-check "no bots block -> enabled" "0" "$(bot_status "$repo" gemini)"
+check "no bots block: cursor -> enabled" "0" "$(bot_status "$repo" cursor)"
+check "no bots block: gemini -> disabled by default" "1" "$(bot_status "$repo" gemini)"
 
 repo="$(make_repo "")"
-check "no AGENT-REVIEWERS.md -> enabled (not an error)" "0" "$(bot_status "$repo" gemini)"
+check "no AGENT-REVIEWERS.md: cursor -> enabled (not an error)" "0" "$(bot_status "$repo" cursor)"
+check "no AGENT-REVIEWERS.md: gemini -> disabled by default" "1" "$(bot_status "$repo" gemini)"
 
 # --- exit 2: undetermined, never silently 0 or 1 ----------------------------
 
@@ -170,7 +172,7 @@ done
 repo="$(mktemp -d -p "$TMP_ROOT")"
 git -C "$repo" init -q
 printf '# Agents\n\n## my-reviewer\n\nSomething.\n' > "$repo/AGENT-REVIEWERS.md"
-check "no Configuration section -> exit 0" "0" "$(bot_status "$repo" gemini)"
+check "no Configuration section -> exit 0" "0" "$(bot_status "$repo" cursor)"
 check "no Configuration section -> no warnings" "" "$(bot_stderr "$repo" gemini)"
 
 # Two top-level values in one block. Every fence balances, so the awk never
@@ -261,7 +263,7 @@ check "BOM before heading still reads the config" "1" "$(bot_status "$repo" gemi
 # The asked bot being ABSENT from a map that has other bad entries is not an
 # error about the asked bot.
 repo="$(make_repo '{"bots": {"cursor": "no"}}')"
-check "asked bot absent from a map with bad entries -> enabled" "0" "$(bot_status "$repo" gemini)"
+check "asked bot absent from a map with bad entries -> its default" "1" "$(bot_status "$repo" gemini)"
 
 # A typo'd bot name leaves the bot running, so it has to be called out.
 repo="$(make_repo '{"bots": {"gemni": false}}')"
@@ -269,7 +271,7 @@ UNKNOWN_ERR="$(cd "$repo" && "$PARSE_CONFIG" AGENT-REVIEWERS.md 2>&1 >/dev/null)
 # Name the offending key, not just the category — otherwise the assertion holds
 # even if the warning stops reporting which name was wrong.
 check_contains "unknown bot name warns" "unknown bots (likely typos): gemni" "$UNKNOWN_ERR"
-check "unknown bot name does not disable gemini" "0" "$(bot_status "$repo" gemini)"
+check "unknown bot name does not disable cursor" "0" "$(bot_status "$repo" cursor)"
 
 # Negative control: without this, the closed-set check could warn on every
 # config — including the valid ones — and the assertion above would still pass.

@@ -88,7 +88,7 @@ fi
 BOT_ENABLED_RC=0
 "$SCRIPT_DIR/bot-enabled.sh" "$BOT_TYPE" || BOT_ENABLED_RC=$?
 if [[ "$BOT_ENABLED_RC" -eq 1 ]]; then
-    echo "$BOT_TYPE is disabled for this repo (# Configuration .bots.$BOT_TYPE = false). Skipping."
+    echo "$BOT_TYPE is disabled for this repo (# Configuration .bots.$BOT_TYPE; gemini is off unless set to true). Skipping."
     exit 0
 fi
 
