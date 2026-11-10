@@ -93,7 +93,7 @@ Streamline the push-review-fix cycle for PRs with automated reviewers.
 
 Priority detection automatically parses all formats when summarizing and fetching comments.
 
-Gemini and Cursor can each be turned off per repo via `# Configuration .bots`
+Gemini is off unless a repo turns it on, and Cursor is on unless a repo turns it off, both via `# Configuration .bots`
 in the root `.reviewers/config.json` (legacy: `# Configuration` in `AGENT-REVIEWERS.md`) — see "Disabling an External Review Bot". A
 disabled bot is never triggered and never waited for.
 
@@ -626,7 +626,7 @@ scripts/reply-to-comment.sh <PR> <comment-id> "Out of scope - tracked in BD-XXX"
 
 ## Triggering Reviews by Bot Type
 
-### Gemini Code Assist (Default)
+### Gemini Code Assist (opt-in: `"bots": {"gemini": true}`)
 ```bash
 scripts/trigger-review.sh <PR> --gemini --wait
 ```
@@ -731,16 +731,17 @@ Fields:
 
 - **`overlap_acknowledged`** — map from a reviewer name to `{ overlaps_with, reason }`. Both keep running; this entry documents intentional duplication so the audit tool doesn't recommend renaming. **`reason` is REQUIRED** — the parser rejects entries without it.
 - **`independent_validator`** — controls the per-finding validation step (see "Independent Validator Pipeline" below). All three nested fields are optional; defaults are `enabled: false`, `skip_for: []`, `uncertain_action: "post_with_annotation"`.
-- **`bots`** — map of external review bot name (`gemini`, `cursor`) to boolean. Bots default to enabled; an explicit `false` turns one off for the repo. See "Disabling an External Review Bot" below.
+- **`bots`** — map of external review bot name (`gemini`, `cursor`) to boolean. Cursor defaults to enabled; an explicit `false` turns it off. Gemini defaults to disabled; an explicit `true` turns it on. See "Disabling an External Review Bot" below.
 - **`pi`** — run reviewers on non-Claude models. See "Pi Engine" below.
 
 ### Disabling an External Review Bot
 
 Not every repo has Gemini Code Assist or Cursor installed (or wants to pay for
-them). Turn one off with `# Configuration .bots`:
+them). Gemini is off unless the repo sets `"gemini": true`; turn Cursor off with
+`# Configuration .bots`:
 
 ```json
-{ "bots": { "gemini": false } }
+{ "bots": { "cursor": false } }
 ```
 
 A disabled bot means, for the whole loop:
@@ -1789,7 +1790,7 @@ When detected, the script suggests:
 | `watch-pr.sh <PR>` | Background monitor (optional, for long-running watches) |
 | `claude-review.sh <PR>` | Generate Claude agent prompt for code review |
 | `check-gemini-quota.sh <PR>` | Check if Gemini is rate-limited |
-| `bot-enabled.sh <gemini\|cursor>` | Is this bot on for the repo? Exit 0 = enabled, 1 = explicitly disabled, 2 = undetermined (warns on stderr; callers must treat as enabled, never as the user's choice) |
+| `bot-enabled.sh <gemini\|cursor>` | Is this bot on for the repo? Exit 0 = enabled, 1 = disabled (explicit false, or gemini with no entry), 2 = undetermined (warns on stderr; callers must treat as enabled, never as the user's choice) |
 | `resolve-comment.sh <node-id> [reason]` | Manually resolve a thread |
 | `record-finding.sh <PR\|local> <file> <line> <agent> <P1\|P2\|P3> - <<'EOF'` | Agents: record a finding for this round, body on stdin (no GitHub write). Refuses without an open round, or a body already recorded |
 | `post-findings.sh <PR> [--open\|--local\|--check]` | Post the round's findings as one review (same-line merged, P3s rolled up) and check each landed; `--open` opens the round; `--local` prints instead; `--check` fails while any are unposted |
