@@ -85,3 +85,7 @@ dolt.pre-remote/
 # Issues live in the Dolt remote (refs/dolt/data on origin); a JSONL export
 # here goes stale and invites hand-merges. Use bd export for a snapshot.
 issues.jsonl
+
+# Runtime/leftover files that must not be committed
+dolt-monitor.pid
+beads.left.meta.json
