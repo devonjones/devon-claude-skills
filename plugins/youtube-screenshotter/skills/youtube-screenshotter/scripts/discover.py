@@ -85,7 +85,7 @@ def scene_detect(video_path: Path, threshold: float) -> list[float]:
         "-nostdin",
         "-i", str(video_path),
         "-vf", f"select='gt(scene,{threshold})',showinfo",
-        "-vsync", "vfr",
+        "-fps_mode", "vfr",
         "-an",
         "-f", "null",
         "-",
