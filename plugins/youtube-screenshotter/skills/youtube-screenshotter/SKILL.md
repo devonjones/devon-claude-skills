@@ -116,6 +116,6 @@ Accepted inputs:
 ## Prerequisites
 
 - `uv` — installs each script's Python deps into a cached environment. `curl -LsSf https://astral.sh/uv/install.sh | sh` or `pip install uv`.
-- `ffmpeg` — required for frame extraction and yt-dlp's video+audio merge. `sudo apt install ffmpeg` (Linux), `brew install ffmpeg` (macOS).
+- `ffmpeg` 5.1 or newer — required for frame extraction and yt-dlp's video+audio merge. `sudo apt install ffmpeg` (Linux), `brew install ffmpeg` (macOS).
 - `node` or `deno` on PATH — yt-dlp needs a JavaScript runtime for YouTube, or downloads fail with HTTP 403.
 - Network access to `youtube.com` and `googlevideo.com` for downloads.
