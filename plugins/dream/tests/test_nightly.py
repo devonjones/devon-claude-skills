@@ -77,3 +77,9 @@ def test_claude_override(box, tmp_path):
 def test_claude_failure_fails(box):
     r, _, _ = box(CLAUDE_EXIT="2")
     assert r.returncode == 2
+
+
+def test_repo_defaults_to_the_clone_holding_the_script(box, tmp_path):
+    r, prompts, _ = box(DREAM_REPO="")
+    assert r.returncode == 0, r.stderr
+    assert prompts.splitlines()[0] == str(tmp_path / "repo")
