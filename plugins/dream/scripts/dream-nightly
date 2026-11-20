@@ -11,5 +11,6 @@ if [ ! -f "$BOX" ]; then
   exit 1
 fi
 
-cd "${DREAM_REPO:-$HOME/Projects/devon-claude-skills}"
+# Default: the skills repo this script lives in, wherever it is cloned.
+cd "${DREAM_REPO:-$HERE/../../..}"
 exec "${CLAUDE:-claude}" -p "Nightly dream pass: $BOX is fresh (dream box --days $DAYS already ran). Read $HERE/../references/box-pass.md in full and follow it on that file." --permission-mode auto

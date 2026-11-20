@@ -17,7 +17,7 @@ macOS (launchd) · cron · Staggering dream + dream-reviewers
 
 Each box runs one timer that covers every repo on it. `scripts/dream-nightly`
 runs `dream box --days 1`, then a headless `claude -p --permission-mode auto`
-from the skills repo (`DREAM_REPO`, default `~/Projects/devon-claude-skills`)
+from the skills repo (`DREAM_REPO`, default: the clone the script lives in)
 that follows [`box-pass.md`](box-pass.md): dedup, file dream beads, message
 owner tabs, report to mission-control. `claude` and `bd` must be on the unit's
 PATH (override the binary with `CLAUDE`). If either step fails, the unit fails.
@@ -31,7 +31,7 @@ Description=Nightly dream box pass
 [Service]
 Type=oneshot
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/Projects/devon-claude-skills/plugins/dream/scripts/dream-nightly
+ExecStart=%h/CouncilOfClaudes/skills/devon-claude-skills/plugins/dream/scripts/dream-nightly
 TimeoutStartSec=2400
 ```
 
