@@ -20,7 +20,8 @@ runs `dream box --days 1`, then a headless `claude -p --permission-mode auto`
 from the skills repo (`DREAM_REPO`, default: the clone the script lives in)
 that follows [`box-pass.md`](box-pass.md): dedup, file dream beads, message
 owner tabs, report to mission-control. `claude` and `bd` must be on the unit's
-PATH (override the binary with `CLAUDE`). If either step fails, the unit fails.
+PATH (override the binary with `CLAUDE`); a Homebrew bd lives in
+`/home/linuxbrew/.linuxbrew/bin`. If either step fails, the unit fails.
 
 `~/.config/systemd/user/dream-nightly.service`:
 
@@ -30,7 +31,7 @@ Description=Nightly dream box pass
 
 [Service]
 Type=oneshot
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/CouncilOfClaudes/skills/devon-claude-skills/plugins/dream/scripts/dream-nightly
 TimeoutStartSec=2400
 ```
